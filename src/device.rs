@@ -6,7 +6,10 @@ use candle_core::utils::{cuda_is_available, metal_is_available};
 pub fn best_device(prefer_gpu: bool) -> (Device, String) {
     if prefer_gpu && cuda_is_available() {
         match Device::new_cuda(0) {
-            Ok(d) => return (d, "CUDA 0".into()),
+            Ok(d) => {
+                candle_core::cuda::set_gemm_reduced_precision_f32(true);
+                return (d, "CUDA 0".into());
+            }
             Err(e) => log::warn!("CUDA unavailable, falling back: {e}"),
         }
     }

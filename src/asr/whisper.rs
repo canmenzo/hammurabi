@@ -55,12 +55,11 @@ impl Model {
 }
 
 pub struct WhisperEngine {
-    /// Encode only the real audio length plus a margin instead of 30 s (see `mel::mel_tensor`).
+    /// Encode only the real audio length plus a margin instead of 30 s (see `mel::Mel::tensor`).
     pub trim: bool,
     model: Model,
-    config: Config,
     tokenizer: Tokenizer,
-    filters: Vec<f32>,
+    mel: mel::Mel,
     device: Device,
     sot: u32,
     transcribe: u32,
@@ -124,9 +123,8 @@ impl WhisperEngine {
 
         Ok(Self {
             trim: true,
-            filters: mel::filters(config.num_mel_bins)?,
+            mel: mel::Mel::new(config.num_mel_bins, device)?,
             model,
-            config,
             tokenizer,
             device: device.clone(),
             sot,
@@ -173,7 +171,7 @@ impl Recognizer for WhisperEngine {
         language: Option<&str>,
         prior: &HashMap<String, f32>,
     ) -> anyhow::Result<Transcript> {
-        let mel = mel::mel_tensor(&self.config, audio, &self.filters, &self.device, self.trim)?;
+        let mel = self.mel.tensor(audio, self.trim)?;
         self.model.reset_kv_cache();
         let features = self.model.encoder_forward(&mel, true)?;
 

@@ -78,6 +78,18 @@ enum Cmd {
         #[arg(long)]
         live: bool,
     },
+    /// Caption system audio through Windows Live Captions (it must be set up once in Windows).
+    #[cfg(all(windows, feature = "win-livecaptions"))]
+    LiveCaptions {
+        #[arg(long, default_value_t = 30)]
+        secs: u64,
+        /// Translate captions to this language code.
+        #[arg(long)]
+        translate: Option<String>,
+        /// Also print live (unfinished) lines.
+        #[arg(long)]
+        live: bool,
+    },
     /// Download a model into the cache.
     Download {
         #[arg(value_enum)]
@@ -162,6 +174,12 @@ fn main() -> anyhow::Result<()> {
                 transcribe_sim(rate, pcm, &settings, cpu, live)
             }
         }
+        #[cfg(all(windows, feature = "win-livecaptions"))]
+        Cmd::LiveCaptions {
+            secs,
+            translate,
+            live,
+        } => live_captions(secs, translate, live),
         Cmd::Download { model } => {
             let id = match model {
                 DownloadModel::Tiny => ModelId::WhisperTiny,
@@ -546,5 +564,30 @@ fn transcribe_realtime(
     eprintln!("---");
     eprintln!("audio {secs:.1} s fed at 1x");
     eprintln!("ASR: {}", asr_ms.summary());
+    Ok(())
+}
+
+#[cfg(all(windows, feature = "win-livecaptions"))]
+fn live_captions(secs: u64, translate: Option<String>, live: bool) -> anyhow::Result<()> {
+    let engine = Engine::spawn(Arc::new(|| {}));
+    engine.send(EngineCommand::Start(Settings {
+        asr_backend: hammurabi::settings::AsrBackend::WindowsLiveCaptions,
+        translate: translate.is_some(),
+        target_language: translate.unwrap_or_else(|| "en".into()),
+        ..Settings::default()
+    }));
+    let t0 = Instant::now();
+    let end = t0 + Duration::from_secs(secs);
+    while let Some(e) = engine.recv_timeout(end.saturating_duration_since(Instant::now())) {
+        let at = Some(t0.elapsed().as_secs_f32());
+        match e {
+            EngineEvent::Caption(c) => print_caption(&c, at, live),
+            EngineEvent::Status(s) => eprintln!("status: {}", s.text),
+            EngineEvent::State(s) => eprintln!("state: {s:?}"),
+            _ => {}
+        }
+    }
+    engine.send(EngineCommand::Stop);
+    engine.shutdown(Duration::from_secs(3));
     Ok(())
 }

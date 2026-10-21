@@ -7,11 +7,11 @@ repository = "https://github.com/canmenzo/hammurabi"
 default-run = "hammurabi"
 
 [features]
-default = []
+default = ["win-livecaptions"]   # no-op off Windows
 cuda  = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]   # CUDA >= 12.8 for RTX 50xx (sm_120)
 cudnn = ["cuda", "candle-core/cudnn"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
-win-livecaptions = ["dep:uiautomation"]
+win-livecaptions = ["dep:uiautomation", "dep:windows"]
 
 [dependencies]
 candle-core = "0.11"
@@ -53,6 +53,7 @@ raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = { version = "0.25", optional = true }
+windows = { version = "0.62", optional = true, features = ["Win32_UI_WindowsAndMessaging"] }
 
 [profile.dev.package."*"]
 opt-level = 3

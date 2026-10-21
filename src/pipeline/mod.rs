@@ -1,6 +1,7 @@
 //! Engine thread: audio → segmenter → scheduler → ASR → text cleaning → assembler → captions.
 
 pub mod assembler;
+pub mod rolling;
 pub mod scheduler;
 pub mod segmenter;
 pub mod text;
@@ -13,9 +14,11 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, never, select};
 
 use crate::asr::AsrWorker;
+#[cfg(all(windows, feature = "win-livecaptions"))]
+use crate::asr::livecaptions::{LcEvent, LiveCaptions};
 use crate::audio::{AudioCapture, Frames16k};
 use crate::models::{self, ModelId};
-use crate::settings::{ModelChoice, Settings, TranslatorChoice};
+use crate::settings::{AsrBackend, ModelChoice, Settings, TranslatorChoice};
 use crate::translate::TranslatorWorker;
 use crate::types::AudioSource;
 use crate::types::{
@@ -24,6 +27,7 @@ use crate::types::{
     TranslateRequest, TranslatorEvent,
 };
 use assembler::{Assembler, Out};
+use rolling::{RollingText, Step};
 use scheduler::Scheduler;
 use segmenter::Segmenter;
 
@@ -31,6 +35,12 @@ const FRAME: Duration = Duration::from_millis(100);
 /// WASAPI loopback sends nothing while nothing plays; after this gap silence is injected.
 const SILENCE_AFTER: Duration = Duration::from_millis(300);
 const CONTEXT_PAIRS: usize = 3;
+/// Live Captions does not report what it hears (its language is set in Windows); English is
+/// its default, and the translators read the source text itself either way.
+const LC_LANG: &str = "en";
+
+#[cfg(not(all(windows, feature = "win-livecaptions")))]
+enum LcEvent {}
 
 #[derive(Clone)]
 struct Events {
@@ -67,6 +77,8 @@ struct Core {
     seg: Segmenter,
     sched: Scheduler,
     asm: Assembler,
+    /// Windows Live Captions text → sentences.
+    rolling: RollingText,
     /// Language → recent share of sentences; steers auto-detect.
     prior: HashMap<String, f32>,
     tr_ready: bool,
@@ -88,6 +100,7 @@ impl Core {
             seg: Segmenter::new(),
             sched: Scheduler::default(),
             asm: Assembler::default(),
+            rolling: RollingText::default(),
             prior: HashMap::new(),
             tr_ready: false,
             next_tr: 0,
@@ -115,6 +128,7 @@ impl Core {
         self.seg.reset();
         self.sched.reset();
         self.asm.reset();
+        self.rolling = RollingText::default();
         self.live = (self.live.0 + 1, String::new(), None);
     }
 
@@ -125,11 +139,30 @@ impl Core {
     }
 
     fn deadline(&self) -> Option<Instant> {
-        self.asm.flush_deadline()
+        match (self.asm.flush_deadline(), self.rolling.deadline()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     fn tick(&mut self, now: Instant) {
         let out = self.asm.tick(now);
+        self.apply(out);
+        let step = self.rolling.tick(now);
+        self.apply_step(step, now);
+    }
+
+    #[cfg(any(test, all(windows, feature = "win-livecaptions")))]
+    fn lc_text(&mut self, text: &str, now: Instant) {
+        let step = self.rolling.update(text, now);
+        self.apply_step(step, now);
+    }
+
+    fn apply_step(&mut self, step: Step, now: Instant) {
+        if step.sentences.is_empty() && step.tail.is_none() {
+            return;
+        }
+        let out = self.asm.external(step.sentences, step.tail, LC_LANG, now);
         self.apply(out);
     }
 
@@ -411,6 +444,8 @@ pub struct Engine {
     asr_device: String,
     tr: Option<(TranslatorChoice, TranslatorWorker)>,
     capture: Option<AudioCapture>,
+    #[cfg(all(windows, feature = "win-livecaptions"))]
+    lc: Option<LiveCaptions>,
     /// Audio arrives through `audio_tx` from outside (CLI) instead of capture devices.
     fed: bool,
     audio_tx: Sender<AudioChunk>,
@@ -454,6 +489,8 @@ impl Engine {
                     asr_device: String::new(),
                     tr: None,
                     capture: None,
+                    #[cfg(all(windows, feature = "win-livecaptions"))]
+                    lc: None,
                     fed,
                     audio_tx,
                     audio_rx,
@@ -492,6 +529,7 @@ impl Engine {
                 .as_ref()
                 .map_or_else(never, |(_, w)| w.events.clone());
             let audio_rx = self.audio_rx.clone();
+            let lc_rx = self.lc_rx();
             let mut timeout = if self.running {
                 FRAME
             } else {
@@ -509,6 +547,10 @@ impl Engine {
                 recv(asr_rx) -> ev => match ev {
                     Ok(e) => self.on_asr(e),
                     Err(_) => self.on_asr(AsrEvent::Error("speech worker stopped".into())),
+                },
+                recv(lc_rx) -> ev => match ev {
+                    Ok(e) => self.on_lc(e),
+                    Err(_) => self.lc_failed("reader stopped".into()),
                 },
                 recv(tr_rx) -> ev => match ev {
                     Ok(e) => self.on_tr(e),
@@ -575,6 +617,13 @@ impl Engine {
                     self.stop();
                 }
                 self.core.set_settings(s);
+                self.core.reset();
+                if self.start_lc() {
+                    self.ensure_workers();
+                    self.running = true;
+                    self.events().send(EngineEvent::State(EngineState::Loading));
+                    return;
+                }
                 self.ensure_workers();
                 self.core.reset();
                 if self.start_capture() {
@@ -593,11 +642,17 @@ impl Engine {
             }
             EngineCommand::Reconfigure(s) => {
                 let prev = self.core.settings.clone();
+                if self.running && s.asr_backend != prev.asr_backend {
+                    return self.command(EngineCommand::Start(s));
+                }
                 self.core.set_settings(s);
                 if !self.running {
                     return;
                 }
                 self.ensure_workers();
+                if self.lc_active() {
+                    return;
+                }
                 let s = &self.core.settings;
                 if (s.source, &s.input_device, &s.output_device)
                     != (prev.source, &prev.input_device, &prev.output_device)
@@ -667,6 +722,10 @@ impl Engine {
 
     fn stop(&mut self) {
         self.stop_capture();
+        #[cfg(all(windows, feature = "win-livecaptions"))]
+        {
+            self.lc = None;
+        }
         self.running = false;
         self.core.reset();
         self.core.caption(CaptionUpdate::Clear);
@@ -675,7 +734,7 @@ impl Engine {
     /// Workers survive Stop/Start; they are rebuilt only when their model changes.
     fn ensure_workers(&mut self) {
         let key = (self.core.settings.model, self.core.settings.trim_audio);
-        if self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
+        if !self.lc_active() && self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
             self.asr = Some((key, AsrWorker::spawn(key.0, key.1)));
             self.core.reset();
             self.core.sched.forget_in_flight();
@@ -728,6 +787,103 @@ impl Engine {
                 );
                 self.events().send(EngineEvent::State(EngineState::Error));
             }
+        }
+    }
+
+    fn wants_lc(&self) -> bool {
+        self.core.settings.asr_backend == AsrBackend::WindowsLiveCaptions && !self.fed
+    }
+
+    #[cfg(all(windows, feature = "win-livecaptions"))]
+    fn lc_active(&self) -> bool {
+        self.lc.is_some()
+    }
+
+    #[cfg(not(all(windows, feature = "win-livecaptions")))]
+    fn lc_active(&self) -> bool {
+        false
+    }
+
+    /// Starts reading Windows Live Captions when selected; false = use Whisper.
+    #[cfg(all(windows, feature = "win-livecaptions"))]
+    fn start_lc(&mut self) -> bool {
+        if !self.wants_lc() {
+            return false;
+        }
+        self.lc = Some(LiveCaptions::spawn());
+        true
+    }
+
+    #[cfg(not(all(windows, feature = "win-livecaptions")))]
+    fn start_lc(&mut self) -> bool {
+        if self.wants_lc() {
+            self.events().status(
+                StatusLevel::Warning,
+                "Windows Live Captions is not supported on this system, using Whisper".into(),
+                Some(Duration::from_secs(8)),
+            );
+        }
+        false
+    }
+
+    #[cfg(all(windows, feature = "win-livecaptions"))]
+    fn lc_rx(&self) -> Receiver<LcEvent> {
+        self.lc.as_ref().map_or_else(never, |l| l.events.clone())
+    }
+
+    #[cfg(not(all(windows, feature = "win-livecaptions")))]
+    fn lc_rx(&self) -> Receiver<LcEvent> {
+        never()
+    }
+
+    #[cfg(all(windows, feature = "win-livecaptions"))]
+    fn on_lc(&mut self, ev: LcEvent) {
+        match ev {
+            LcEvent::Ready => {
+                if self.running {
+                    self.events().send(EngineEvent::State(EngineState::Running));
+                    self.events().status(
+                        StatusLevel::Info,
+                        "Running: Windows Live Captions".into(),
+                        Some(Duration::from_secs(3)),
+                    );
+                }
+            }
+            LcEvent::Text(t) => {
+                if self.running {
+                    self.core.lc_text(&t, Instant::now());
+                }
+            }
+            LcEvent::Error(e) => self.lc_failed(e),
+        }
+    }
+
+    #[cfg(not(all(windows, feature = "win-livecaptions")))]
+    fn on_lc(&mut self, ev: LcEvent) {
+        match ev {}
+    }
+
+    /// Live Captions could not start or went away: carry on with Whisper.
+    fn lc_failed(&mut self, e: String) {
+        #[cfg(all(windows, feature = "win-livecaptions"))]
+        {
+            self.lc = None;
+        }
+        if !self.running {
+            return;
+        }
+        self.events().status(
+            StatusLevel::Warning,
+            format!("Windows Live Captions unavailable ({e}), using Whisper"),
+            Some(Duration::from_secs(10)),
+        );
+        self.core.reset();
+        self.ensure_workers();
+        if !self.start_capture() {
+            self.running = false;
+            self.core.reset();
+        } else if self.core.sched.ready {
+            self.events().send(EngineEvent::State(EngineState::Running));
         }
     }
 
@@ -803,5 +959,51 @@ impl EngineHandle {
     pub fn shutdown(self, timeout: Duration) {
         self.send(EngineCommand::Shutdown);
         let _ = self.done.recv_timeout(timeout);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_captions_text_reaches_captions_and_translation() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let settings = Settings {
+            translate: true,
+            target_language: "tr".into(),
+            ..Settings::default()
+        };
+        let mut core = Core::new(
+            settings,
+            Events {
+                tx,
+                notify: Arc::new(|| {}),
+            },
+        );
+        core.tr_ready = true;
+        let t = Instant::now();
+        core.lc_text("", t);
+        core.lc_text("Hello there. How are", t);
+        assert_eq!(core.tr_out.len(), 1);
+        assert_eq!(core.tr_out[0].text, "Hello there.");
+        assert_eq!(core.tr_out[0].source, "en");
+        core.translation(core.tr_out[0].id, Some("Merhaba.".into()));
+        core.tick(t + Duration::from_secs(2));
+        let captions: Vec<CaptionUpdate> = rx
+            .try_iter()
+            .filter_map(|e| match e {
+                EngineEvent::Caption(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert!(captions.iter().any(|c| matches!(c,
+            CaptionUpdate::Final { translated: Some(t), original, .. }
+                if t == "Merhaba." && original == "Hello there.")));
+        assert!(captions.iter().any(|c| matches!(c,
+            CaptionUpdate::Live { original, .. } if original == "How are")));
+        // The paused tail became a sentence of its own.
+        assert!(captions.iter().any(|c| matches!(c,
+            CaptionUpdate::Final { original, translated: None, .. } if original == "How are")));
     }
 }

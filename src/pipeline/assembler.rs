@@ -177,6 +177,28 @@ impl Assembler {
         out
     }
 
+    /// Sentences and live text already split by another recognizer (Windows Live Captions).
+    pub fn external(
+        &mut self,
+        sentences: Vec<String>,
+        tail: Option<String>,
+        lang: &str,
+        now: Instant,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        for s in sentences {
+            let words = s.split_whitespace().map(String::from).collect();
+            self.emit(&mut out, words, Some(lang.to_string()), now);
+        }
+        if let Some(t) = tail {
+            out.push(Out::Live {
+                text: t,
+                lang: Some(lang.to_string()),
+            });
+        }
+        out
+    }
+
     fn emit(&mut self, out: &mut Vec<Out>, words: Vec<String>, lang: Option<String>, now: Instant) {
         let text = words.join(" ").trim().to_string();
         if text.is_empty() {

@@ -5,7 +5,8 @@ use eframe::egui::{
 use crate::audio::{DeviceInfo, DeviceList};
 use crate::models::{ModelId, spec};
 use crate::settings::{
-    Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, TranslatorChoice, lang_name,
+    AsrBackend, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, TranslatorChoice,
+    lang_name,
 };
 use crate::types::AudioSource;
 
@@ -192,26 +193,52 @@ fn speech(
 ) {
     section(ui, "Speech");
     let gpu = m.compute != "CPU";
+    let lc = cfg!(all(windows, feature = "win-livecaptions"))
+        && s.asr_backend == AsrBackend::WindowsLiveCaptions;
     grid(ui, "speech", |ui| {
+        if cfg!(all(windows, feature = "win-livecaptions")) {
+            ui.label("Speech engine");
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    for (v, label) in [
+                        (AsrBackend::Whisper, "Whisper (local)"),
+                        (AsrBackend::WindowsLiveCaptions, "Windows Live Captions"),
+                    ] {
+                        *changed |= ui.radio_value(&mut s.asr_backend, v, label).changed();
+                    }
+                });
+                if lc {
+                    ui.weak("Language and microphone come from Windows Live Captions settings.");
+                }
+            });
+            ui.end_row();
+        }
+
         ui.label("Spoken language");
         let current = s
             .spoken_language
             .as_deref()
             .map_or("Auto-detect", lang_name)
             .to_string();
-        ComboBox::from_id_salt("spoken")
-            .selected_text(current)
-            .width(200.0)
-            .show_ui(ui, |ui| {
-                *changed |= ui
-                    .selectable_value(&mut s.spoken_language, None, "Auto-detect")
-                    .changed();
-                for c in SOURCE_LANGS {
+        ui.add_enabled_ui(!lc, |ui| {
+            ComboBox::from_id_salt("spoken")
+                .selected_text(current)
+                .width(200.0)
+                .show_ui(ui, |ui| {
                     *changed |= ui
-                        .selectable_value(&mut s.spoken_language, Some(c.to_string()), lang_name(c))
+                        .selectable_value(&mut s.spoken_language, None, "Auto-detect")
                         .changed();
-                }
-            });
+                    for c in SOURCE_LANGS {
+                        *changed |= ui
+                            .selectable_value(
+                                &mut s.spoken_language,
+                                Some(c.to_string()),
+                                lang_name(c),
+                            )
+                            .changed();
+                    }
+                })
+        });
         ui.end_row();
 
         ui.label("Model");
@@ -227,20 +254,22 @@ fn speech(
                 format!("{} ({})", spec(id).label, size_text(id))
             }
         };
-        ComboBox::from_id_salt("model")
-            .selected_text(label(s.model))
-            .width(200.0)
-            .show_ui(ui, |ui| {
-                for c in [
-                    ModelChoice::Auto,
-                    ModelChoice::Tiny,
-                    ModelChoice::Base,
-                    ModelChoice::Small,
-                    ModelChoice::Turbo,
-                ] {
-                    *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
-                }
-            });
+        ui.add_enabled_ui(!lc, |ui| {
+            ComboBox::from_id_salt("model")
+                .selected_text(label(s.model))
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for c in [
+                        ModelChoice::Auto,
+                        ModelChoice::Tiny,
+                        ModelChoice::Base,
+                        ModelChoice::Small,
+                        ModelChoice::Turbo,
+                    ] {
+                        *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
+                    }
+                })
+        });
         ui.end_row();
 
         ui.label("Status");

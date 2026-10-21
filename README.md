@@ -17,6 +17,7 @@ Get the latest build from the [Releases page](https://github.com/canmenzo/hammur
 | OS | File |
 |---|---|
 | Windows (x64) | `hammurabi-windows-x64.zip` |
+| Windows, NVIDIA RTX 50 series | `hammurabi-windows-cuda.zip` (GPU build, bundles the CUDA runtime DLLs) |
 | macOS (Apple silicon) | `hammurabi-macos-arm64.zip` |
 | Linux (x64) | `hammurabi-linux-x64.tar.gz` |
 
@@ -132,11 +133,21 @@ cargo build --release
 GPU builds are optional:
 
 - `--features metal`: Apple GPUs (macOS)
-- `--features cuda`: NVIDIA GPUs. Needs the CUDA toolkit. RTX 50 series cards need CUDA 12.8 or newer.
+- `--features cuda`: NVIDIA GPUs. Needs the CUDA toolkit (12.9 tested; RTX 50 series cards need 12.8 or newer). The toolkit only needs `nvcc`, `cudart`, `cublas`, `curand`, `nvrtc` and `thrust`; no driver install is needed.
 
-```sh
+On Windows, nvcc needs `cl.exe`, so build from a Visual Studio developer prompt. From `cmd`:
+
+```bat
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64
+set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+set "PATH=%CUDA_PATH%\bin;%PATH%"
+set CUDA_COMPUTE_CAP=120
 cargo build --release --features cuda
 ```
+
+`CUDA_COMPUTE_CAP` is your GPU's compute capability without the dot (`nvidia-smi --query-gpu=compute_cap --format=csv`): 120 for RTX 50, 89 for RTX 40, 86 for RTX 30. The kernels are built for that one GPU generation. The exe loads `cudart64_12.dll`, `cublas64_12.dll`, `cublasLt64_12.dll` and `curand64_10.dll` from the toolkit's `bin` folder, so keep it on `PATH` or copy those DLLs next to the exe. The first CUDA run takes about 15 s longer while the driver compiles the kernels. After that they are cached.
+
+With CUDA, Whisper runs on the GPU in F32 with TF32 matmuls. MADLAD keeps its 4-bit weights; F16 activations overflow in T5 and produce garbage.
 
 ## Command line
 

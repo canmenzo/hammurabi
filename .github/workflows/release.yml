@@ -41,6 +41,50 @@ jobs:
           path: dist/hammurabi-windows-x64.zip
           if-no-files-found: error
 
+  # NVIDIA build. candle compiles its kernels for one compute capability, and its GGUF
+  # (MADLAD) kernels are SASS-only, so this targets RTX 50 series (sm_120) only.
+  build-windows-cuda:
+    runs-on: windows-latest
+    env:
+      CUDA_COMPUTE_CAP: '120'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '12.9.1'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev", "thrust"]'
+
+      # nvcc needs cl.exe on PATH.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bins --features cuda
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "dist/hammurabi-windows-cuda"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
+          # The exe links these at load time; they are redistributable under the CUDA EULA.
+          foreach ($dll in 'cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll', 'curand64_10.dll') {
+            Copy-Item (Join-Path $env:CUDA_PATH "bin/$dll") $stage
+          }
+          7z a -tzip -mx=5 dist/hammurabi-windows-cuda.zip ./$stage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-cuda
+          path: dist/hammurabi-windows-cuda.zip
+          compression-level: 0
+          if-no-files-found: error
+
   build-macos:
     runs-on: macos-latest
     steps:
@@ -150,7 +194,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build-windows, build-macos, build-linux]
+    needs: [build-windows, build-windows-cuda, build-macos, build-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -174,6 +218,7 @@ jobs:
             ### Download
 
             - Windows (x64): `hammurabi-windows-x64.zip`
+            - Windows with an NVIDIA RTX 50 series GPU: `hammurabi-windows-cuda.zip` (much faster captions and translation; needs a recent NVIDIA driver)
             - macOS (Apple silicon): `hammurabi-macos-arm64.zip`
             - Linux (x64): `hammurabi-linux-x64.tar.gz`
 

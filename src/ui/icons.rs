@@ -68,7 +68,7 @@ mod tests {
         let cases: [(bool, [u8; 3]); 2] = [(false, [0xFF, 0xFF, 0xFF]), (true, [0xF5, 0xB1, 0x3D])];
         for (active, rgb) in cases {
             let (buf, _, _) = icon_rgba(active, 32);
-            for px in buf.chunks_exact(4).filter(|p| p[3] > 0) {
+            for px in buf.as_chunks::<4>().0.iter().filter(|p| p[3] > 0) {
                 assert_eq!(&px[..3], &rgb);
             }
         }

@@ -149,6 +149,10 @@ impl OverlayState {
         });
     }
 
+    pub fn clear_status(&mut self) {
+        self.status = None;
+    }
+
     /// Next time a cue or status expires or fades; the caller schedules a repaint for it.
     pub fn next_deadline(&self) -> Option<Instant> {
         let now = Instant::now();

@@ -48,7 +48,7 @@ fn main() -> eframe::Result {
                 settings: Settings::default(),
                 status: ModelsStatus {
                     cached: vec![ModelId::WhisperBase],
-                    downloading: Some((ModelId::Madlad3bQ4k, 600_000_000, Some(1_670_000_000))),
+                    downloading: vec![(ModelId::Madlad3bQ4k, 600_000_000, Some(1_670_000_000))],
                     devices: DeviceList {
                         inputs: vec![dev("a", "Microphone (USB)", true)],
                         outputs: vec![dev("b", "Speakers (Realtek)", true)],

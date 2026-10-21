@@ -130,15 +130,15 @@ impl eframe::App for Demo {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if !self.placed {
-            if let Some(m) = ui.ctx().input(|i| i.viewport().monitor_size) {
-                let (pos, size) =
-                    layout_for_monitor(m, &self.settings.caption, self.settings.overlay_pos);
-                ui.ctx()
-                    .send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-                ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(size));
-                self.placed = true;
-            }
+        if !self.placed
+            && let Some(m) = ui.ctx().input(|i| i.viewport().monitor_size)
+        {
+            let (pos, size) =
+                layout_for_monitor(m, &self.settings.caption, self.settings.overlay_pos);
+            ui.ctx()
+                .send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+            ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(size));
+            self.placed = true;
         }
         let style = self.settings.caption.clone();
         let r = self.overlay.paint(ui, &style, self.move_mode);

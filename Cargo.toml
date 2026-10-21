@@ -22,7 +22,7 @@ cpal = "0.18"
 rubato = "5"
 audioadapter-buffers = "5.1"
 hound = "3.5"
-eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "system_fonts", "x11", "wayland"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "system_fonts", "clipboard", "x11", "wayland"] }
 tray-icon = { version = "0.26", default-features = false }
 global-hotkey = "0.9"
 ureq = "3"

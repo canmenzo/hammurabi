@@ -87,7 +87,7 @@ impl App {
             settings_win: SettingsWindow::default(),
             models: ModelsStatus {
                 cached: Vec::new(),
-                downloading: None,
+                downloading: Vec::new(),
                 devices: DeviceList {
                     inputs: Vec::new(),
                     outputs: Vec::new(),
@@ -113,6 +113,9 @@ impl App {
         if let Some(e) = hk_err.or_else(|| app.hotkeys.apply(&app.settings)) {
             app.warn(e);
         }
+        if std::env::args().any(|a| a == "--start") {
+            app.handle(UiAction::ToggleRunning, &ctx);
+        }
         log::info!("hammurabi ready (tray: {})", app.tray.is_some());
         app
     }
@@ -135,13 +138,11 @@ impl App {
         self.tray_dirty = true;
     }
 
+    /// Saving and reconfiguring the engine wait for `SAVE_DEBOUNCE` without further changes,
+    /// so typing a URL does not restart the translator on every key.
     fn changed(&mut self) {
         self.dirty_since = Some(Instant::now());
         self.tray_dirty = true;
-        if self.running {
-            self.engine()
-                .send(EngineCommand::Reconfigure(self.settings.clone()));
-        }
     }
 
     fn handle(&mut self, action: UiAction, ctx: &Context) {
@@ -149,6 +150,8 @@ impl App {
         match action {
             UiAction::ToggleRunning => {
                 self.running = !self.running;
+                self.overlay.clear_status();
+                self.status.clear();
                 let cmd = if self.running {
                     EngineCommand::Start(self.settings.clone())
                 } else {
@@ -232,23 +235,40 @@ impl App {
                 self.tray_dirty = true;
             }
             EngineEvent::Progress(p) => {
-                let pct = p
-                    .total
-                    .map(|t| format!(" {}%", p.done * 100 / t.max(1)))
-                    .unwrap_or_default();
-                let label = models::spec(p.model).label;
-                self.status = match p.phase {
-                    ProgressPhase::Downloading => format!("Downloading {label}{pct}"),
-                    ProgressPhase::Loading => format!("Loading {label}"),
-                };
-                self.models.downloading = match p.phase {
+                self.models.downloading.retain(|d| d.0 != p.model);
+                let text = match p.phase {
                     ProgressPhase::Downloading if p.total.is_none_or(|t| p.done < t) => {
-                        Some((p.model, p.done, p.total))
+                        self.models.downloading.push((p.model, p.done, p.total));
+                        let parts: Vec<String> = self
+                            .models
+                            .downloading
+                            .iter()
+                            .map(|&(m, done, total)| {
+                                let pct = total
+                                    .map(|t| format!(" {}%", done * 100 / t.max(1)))
+                                    .unwrap_or_default();
+                                format!("{}{pct}", models::spec(m).label)
+                            })
+                            .collect();
+                        Some(format!("Downloading {}", parts.join(", ")))
                     }
-                    _ => None,
+                    ProgressPhase::Downloading => {
+                        self.refresh_models();
+                        None
+                    }
+                    ProgressPhase::Loading => {
+                        self.refresh_models();
+                        Some(format!("Loading {}…", models::spec(p.model).label))
+                    }
                 };
-                if self.models.downloading.is_none() {
-                    self.refresh_models();
+                if let Some(text) = text {
+                    self.status = text.clone();
+                    let status = Status {
+                        level: StatusLevel::Info,
+                        text,
+                        ttl: Some(Duration::from_secs(5)),
+                    };
+                    self.overlay.set_status(status, now);
                 }
                 self.tray_dirty = true;
             }
@@ -335,6 +355,10 @@ impl eframe::App for App {
                 self.dirty_since = None;
                 if let Err(e) = config::save(&self.settings) {
                     log::error!("config save failed: {e:#}");
+                }
+                if self.running {
+                    self.engine()
+                        .send(EngineCommand::Reconfigure(self.settings.clone()));
                 }
             } else {
                 ctx.request_repaint_after(t + SAVE_DEBOUNCE - now);

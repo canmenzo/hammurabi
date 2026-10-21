@@ -15,8 +15,8 @@ const OLLAMA_MODEL: &str = "qwen2.5:3b";
 /// Read-only data the settings window displays.
 pub struct ModelsStatus {
     pub cached: Vec<ModelId>,
-    /// (model, done, total) of the running download.
-    pub downloading: Option<(ModelId, u64, Option<u64>)>,
+    /// (model, done, total) of each running download.
+    pub downloading: Vec<(ModelId, u64, Option<u64>)>,
     pub devices: DeviceList,
     /// Compute device label, e.g. "CPU".
     pub compute: String,
@@ -161,8 +161,8 @@ fn size_text(id: ModelId) -> String {
 fn model_status(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
     ui.horizontal(|ui| {
         ui.label(format!("{} ({})", spec(id).label, size_text(id)));
-        match m.downloading {
-            Some((d, done, total)) if d == id => {
+        match m.downloading.iter().find(|d| d.0 == id) {
+            Some(&(_, done, total)) => {
                 let bar = match total {
                     Some(t) if t > 0 => ProgressBar::new(done as f32 / t as f32).show_percentage(),
                     _ => ProgressBar::new(0.0).animate(true),
@@ -175,10 +175,7 @@ fn model_status(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<Se
                 );
             }
             _ => {
-                if ui
-                    .add_enabled(m.downloading.is_none(), egui::Button::new("Download"))
-                    .clicked()
-                {
+                if ui.button("Download").clicked() {
                     actions.push(SettingsAction::Download(id));
                 }
             }
@@ -248,6 +245,13 @@ fn speech(
 
         ui.label("Status");
         model_status(ui, ModelId::whisper(s.model, gpu), m, actions);
+        ui.end_row();
+
+        ui.label("Speed");
+        *changed |= ui
+            .checkbox(&mut s.trim_audio, "Fast mode (skip silence padding)")
+            .on_hover_text("Encodes only the speech instead of a full 30 s window. Turn off if captions get worse.")
+            .changed();
         ui.end_row();
 
         ui.label("Compute");

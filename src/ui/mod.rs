@@ -19,7 +19,8 @@ use crate::models::{self, ModelId};
 use crate::pipeline::{Engine, EngineHandle};
 use crate::settings::{Settings, lang_name};
 use crate::types::{
-    AudioSource, EngineCommand, EngineEvent, EngineState, ProgressPhase, Status, StatusLevel,
+    AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, ProgressPhase, Status,
+    StatusLevel,
 };
 use overlay::OverlayState;
 use settings_window::{ModelsStatus, SettingsAction, SettingsWindow};
@@ -230,6 +231,7 @@ impl App {
                 self.tray_dirty = true;
             }
             EngineEvent::Status(s) => {
+                log::info!("status: {}", s.text);
                 self.status = s.text.clone();
                 self.overlay.set_status(s, now);
                 self.tray_dirty = true;
@@ -272,7 +274,18 @@ impl App {
                 }
                 self.tray_dirty = true;
             }
-            EngineEvent::Caption(c) => self.overlay.apply(c, &self.settings, now),
+            EngineEvent::Caption(c) => {
+                if let CaptionUpdate::Final {
+                    id,
+                    original,
+                    translated,
+                    lang,
+                } = &c
+                {
+                    log::debug!("final #{id} ({lang}) {original:?} => {translated:?}");
+                }
+                self.overlay.apply(c, &self.settings, now)
+            }
             EngineEvent::Stats { device, .. } => self.models.compute = device,
         }
     }

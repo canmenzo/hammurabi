@@ -1,8 +1,6 @@
-#![allow(dead_code, unused_variables)]
-
 pub mod download;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use crate::settings::ModelChoice;
@@ -58,12 +56,11 @@ pub struct ModelPaths {
 
 const MB: u64 = 1_000_000;
 
-// T4 pins revisions to commit SHAs.
 pub fn spec(id: ModelId) -> &'static ModelSpec {
     const SAFETENSORS: [&str; 3] = ["model.safetensors", "config.json", "tokenizer.json"];
     static TINY: ModelSpec = ModelSpec {
         repo: "lmz/candle-whisper",
-        revision: "main",
+        revision: "02d8350e5402f18725eadb6101b4963d181b0b5e",
         files: [
             "model-tiny-q80.gguf",
             "config-tiny.json",
@@ -74,28 +71,28 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
     };
     static BASE: ModelSpec = ModelSpec {
         repo: "openai/whisper-base",
-        revision: "main",
+        revision: "e37978b90ca9030d5170a5c07aadb050351a65bb",
         files: SAFETENSORS,
         approx_bytes: 290 * MB,
         label: "Base",
     };
     static SMALL: ModelSpec = ModelSpec {
         repo: "openai/whisper-small",
-        revision: "main",
+        revision: "973afd24965f72e36ca33b3055d56a652f456b4d",
         files: SAFETENSORS,
         approx_bytes: 967 * MB,
         label: "Small",
     };
     static TURBO: ModelSpec = ModelSpec {
         repo: "openai/whisper-large-v3-turbo",
-        revision: "main",
+        revision: "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
         files: SAFETENSORS,
         approx_bytes: 1_620 * MB,
         label: "Turbo",
     };
     static MADLAD: ModelSpec = ModelSpec {
         repo: "jbochi/madlad400-3b-mt",
-        revision: "main",
+        revision: "bb45f1851bf13a0b8f4fcd9ecadf2cdb7cf22439",
         files: ["model-q4k.gguf", "config.json", "tokenizer.json"],
         approx_bytes: 1_670 * MB,
         label: "MADLAD-400 3B",
@@ -109,15 +106,89 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
     }
 }
 
-/// Cache layout: `models_dir()/<repo with '/' -> '--'>/<file>`.
-pub fn is_cached(id: ModelId) -> bool {
-    false
+fn model_dir(id: ModelId) -> anyhow::Result<PathBuf> {
+    Ok(crate::paths::models_dir()?.join(spec(id).repo.replace('/', "--")))
 }
 
+fn paths_in(id: ModelId, dir: &Path) -> ModelPaths {
+    let [w, c, t] = spec(id).files;
+    ModelPaths {
+        weights: dir.join(w),
+        config: dir.join(c),
+        tokenizer: dir.join(t),
+        quantized: w.ends_with(".gguf"),
+    }
+}
+
+/// Cache layout: `models_dir()/<repo with '/' -> '--'>/<file>`.
+pub fn is_cached(id: ModelId) -> bool {
+    model_dir(id).is_ok_and(|d| {
+        let p = paths_in(id, &d);
+        [p.weights, p.config, p.tokenizer]
+            .iter()
+            .all(|f| f.is_file())
+    })
+}
+
+/// Downloads missing files; `progress` reports cumulative bytes over all files.
 pub fn ensure(
     id: ModelId,
     progress: &mut dyn FnMut(u64, Option<u64>),
     cancel: &AtomicBool,
 ) -> anyhow::Result<ModelPaths> {
-    anyhow::bail!("unimplemented")
+    let spec = spec(id);
+    let paths = paths_in(id, &model_dir(id)?);
+    let mut base = 0;
+    for (name, dest) in spec
+        .files
+        .iter()
+        .zip([&paths.weights, &paths.config, &paths.tokenizer])
+    {
+        if dest.is_file() {
+            base += std::fs::metadata(dest).map_or(0, |m| m.len());
+            continue;
+        }
+        let mut size = 0;
+        download::fetch(
+            spec.repo,
+            spec.revision,
+            name,
+            dest,
+            &mut |d, t| {
+                size = d;
+                progress(base + d, Some(spec.approx_bytes.max(base + t.unwrap_or(d))));
+            },
+            cancel,
+        )?;
+        base += size;
+    }
+    Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revisions_pinned() {
+        for id in ModelId::ALL {
+            let r = spec(id).revision;
+            assert!(
+                r.len() == 40 && r.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{r}"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_and_quantized() {
+        let p = paths_in(ModelId::WhisperTiny, Path::new("x"));
+        assert!(p.quantized && p.weights.ends_with("model-tiny-q80.gguf"));
+        assert!(!paths_in(ModelId::WhisperBase, Path::new("x")).quantized);
+        assert!(
+            model_dir(ModelId::WhisperBase)
+                .unwrap()
+                .ends_with("openai--whisper-base")
+        );
+    }
 }

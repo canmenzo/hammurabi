@@ -1,13 +1,16 @@
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
-/// `ProjectDirs::from("dev", "menzo", "Hammurabi")` config dir + `config.toml`.
-pub fn config_file() -> anyhow::Result<PathBuf> {
-    anyhow::bail!("unimplemented")
+use anyhow::Context;
+use directories::ProjectDirs;
+
+fn dirs() -> anyhow::Result<ProjectDirs> {
+    ProjectDirs::from("dev", "menzo", "Hammurabi").context("no home directory")
 }
 
-/// `cache_dir()/models`.
+pub fn config_file() -> anyhow::Result<PathBuf> {
+    Ok(dirs()?.config_dir().join("config.toml"))
+}
+
 pub fn models_dir() -> anyhow::Result<PathBuf> {
-    anyhow::bail!("unimplemented")
+    Ok(dirs()?.cache_dir().join("models"))
 }

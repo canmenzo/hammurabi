@@ -56,7 +56,8 @@ mod tests {
                 assert_eq!(alpha(w - 1, 0), 0);
                 assert_eq!(alpha(0, w - 1), 0);
                 assert_eq!(alpha(w - 1, w - 1), 0);
-                let middle_opaque = (w / 4..w * 3 / 4).any(|y| (w / 4..w * 3 / 4).any(|x| alpha(x, y) == 255));
+                let middle_opaque =
+                    (w / 4..w * 3 / 4).any(|y| (w / 4..w * 3 / 4).any(|x| alpha(x, y) == 255));
                 assert!(middle_opaque, "size {size} active {active}");
             }
         }

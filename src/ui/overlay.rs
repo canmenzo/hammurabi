@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, CursorIcon, FontId, Galley, Pos2, Rect, Shape, Stroke,
-    Ui, Vec2, ViewportBuilder, vec2,
+    self, Align2, Color32, CornerRadius, CursorIcon, FontId, Galley, Pos2, Rect, Shape, Stroke, Ui,
+    Vec2, ViewportBuilder, vec2,
 };
 
 use crate::settings::{CaptionStyle, Edge, Settings};
@@ -48,7 +48,9 @@ impl Line {
                     out.push((self.original.as_str(), false));
                 }
             }
-            None if self.same_lang || !style.show_original => out.push((self.original.as_str(), true)),
+            None if self.same_lang || !style.show_original => {
+                out.push((self.original.as_str(), true))
+            }
             None => out.push((self.original.as_str(), false)),
         }
         if style.original_first {
@@ -99,7 +101,12 @@ impl OverlayState {
         let target = settings.target_language.as_str();
         self.hold_secs = settings.caption.hold_secs;
         match update {
-            CaptionUpdate::Final { id, original, translated, lang } => {
+            CaptionUpdate::Final {
+                id,
+                original,
+                translated,
+                lang,
+            } => {
                 let line = Line::new(original, translated, Some(&lang), target);
                 let hold = Duration::from_secs_f32(
                     self.hold_secs.max(line.chars() as f32 / 15.0).max(0.0),
@@ -108,13 +115,22 @@ impl OverlayState {
                     c.line = line;
                     c.hold = hold;
                 } else {
-                    self.cues.push(Cue { id, line, shown: now, hold });
+                    self.cues.push(Cue {
+                        id,
+                        line,
+                        shown: now,
+                        hold,
+                    });
                     let keep = settings.caption.cues.max(1) as usize;
                     let drop = self.cues.len().saturating_sub(keep);
                     self.cues.drain(..drop);
                 }
             }
-            CaptionUpdate::Live { original, translated, lang } => {
+            CaptionUpdate::Live {
+                original,
+                translated,
+                lang,
+            } => {
                 self.live = (!original.trim().is_empty())
                     .then(|| Line::new(original, translated, lang.as_deref(), target));
             }
@@ -137,7 +153,11 @@ impl OverlayState {
     pub fn next_deadline(&self) -> Option<Instant> {
         let now = Instant::now();
         let cues = self.cues.iter().map(|c| {
-            if now < c.hold_end() { c.hold_end() } else { c.hold_end() + FADE }
+            if now < c.hold_end() {
+                c.hold_end()
+            } else {
+                c.hold_end() + FADE
+            }
         });
         let status = self.status.as_ref().and_then(|s| s.expires);
         cues.chain(status).min()
@@ -146,7 +166,11 @@ impl OverlayState {
     pub fn paint(&mut self, ui: &mut Ui, style: &CaptionStyle, move_mode: bool) -> OverlayResponse {
         let now = Instant::now();
         self.cues.retain(|c| now < c.hold_end() + FADE);
-        if self.status.as_ref().is_some_and(|s| s.expires.is_some_and(|e| now >= e)) {
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.expires.is_some_and(|e| now >= e))
+        {
             self.status = None;
         }
 
@@ -160,7 +184,12 @@ impl OverlayState {
         let skip = self.cues.len().saturating_sub(style.cues.max(1) as usize);
         for c in &self.cues[skip..] {
             let left = (c.hold_end() + FADE).saturating_duration_since(now);
-            let alpha = if left < FADE { fading = true; left.as_secs_f32() / FADE.as_secs_f32() } else { 1.0 };
+            let alpha = if left < FADE {
+                fading = true;
+                left.as_secs_f32() / FADE.as_secs_f32()
+            } else {
+                1.0
+            };
             blocks.push((&c.line, alpha));
         }
         if let Some(l) = &self.live {
@@ -177,7 +206,14 @@ impl OverlayState {
             let mut ty = r.top() + PAD_Y;
             for (g, color) in lines {
                 let pos = Pos2::new(rect.center().x - g.size().x / 2.0, ty);
-                paint_text(&painter, pos, &g, color.gamma_multiply(alpha), style.edge, alpha);
+                paint_text(
+                    &painter,
+                    pos,
+                    &g,
+                    color.gamma_multiply(alpha),
+                    style.edge,
+                    alpha,
+                );
                 ty += g.size().y + LINE_GAP;
             }
             y -= size.y + BLOCK_GAP;
@@ -191,7 +227,12 @@ impl OverlayState {
                 StatusLevel::Warning => Color32::from_rgb(255, 200, 80),
                 StatusLevel::Error => Color32::from_rgb(255, 120, 110),
             };
-            let g = painter.layout(s.text.clone(), FontId::proportional(18.0), Color32::WHITE, wrap);
+            let g = painter.layout(
+                s.text.clone(),
+                FontId::proportional(18.0),
+                Color32::WHITE,
+                wrap,
+            );
             draw(vec![(g, color)], Color32::from_black_alpha(215), 1.0);
         }
 
@@ -207,7 +248,12 @@ impl OverlayState {
                     } else {
                         (style.orig_size, orig_color)
                     };
-                    let g = painter.layout(text.to_owned(), FontId::proportional(size), Color32::WHITE, wrap);
+                    let g = painter.layout(
+                        text.to_owned(),
+                        FontId::proportional(size),
+                        Color32::WHITE,
+                        wrap,
+                    );
                     (g, color)
                 })
                 .collect();
@@ -217,7 +263,8 @@ impl OverlayState {
         if fading {
             ui.ctx().request_repaint();
         } else if let Some(d) = self.next_deadline() {
-            ui.ctx().request_repaint_after(d.saturating_duration_since(now));
+            ui.ctx()
+                .request_repaint_after(d.saturating_duration_since(now));
         }
 
         let mut resp = OverlayResponse::default();
@@ -232,17 +279,28 @@ impl OverlayState {
             ];
             let stroke = Stroke::new(2.0, Color32::from_rgb(255, 224, 102));
             painter.extend(Shape::dashed_line(&path, stroke, 10.0, 6.0));
-            let g = painter.layout_no_wrap(MOVE_HINT.into(), FontId::proportional(16.0), Color32::WHITE);
-            let hint = Align2::CENTER_TOP.anchor_size(frame.center_top() + vec2(0.0, 8.0), g.size() + vec2(20.0, 8.0));
+            let g = painter.layout_no_wrap(
+                MOVE_HINT.into(),
+                FontId::proportional(16.0),
+                Color32::WHITE,
+            );
+            let hint = Align2::CENTER_TOP.anchor_size(
+                frame.center_top() + vec2(0.0, 8.0),
+                g.size() + vec2(20.0, 8.0),
+            );
             painter.rect_filled(hint, CornerRadius::same(8), Color32::from_black_alpha(200));
             painter.galley(hint.center() - g.size() / 2.0, g, Color32::WHITE);
 
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
             let pressed = ui.input(|i| {
-                i.pointer.primary_pressed() && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))
+                i.pointer.primary_pressed()
+                    && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))
             });
             if pressed {
-                if self.last_press.is_some_and(|t| now.duration_since(t) < DOUBLE_CLICK) {
+                if self
+                    .last_press
+                    .is_some_and(|t| now.duration_since(t) < DOUBLE_CLICK)
+                {
                     resp.finish_move = true;
                     self.last_press = None;
                 } else {
@@ -265,17 +323,35 @@ impl OverlayState {
 
     pub fn has_status(&self) -> bool {
         let now = Instant::now();
-        self.status.as_ref().is_some_and(|s| s.expires.is_none_or(|e| now < e))
+        self.status
+            .as_ref()
+            .is_some_and(|s| s.expires.is_none_or(|e| now < e))
     }
 }
 
-fn paint_text(p: &egui::Painter, pos: Pos2, g: &Arc<Galley>, color: Color32, edge: Edge, alpha: f32) {
+fn paint_text(
+    p: &egui::Painter,
+    pos: Pos2,
+    g: &Arc<Galley>,
+    color: Color32,
+    edge: Edge,
+    alpha: f32,
+) {
     let black = Color32::from_black_alpha(230).gamma_multiply(alpha);
     match edge {
         Edge::None => {}
         Edge::Shadow => p.galley_with_override_text_color(pos + vec2(2.0, 2.0), g.clone(), black),
         Edge::Outline => {
-            for (dx, dy) in [(-1.5, 0.0), (1.5, 0.0), (0.0, -1.5), (0.0, 1.5), (-1.1, -1.1), (1.1, -1.1), (-1.1, 1.1), (1.1, 1.1)] {
+            for (dx, dy) in [
+                (-1.5, 0.0),
+                (1.5, 0.0),
+                (0.0, -1.5),
+                (0.0, 1.5),
+                (-1.1, -1.1),
+                (1.1, -1.1),
+                (-1.1, 1.1),
+                (1.1, 1.1),
+            ] {
                 p.galley_with_override_text_color(pos + vec2(dx, dy), g.clone(), black);
             }
         }
@@ -287,17 +363,30 @@ fn parse_color(s: &str) -> Color32 {
     let h = s.trim().trim_start_matches('#');
     let byte = |i: usize| u8::from_str_radix(h.get(i..i + 2)?, 16).ok();
     let rgba = match h.len() {
-        6 => byte(0).zip(byte(2)).zip(byte(4)).map(|((r, g), b)| (r, g, b, 255)),
-        8 => byte(0).zip(byte(2)).zip(byte(4)).zip(byte(6)).map(|(((r, g), b), a)| (r, g, b, a)),
+        6 => byte(0)
+            .zip(byte(2))
+            .zip(byte(4))
+            .map(|((r, g), b)| (r, g, b, 255)),
+        8 => byte(0)
+            .zip(byte(2))
+            .zip(byte(4))
+            .zip(byte(6))
+            .map(|(((r, g), b), a)| (r, g, b, a)),
         _ => None,
     };
-    rgba.map_or(Color32::WHITE, |(r, g, b, a)| Color32::from_rgba_unmultiplied(r, g, b, a))
+    rgba.map_or(Color32::WHITE, |(r, g, b, a)| {
+        Color32::from_rgba_unmultiplied(r, g, b, a)
+    })
 }
 
 /// Root viewport: borderless, transparent, on top, click-through, no taskbar entry, hidden.
 pub fn viewport_builder(settings: &Settings) -> ViewportBuilder {
     // Real monitor size is unknown until the window exists; the app re-lays it out then.
-    let (pos, size) = layout_for_monitor(vec2(1920.0, 1080.0), &settings.caption, settings.overlay_pos);
+    let (pos, size) = layout_for_monitor(
+        vec2(1920.0, 1080.0),
+        &settings.caption,
+        settings.overlay_pos,
+    );
     ViewportBuilder::default()
         .with_title("Hammurabi")
         .with_decorations(false)

@@ -53,7 +53,11 @@ impl AudioCapture {
 /// Device by cpal id, falling back to the OS default when the id is gone (unplugged headset).
 fn find_device(host: &Host, id: Option<&str>, output: bool) -> anyhow::Result<Device> {
     if let Some(id) = id {
-        match id.parse::<DeviceId>().ok().and_then(|d| host.device_by_id(&d)) {
+        match id
+            .parse::<DeviceId>()
+            .ok()
+            .and_then(|d| host.device_by_id(&d))
+        {
             Some(d) => return Ok(d),
             None => log::warn!("audio device {id} not found, using the default"),
         }

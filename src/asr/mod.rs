@@ -24,14 +24,14 @@ pub struct AsrWorker {
 }
 
 impl AsrWorker {
-    pub fn spawn(choice: ModelChoice) -> AsrWorker {
+    pub fn spawn(choice: ModelChoice, trim: bool) -> AsrWorker {
         let (ev_tx, events) = crossbeam_channel::unbounded();
         let (requests, req_rx) = crossbeam_channel::unbounded();
         let cancel = Arc::new(AtomicBool::new(false));
         let c = cancel.clone();
         std::thread::Builder::new()
             .name("hm-asr".into())
-            .spawn(move || run(choice, req_rx, ev_tx, &c))
+            .spawn(move || run(choice, trim, req_rx, ev_tx, &c))
             .expect("spawn hm-asr");
         AsrWorker {
             events,
@@ -88,9 +88,18 @@ fn load(
     Ok(engine)
 }
 
-fn run(choice: ModelChoice, rx: Receiver<AsrRequest>, tx: Sender<AsrEvent>, cancel: &AtomicBool) {
+fn run(
+    choice: ModelChoice,
+    trim: bool,
+    rx: Receiver<AsrRequest>,
+    tx: Sender<AsrEvent>,
+    cancel: &AtomicBool,
+) {
     let mut engine = match load(choice, &tx, cancel) {
-        Ok(e) => Some(e),
+        Ok(mut e) => {
+            e.trim = trim;
+            Some(e)
+        }
         Err(e) => {
             if !cancel.load(Ordering::Relaxed) {
                 let _ = tx.send(AsrEvent::Error(format!("{e:#}")));

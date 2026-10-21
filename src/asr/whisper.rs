@@ -55,6 +55,8 @@ impl Model {
 }
 
 pub struct WhisperEngine {
+    /// Encode only the real audio length plus a margin instead of 30 s (see `mel::mel_tensor`).
+    pub trim: bool,
     model: Model,
     config: Config,
     tokenizer: Tokenizer,
@@ -121,6 +123,7 @@ impl WhisperEngine {
         }
 
         Ok(Self {
+            trim: true,
             filters: mel::filters(config.num_mel_bins)?,
             model,
             config,
@@ -170,7 +173,7 @@ impl Recognizer for WhisperEngine {
         language: Option<&str>,
         prior: &HashMap<String, f32>,
     ) -> anyhow::Result<Transcript> {
-        let mel = mel::mel_tensor(&self.config, audio, &self.filters, &self.device)?;
+        let mel = mel::mel_tensor(&self.config, audio, &self.filters, &self.device, self.trim)?;
         self.model.reset_kv_cache();
         let features = self.model.encoder_forward(&mel, true)?;
 
@@ -235,7 +238,13 @@ impl Recognizer for WhisperEngine {
                 break;
             }
             tokens.push(next);
+            if let Some(n) = repeated_tail(&tokens[prompt_len..]) {
+                tokens.truncate(tokens.len() - n);
+                break;
+            }
         }
+        let period = loop_period(&tokens[prompt_len..]);
+        tokens.truncate(prompt_len + period);
         let text = self
             .tokenizer
             .decode(&tokens[prompt_len..], true)
@@ -247,5 +256,40 @@ impl Recognizer for WhisperEngine {
             no_speech,
             lang_conf,
         })
+    }
+}
+
+/// Length of a run of 3+ tokens that the sequence just repeated back to back (a decoding loop).
+fn repeated_tail(t: &[u32]) -> Option<usize> {
+    (3..=t.len() / 2).find(|&n| t[t.len() - n..] == t[t.len() - 2 * n..t.len() - n])
+}
+
+/// Whisper loops back to its first word when it runs out of audio ("A B C. A B"): the
+/// shortest period (3+ tokens) of the whole sequence, or its length when it does not repeat.
+fn loop_period(t: &[u32]) -> usize {
+    (3..t.len().saturating_sub(2))
+        .find(|&p| t[p..] == t[..t.len() - p])
+        .unwrap_or(t.len())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repeated_tail() {
+        use super::repeated_tail;
+        assert_eq!(repeated_tail(&[1, 2, 3, 4, 2, 3, 4]), Some(3));
+        assert_eq!(repeated_tail(&[9, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5]), Some(5));
+        assert_eq!(repeated_tail(&[1, 1, 1, 1]), None);
+        assert_eq!(repeated_tail(&[1, 2, 3, 4, 5, 6]), None);
+    }
+
+    #[test]
+    fn loop_period() {
+        use super::loop_period;
+        assert_eq!(loop_period(&[1, 2, 3, 4, 1, 2, 3]), 4);
+        assert_eq!(loop_period(&[1, 2, 3, 1, 2, 3, 1, 2]), 3);
+        assert_eq!(loop_period(&[1, 2, 3, 4, 1, 2]), 6);
+        assert_eq!(loop_period(&[1, 2, 3, 4, 5]), 5);
+        assert_eq!(loop_period(&[]), 0);
     }
 }

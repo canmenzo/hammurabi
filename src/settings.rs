@@ -121,6 +121,8 @@ pub struct Settings {
     pub spoken_language: Option<String>,
     pub asr_backend: AsrBackend,
     pub model: ModelChoice,
+    /// Encode only the speech plus a margin instead of Whisper's full 30 s window (much faster on CPU).
+    pub trim_audio: bool,
     pub translate: bool,
     pub target_language: String,
     pub translator: TranslatorChoice,
@@ -142,6 +144,7 @@ impl Default for Settings {
             spoken_language: None,
             asr_backend: AsrBackend::Whisper,
             model: ModelChoice::Auto,
+            trim_audio: true,
             translate: true,
             target_language: default_target(sys_locale::get_locale().as_deref()),
             translator: TranslatorChoice::Builtin,

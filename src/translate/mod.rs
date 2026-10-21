@@ -48,7 +48,6 @@ fn run(
     ev: Sender<TranslatorEvent>,
     cancel: &AtomicBool,
 ) {
-    let builtin = choice == TranslatorChoice::Builtin;
     let mut tr = match load(choice, &ev, cancel) {
         Ok(t) => {
             let _ = ev.send(TranslatorEvent::Ready);
@@ -65,12 +64,7 @@ fn run(
         let text = if req.source == req.target {
             Some(req.text)
         } else if let Some(tr) = tr.as_mut() {
-            let src = if builtin && req.source == "en" {
-                apply_glossary(&req.text)
-            } else {
-                req.text
-            };
-            tr.translate(&src, &req.source, &req.target, &req.context)
+            tr.translate(&req.text, &req.source, &req.target, &req.context)
                 .inspect_err(|e| log::warn!("translate failed: {e:#}"))
                 .ok()
         } else {

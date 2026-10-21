@@ -1,7 +1,9 @@
 pub mod download;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::settings::ModelChoice;
 
@@ -58,15 +60,12 @@ const MB: u64 = 1_000_000;
 
 pub fn spec(id: ModelId) -> &'static ModelSpec {
     const SAFETENSORS: [&str; 3] = ["model.safetensors", "config.json", "tokenizer.json"];
+    // The q80 GGUF tiny (lmz/candle-whisper) ran slower than base on CPU.
     static TINY: ModelSpec = ModelSpec {
-        repo: "lmz/candle-whisper",
-        revision: "02d8350e5402f18725eadb6101b4963d181b0b5e",
-        files: [
-            "model-tiny-q80.gguf",
-            "config-tiny.json",
-            "tokenizer-tiny.json",
-        ],
-        approx_bytes: 40 * MB,
+        repo: "openai/whisper-tiny",
+        revision: "169d4a4341b33bc18d8881c4b69c2e104e1cc0af",
+        files: SAFETENSORS,
+        approx_bytes: 151 * MB,
         label: "Tiny",
     };
     static BASE: ModelSpec = ModelSpec {
@@ -130,8 +129,49 @@ pub fn is_cached(id: ModelId) -> bool {
     })
 }
 
-/// Downloads missing files; `progress` reports cumulative bytes over all files.
+/// Downloads missing files; `progress` reports cumulative bytes over all files, at most every
+/// 200 ms. Concurrent calls for the same model (worker + Download button) wait for each other.
 pub fn ensure(
+    id: ModelId,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+    cancel: &AtomicBool,
+) -> anyhow::Result<ModelPaths> {
+    static BUSY: Mutex<Vec<ModelId>> = Mutex::new(Vec::new());
+    loop {
+        let mut busy = BUSY.lock().unwrap_or_else(|e| e.into_inner());
+        if !busy.contains(&id) {
+            busy.push(id);
+            break;
+        }
+        drop(busy);
+        if cancel.load(Ordering::Relaxed) {
+            anyhow::bail!("download cancelled");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let (mut last, mut downloaded) = (None::<Instant>, None);
+    let r = ensure_locked(
+        id,
+        &mut |done, total| {
+            downloaded = Some(done);
+            if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
+                last = Some(Instant::now());
+                progress(done, total);
+            }
+        },
+        cancel,
+    );
+    // A final done == total tells listeners the download is over.
+    if let (Ok(_), Some(d)) = (&r, downloaded) {
+        progress(d, Some(d));
+    }
+    BUSY.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|&m| m != id);
+    r
+}
+
+fn ensure_locked(
     id: ModelId,
     progress: &mut dyn FnMut(u64, Option<u64>),
     cancel: &AtomicBool,
@@ -182,9 +222,9 @@ mod tests {
 
     #[test]
     fn layout_and_quantized() {
-        let p = paths_in(ModelId::WhisperTiny, Path::new("x"));
-        assert!(p.quantized && p.weights.ends_with("model-tiny-q80.gguf"));
-        assert!(!paths_in(ModelId::WhisperBase, Path::new("x")).quantized);
+        let p = paths_in(ModelId::Madlad3bQ4k, Path::new("x"));
+        assert!(p.quantized && p.weights.ends_with("model-q4k.gguf"));
+        assert!(!paths_in(ModelId::WhisperTiny, Path::new("x")).quantized);
         assert!(
             model_dir(ModelId::WhisperBase)
                 .unwrap()

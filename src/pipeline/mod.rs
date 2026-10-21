@@ -17,6 +17,7 @@ use crate::audio::{AudioCapture, Frames16k};
 use crate::models::{self, ModelId};
 use crate::settings::{ModelChoice, Settings, TranslatorChoice};
 use crate::translate::TranslatorWorker;
+use crate::types::AudioSource;
 use crate::types::{
     AsrEvent, AsrRequest, AsrResult, AudioChunk, CaptionUpdate, EngineCommand, EngineEvent,
     EngineState, Notifier, Progress, ProgressPhase, Recognizer, Status, StatusLevel, Translate,
@@ -406,10 +407,12 @@ fn drain(
 pub struct Engine {
     core: Core,
     running: bool,
-    asr: Option<(ModelChoice, AsrWorker)>,
+    asr: Option<((ModelChoice, bool), AsrWorker)>,
     asr_device: String,
     tr: Option<(TranslatorChoice, TranslatorWorker)>,
     capture: Option<AudioCapture>,
+    /// Audio arrives through `audio_tx` from outside (CLI) instead of capture devices.
+    fed: bool,
     audio_tx: Sender<AudioChunk>,
     audio_rx: Receiver<AudioChunk>,
     frames: Frames16k,
@@ -421,7 +424,19 @@ pub struct Engine {
 impl Engine {
     /// `notifier` is called after every event is queued (= `ctx.request_repaint()`).
     pub fn spawn(notifier: Notifier) -> EngineHandle {
+        Self::spawn_inner(notifier, false).0
+    }
+
+    /// An engine that never opens audio devices; while running it consumes the chunks sent
+    /// through the returned sender instead.
+    pub fn spawn_fed(notifier: Notifier) -> (EngineHandle, Sender<AudioChunk>) {
+        Self::spawn_inner(notifier, true)
+    }
+
+    fn spawn_inner(notifier: Notifier, fed: bool) -> (EngineHandle, Sender<AudioChunk>) {
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (audio_tx, audio_rx) = crossbeam_channel::bounded(256);
+        let feed_tx = audio_tx.clone();
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (done_tx, done) = crossbeam_channel::bounded::<()>(1);
         let events = Events {
@@ -431,7 +446,6 @@ impl Engine {
         std::thread::Builder::new()
             .name("hm-engine".into())
             .spawn(move || {
-                let (audio_tx, audio_rx) = crossbeam_channel::bounded(256);
                 let now = Instant::now();
                 let mut engine = Engine {
                     core: Core::new(Settings::default(), events),
@@ -440,6 +454,7 @@ impl Engine {
                     asr_device: String::new(),
                     tr: None,
                     capture: None,
+                    fed,
                     audio_tx,
                     audio_rx,
                     frames: Frames16k::new(),
@@ -452,11 +467,14 @@ impl Engine {
                 drop(done_tx);
             })
             .expect("spawn engine thread");
-        EngineHandle {
-            cmd_tx,
-            event_rx,
-            done,
-        }
+        (
+            EngineHandle {
+                cmd_tx,
+                event_rx,
+                done,
+            },
+            feed_tx,
+        )
     }
 
     fn events(&self) -> &Events {
@@ -596,17 +614,36 @@ impl Engine {
     }
 
     fn start_capture(&mut self) -> bool {
+        self.frames = Frames16k::new();
+        self.last_audio = Instant::now();
+        if self.fed {
+            return true;
+        }
         let s = &self.core.settings;
-        match AudioCapture::start(
-            s.source,
-            s.input_device.as_deref(),
-            s.output_device.as_deref(),
-            self.audio_tx.clone(),
-        ) {
+        let start = |source| {
+            AudioCapture::start(
+                source,
+                s.input_device.as_deref(),
+                s.output_device.as_deref(),
+                self.audio_tx.clone(),
+            )
+        };
+        let result = start(s.source).or_else(|e| {
+            if s.source == AudioSource::Microphone {
+                return Err(e);
+            }
+            log::warn!("system audio capture failed: {e:#}");
+            let c = start(AudioSource::Microphone)?;
+            self.events().status(
+                StatusLevel::Warning,
+                format!("System audio unavailable, using the microphone ({e})"),
+                Some(Duration::from_secs(8)),
+            );
+            Ok(c)
+        });
+        match result {
             Ok(c) => {
                 self.capture = Some(c);
-                self.frames = Frames16k::new();
-                self.last_audio = Instant::now();
                 true
             }
             Err(e) => {
@@ -637,9 +674,9 @@ impl Engine {
 
     /// Workers survive Stop/Start; they are rebuilt only when their model changes.
     fn ensure_workers(&mut self) {
-        let model = self.core.settings.model;
-        if self.asr.as_ref().is_none_or(|(c, _)| *c != model) {
-            self.asr = Some((model, AsrWorker::spawn(model)));
+        let key = (self.core.settings.model, self.core.settings.trim_audio);
+        if self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
+            self.asr = Some((key, AsrWorker::spawn(key.0, key.1)));
             self.core.reset();
             self.core.sched.forget_in_flight();
             self.core.sched.ready = false;
@@ -756,6 +793,10 @@ impl EngineHandle {
 
     pub fn try_recv(&self) -> Option<EngineEvent> {
         self.event_rx.try_recv().ok()
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Option<EngineEvent> {
+        self.event_rx.recv_timeout(timeout).ok()
     }
 
     /// Sends Shutdown and joins the engine thread, giving up after `timeout`.

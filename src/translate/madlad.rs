@@ -7,6 +7,7 @@ use crate::models::ModelPaths;
 use crate::types::Translate;
 
 /// MADLAD-400 3B (quantized T5). Input is `<2xx> text`; context is ignored.
+/// `translate` applies the EN glossary to English input.
 pub struct Madlad {
     model: T5ForConditionalGeneration,
     tokenizer: Tokenizer,
@@ -105,11 +106,16 @@ impl Translate for Madlad {
     fn translate(
         &mut self,
         text: &str,
-        _source: &str,
+        source: &str,
         target: &str,
         _context: &[(String, String)],
     ) -> anyhow::Result<String> {
-        Ok(self.translate_counted(text, target)?.0)
+        let text = if source == "en" {
+            super::apply_glossary(text)
+        } else {
+            text.to_string()
+        };
+        Ok(self.translate_counted(&text, target)?.0)
     }
 }
 

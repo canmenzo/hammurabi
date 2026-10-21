@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Each build job uploads one archive as an artifact named release-*.
+# The release job collects every release-* artifact, so new build jobs (e.g. windows-cuda)
+# only need to upload under that name and be added to `needs`.
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bins
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "dist/hammurabi-windows-x64"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
+          Compress-Archive -Path $stage -DestinationPath dist/hammurabi-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: dist/hammurabi-windows-x64.zip
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bins --features metal
+
+      - name: App icon
+        id: icon
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          brew install librsvg
+          set="$RUNNER_TEMP/Hammurabi.iconset"
+          mkdir -p "$set"
+          for s in 16 32 128 256 512; do
+            rsvg-convert -w $s -h $s assets/icons/subtitles-fill.svg -o "$set/icon_${s}x${s}.png"
+            rsvg-convert -w $((s * 2)) -h $((s * 2)) assets/icons/subtitles-fill.svg -o "$set/icon_${s}x${s}@2x.png"
+          done
+          mkdir -p dist/hammurabi-macos-arm64/Hammurabi.app/Contents/Resources
+          iconutil -c icns "$set" -o dist/hammurabi-macos-arm64/Hammurabi.app/Contents/Resources/Hammurabi.icns
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          fi
+          stage=dist/hammurabi-macos-arm64
+          app="$stage/Hammurabi.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/hammurabi "$app/Contents/MacOS/hammurabi"
+          cp target/release/hammurabi-cli README.md LICENSE THIRD_PARTY_NOTICES.md "$stage/"
+
+          icon_xml=""
+          if [ -f "$app/Contents/Resources/Hammurabi.icns" ]; then
+            icon_xml="  <key>CFBundleIconFile</key><string>Hammurabi</string>"
+          fi
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleIdentifier</key><string>dev.menzo.Hammurabi</string>
+            <key>CFBundleName</key><string>Hammurabi</string>
+            <key>CFBundleExecutable</key><string>hammurabi</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>CFBundleVersion</key><string>$VERSION</string>
+            <key>LSMinimumSystemVersion</key><string>13.0</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSMicrophoneUsageDescription</key><string>Hammurabi captions what your microphone hears.</string>
+            <key>NSAudioCaptureUsageDescription</key><string>Hammurabi captions the audio playing on your Mac.</string>
+          $icon_xml
+          </dict>
+          </plist>
+          EOF
+
+          codesign --force --deep -s - "$app"
+          codesign --verify --verbose "$app"
+
+          ditto -c -k --keepParent "$stage" dist/hammurabi-macos-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: dist/hammurabi-macos-arm64.zip
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libwayland-dev libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --bins
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          stage=dist/hammurabi-linux-x64
+          mkdir -p "$stage"
+          cp target/release/hammurabi target/release/hammurabi-cli README.md LICENSE THIRD_PARTY_NOTICES.md "$stage/"
+          tar -C dist -czf dist/hammurabi-linux-x64.tar.gz hammurabi-linux-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x64
+          path: dist/hammurabi-linux-x64.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-macos, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            Hammurabi is a system tray app that writes live captions for anything your computer plays or hears, with optional translation. Speech recognition and translation run on your machine. No account, no API key, and no audio leaves your computer.
+
+            ### Download
+
+            - Windows (x64): `hammurabi-windows-x64.zip`
+            - macOS (Apple silicon): `hammurabi-macos-arm64.zip`
+            - Linux (x64): `hammurabi-linux-x64.tar.gz`
+
+            ### First run
+
+            - Hammurabi downloads its speech model on first use (about 300 MB for the default `base` model). The optional built-in translation model is about 1.7 GB more.
+            - macOS: the app is not notarized. Right-click `Hammurabi.app`, choose Open, and confirm. Then allow System Audio Recording in System Settings > Privacy & Security.
+            - Windows: SmartScreen may warn that the app is unrecognized. Click More info, then Run anyway.

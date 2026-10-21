@@ -8,7 +8,25 @@ Website: https://hammurabi.menzo.dev
 
 Hammurabi is the desktop sibling of [Babil](https://babil.menzo.dev), the browser extension that does the same for web videos.
 
-> **Status: early development.** There is no prebuilt release yet. You can download test builds from the CI artifacts on the [Actions page](https://github.com/canmenzo/hammurabi/actions), or build it yourself (see below).
+> **Status: early development.** Prebuilt builds are published on the [Releases page](https://github.com/canmenzo/hammurabi/releases). macOS and Linux have not been tested by the author yet.
+
+## Download
+
+Get the latest build from the [Releases page](https://github.com/canmenzo/hammurabi/releases/latest):
+
+| OS | File |
+|---|---|
+| Windows (x64) | `hammurabi-windows-x64.zip` |
+| macOS (Apple silicon) | `hammurabi-macos-arm64.zip` |
+| Linux (x64) | `hammurabi-linux-x64.tar.gz` |
+
+Unzip it and run `hammurabi.exe` on Windows, `Hammurabi.app` on macOS, or `hammurabi` on Linux. `hammurabi-cli` is included too.
+
+First run:
+
+- Hammurabi downloads its speech model the first time it needs one (about 300 MB by default). The built-in translation model is about 1.7 GB more.
+- **macOS:** the app is not notarized. Right-click `Hammurabi.app`, choose **Open**, and confirm. Then allow **System Audio Recording** in System Settings > Privacy & Security.
+- **Windows:** SmartScreen may warn that the app is unrecognized. Click **More info**, then **Run anyway**.
 
 ## What it does
 

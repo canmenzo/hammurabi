@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::settings::lang_name;
 use crate::types::Translate;
@@ -41,7 +41,11 @@ impl LlmTranslator {
             .header("User-Agent", USER_AGENT)
             .call()
             .context("LLM endpoint unreachable")?;
-        anyhow::ensure!(resp.status().is_success(), "LLM endpoint returned {}", resp.status());
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "LLM endpoint returned {}",
+            resp.status()
+        );
         Ok(())
     }
 }
@@ -81,7 +85,10 @@ impl Translate for LlmTranslator {
             .send(body.to_string())
             .context("LLM request failed")?;
         let status = resp.status();
-        let raw = resp.body_mut().read_to_string().context("LLM response unreadable")?;
+        let raw = resp
+            .body_mut()
+            .read_to_string()
+            .context("LLM response unreadable")?;
         anyhow::ensure!(status.is_success(), "LLM returned {status}: {raw}");
         let v: Value = serde_json::from_str(&raw).context("LLM response is not JSON")?;
         let content = v["choices"][0]["message"]["content"]
@@ -115,7 +122,10 @@ mod tests {
 
     #[test]
     fn strips_think_and_quotes() {
-        assert_eq!(clean("<think>\nhmm\n</think>\n\n\"Merhaba dünya\"\n"), "Merhaba dünya");
+        assert_eq!(
+            clean("<think>\nhmm\n</think>\n\n\"Merhaba dünya\"\n"),
+            "Merhaba dünya"
+        );
         assert_eq!(clean("  “Hola”  "), "Hola");
         assert_eq!(clean("reasoning</think>Hi"), "Hi");
         assert_eq!(clean("plain"), "plain");
@@ -127,7 +137,9 @@ mod tests {
         let model = std::env::var("HAMMURABI_LLM_MODEL").unwrap_or_else(|_| "qwen2.5:1.5b".into());
         let mut t = LlmTranslator::new("http://localhost:11434/v1", &model);
         t.ping().unwrap();
-        let out = t.translate("Good morning, how are you?", "en", "tr", &[]).unwrap();
+        let out = t
+            .translate("Good morning, how are you?", "en", "tr", &[])
+            .unwrap();
         println!("{out}");
         assert!(!out.is_empty());
     }

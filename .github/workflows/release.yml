@@ -44,7 +44,8 @@ jobs:
   # NVIDIA build. candle compiles its kernels for one compute capability, and its GGUF
   # (MADLAD) kernels are SASS-only, so this targets RTX 50 series (sm_120) only.
   build-windows-cuda:
-    runs-on: windows-latest
+    # CUDA 12.9's nvcc rejects Visual Studio 2026 (windows-latest); windows-2022 has VS 2022.
+    runs-on: windows-2022
     env:
       CUDA_COMPUTE_CAP: '120'
     steps:

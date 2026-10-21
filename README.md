@@ -53,7 +53,7 @@ Speech models (pick one in Settings, under Speech):
 
 | Model | Download size | Notes |
 |---|---|---|
-| tiny | ~40 MB | Fastest, least accurate |
+| tiny | 151 MB | Fastest, least accurate |
 | base | 290 MB | Good default on CPU |
 | small | 967 MB | Good default with a GPU build |
 | turbo | 1.62 GB | Most accurate, needs a capable machine |
@@ -119,6 +119,22 @@ GPU builds are optional:
 ```sh
 cargo build --release --features cuda
 ```
+
+## Command line
+
+`hammurabi-cli` is built next to the app and is handy for testing:
+
+```sh
+hammurabi-cli devices                                    # list audio devices
+hammurabi-cli record --source system --secs 10 out.wav   # record what the computer plays
+hammurabi-cli transcribe out.wav --translate tr          # caption a WAV file, translated to Turkish
+hammurabi-cli transcribe out.wav --realtime              # feed it at 1x through the live engine
+hammurabi-cli download base                              # tiny, base, small, turbo or madlad
+```
+
+`transcribe` also takes `--model`, `--lang`, `--llm <url> --llm-model <name>`, `--no-trim` and `--live`.
+
+`hammurabi --start` starts captions as soon as the app launches.
 
 ## Limitations
 

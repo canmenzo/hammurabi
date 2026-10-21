@@ -232,6 +232,10 @@ impl App {
             }
             EngineEvent::Status(s) => {
                 log::info!("status: {}", s.text);
+                // Failed downloads send no final progress; drop the bars (running ones come back).
+                if matches!(s.level, StatusLevel::Error | StatusLevel::Warning) {
+                    self.models.downloading.clear();
+                }
                 self.status = s.text.clone();
                 self.overlay.set_status(s, now);
                 self.tray_dirty = true;

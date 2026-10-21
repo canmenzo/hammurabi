@@ -3,7 +3,12 @@
 use hammurabi::{config, ui};
 
 fn main() -> eframe::Result {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let instance = single_instance::SingleInstance::new("dev.menzo.hammurabi");
+    if instance.as_ref().is_ok_and(|i| !i.is_single()) {
+        log::info!("Hammurabi is already running");
+        return Ok(());
+    }
     let settings = config::load();
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,

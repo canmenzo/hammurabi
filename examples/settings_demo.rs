@@ -37,7 +37,8 @@ fn dev(id: &str, name: &str, d: bool) -> DeviceInfo {
 fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 900.0])
+            .with_title("Hammurabi Settings")
+            .with_inner_size([520.0, 960.0])
             .with_position([40.0, 20.0]),
         ..Default::default()
     };
@@ -47,16 +48,19 @@ fn main() -> eframe::Result {
         Box::new(|_| {
             Ok(Box::new(Demo {
                 win: SettingsWindow::default(),
-                settings: Settings::default(),
+                settings: Settings {
+                    translate: true,
+                    ..Settings::default()
+                },
                 status: ModelsStatus {
-                    cached: vec![ModelId::WhisperBase],
-                    downloading: vec![(ModelId::Madlad3bQ4k, 600_000_000, Some(1_670_000_000))],
+                    cached: vec![ModelId::WhisperTurbo, ModelId::Madlad3bQ4k],
+                    downloading: Vec::new(),
                     devices: DeviceList {
                         inputs: vec![dev("a", "Microphone (USB)", true)],
                         outputs: vec![dev("b", "Speakers (Realtek)", true)],
-                        system_audio: Err("not supported on this machine".into()),
+                        system_audio: Ok(()),
                     },
-                    compute: "CPU".into(),
+                    compute: "CUDA 0".into(),
                     autostart: false,
                 },
             }))

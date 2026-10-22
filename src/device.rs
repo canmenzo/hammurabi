@@ -22,6 +22,17 @@ pub fn best_device(prefer_gpu: bool) -> (Device, String) {
     (Device::Cpu, "CPU".into())
 }
 
+/// The label `best_device(true)` will most likely return, without creating a device.
+pub fn label() -> String {
+    if cuda_is_available() {
+        "CUDA 0".into()
+    } else if metal_is_available() {
+        "Metal".into()
+    } else {
+        "CPU".into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

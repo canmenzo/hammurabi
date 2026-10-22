@@ -52,9 +52,11 @@ impl SettingsWindow {
             .fixed_pos(rect.min)
             .show(ctx, |ui| {
                 ui.set_clip_rect(rect);
-                egui::Frame::central_panel(ui.style()).show(ui, |ui| {
-                    ui.set_min_size(rect.size() - egui::vec2(36.0, 36.0));
-                    ui.set_max_size(rect.size() - egui::vec2(36.0, 36.0));
+                let frame = egui::Frame::central_panel(ui.style());
+                let inner = rect.size() - frame.total_margin().sum();
+                frame.show(ui, |ui| {
+                    ui.set_min_size(inner);
+                    ui.set_max_size(inner);
                     ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
@@ -64,8 +66,14 @@ impl SettingsWindow {
                             translation(ui, settings, models, &mut changed, &mut actions);
                             captions(ui, settings, &mut changed);
                             section(ui, "Hotkeys");
-                            ui.label(format!("Start / stop captions: {}", settings.hotkey_toggle));
-                            ui.label(format!("Move captions: {}", settings.hotkey_move));
+                            ui.label(format!(
+                                "Start / stop captions: {}",
+                                hotkey_label(&settings.hotkey_toggle)
+                            ));
+                            ui.label(format!(
+                                "Move captions: {}",
+                                hotkey_label(&settings.hotkey_move)
+                            ));
                             ui.add_space(12.0);
                             ui.horizontal(|ui| {
                                 if ui.button("Open models folder").clicked() {
@@ -476,4 +484,31 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             .checkbox(&mut c.original_first, "Original first")
             .changed();
     });
+}
+
+/// "alt+shift+KeyT" -> "Alt+Shift+T".
+fn hotkey_label(s: &str) -> String {
+    s.split('+')
+        .map(|t| {
+            let t = t.trim();
+            let t = t
+                .strip_prefix("Key")
+                .or(t.strip_prefix("Digit"))
+                .unwrap_or(t);
+            let mut c = t.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<String>>()
+        .join("+")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn hotkey_label() {
+        assert_eq!(super::hotkey_label("alt+shift+KeyT"), "Alt+Shift+T");
+        assert_eq!(super::hotkey_label("ctrl+Digit1"), "Ctrl+1");
+    }
 }

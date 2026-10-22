@@ -105,7 +105,7 @@ impl App {
                     outputs: Vec::new(),
                     system_audio: Ok(()),
                 },
-                compute: "CPU".into(),
+                compute: crate::device::label(),
                 autostart: autostart::is_enabled(),
             },
             app_rx,

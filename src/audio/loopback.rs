@@ -13,7 +13,7 @@ pub fn system_device(
     #[cfg(target_os = "macos")]
     {
         check_macos_version()?;
-        check_permission(crate::types::SourceKind::System)?;
+        check_permission(crate::types::SourceKind::System, false)?;
     }
     // Windows: an input stream on a render device is WASAPI loopback.
     // macOS 14.6+: cpal wraps an output-only device in a Core Audio process tap aggregate.
@@ -39,25 +39,35 @@ fn check_macos_version() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Fails when the user denied the permission `source` needs. Without it macOS delivers
-/// silence instead of an error, so this is the only signal.
+/// Fails when macOS will not let Hammurabi capture `source`; it then delivers silence instead of
+/// an error. `opened`: the stream is built, so any prompt has been answered. System audio that is
+/// still not allowed then means a grant left over from an older build (macOS ties it to the exact
+/// ad-hoc signed binary and does not ask again).
 #[cfg(target_os = "macos")]
-pub fn check_permission(source: crate::types::SourceKind) -> anyhow::Result<()> {
+pub fn check_permission(source: crate::types::SourceKind, opened: bool) -> anyhow::Result<()> {
     use crate::types::SourceKind;
-    let (service, msg) = match source {
-        SourceKind::System => (
-            c"kTCCServiceAudioCapture",
-            "Hammurabi is not allowed to record system audio. Turn it on in System Settings > Privacy & Security > Screen & System Audio Recording (under System Audio Recording Only), then start captions again.",
+    const SYSTEM_PANE: &str =
+        "System Settings > Privacy & Security > Screen & System Audio Recording";
+    match (source, tcc_preflight(source_service(source))) {
+        (SourceKind::System, Some(1)) => anyhow::bail!(
+            "Hammurabi is not allowed to record system audio. Turn it on in {SYSTEM_PANE} (under System Audio Recording Only), then start captions again."
         ),
-        SourceKind::Microphone => (
-            c"kTCCServiceMicrophone",
-            "Hammurabi is not allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then start captions again.",
+        (SourceKind::System, Some(2)) if opened => anyhow::bail!(
+            "macOS did not let Hammurabi record system audio. In {SYSTEM_PANE}, remove Hammurabi from System Audio Recording Only with the minus button (a permission from an older version does not carry over), then start captions again and click Allow."
         ),
-    };
-    if tcc_preflight(service) == Some(1) {
-        anyhow::bail!(msg);
+        (SourceKind::Microphone, Some(1)) => anyhow::bail!(
+            "Hammurabi is not allowed to use the microphone. Turn it on in System Settings > Privacy & Security > Microphone, then start captions again."
+        ),
+        _ => Ok(()),
     }
-    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn source_service(source: crate::types::SourceKind) -> &'static std::ffi::CStr {
+    match source {
+        crate::types::SourceKind::System => c"kTCCServiceAudioCapture",
+        crate::types::SourceKind::Microphone => c"kTCCServiceMicrophone",
+    }
 }
 
 /// TCCAccessPreflight from the private TCC framework: 0 allowed, 1 denied, 2 not asked yet.

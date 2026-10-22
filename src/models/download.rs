@@ -1,15 +1,15 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use sha2::{Digest, Sha256};
 
 const USER_AGENT: &str = "OpenAI File Downloader, XaiImageApiFetch/1.0";
-/// ureq has no idle read timeout, so each request reads for at most this long and the download
-/// continues with a new Range request; a stalled connection then fails instead of hanging.
-const SLICE: Duration = Duration::from_secs(30);
+/// No data for this long ends the request; the download continues with a new Range request
+/// if the last one made progress, else fails. ureq only has whole-body timeouts.
+const IDLE: Duration = Duration::from_secs(30);
 
 /// Downloads `huggingface.co/{repo}/resolve/{rev}/{file}` to `dest` via `dest.part` with Range resume,
 /// checking the result against `sha256`. `progress(done, total)`; returns an error when `cancel` is set.
@@ -26,7 +26,7 @@ pub fn fetch(
         &format!("https://huggingface.co/{repo}/resolve/{rev}/{file}"),
         sha256,
         dest,
-        SLICE,
+        IDLE,
         progress,
         cancel,
     )
@@ -36,7 +36,7 @@ fn fetch_url(
     url: &str,
     sha256: &str,
     dest: &Path,
-    slice: Duration,
+    idle: Duration,
     progress: &mut dyn FnMut(u64, Option<u64>),
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
@@ -52,13 +52,12 @@ fn fetch_url(
         .user_agent(USER_AGENT)
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
-        .timeout_recv_body(Some(slice))
         .build()
         .into();
 
     loop {
         let before = std::fs::metadata(&part).map_or(0, |m| m.len());
-        match fetch_slice(&agent, url, &part, progress, cancel) {
+        match fetch_slice(&agent, url, &part, idle, progress, cancel) {
             Ok(true) => break,
             Ok(false) => {
                 // Interrupted: carry on while the last request made progress.
@@ -82,11 +81,12 @@ fn fetch_url(
 }
 
 /// One request from the end of `part`; Ok(true) once the file is complete, Ok(false) when the
-/// body ended early or timed out.
+/// body ended early, failed or went quiet for `idle`.
 fn fetch_slice(
     agent: &ureq::Agent,
     url: &str,
     part: &Path,
+    idle: Duration,
     progress: &mut dyn FnMut(u64, Option<u64>),
     cancel: &AtomicBool,
 ) -> anyhow::Result<bool> {
@@ -125,24 +125,43 @@ fn fetch_slice(
         .append(have > 0)
         .truncate(have == 0)
         .open(part)?;
+    // Reads happen on a helper thread so a stalled socket can be abandoned; that thread ends
+    // when its read fails or once it notices the receiver is gone.
     let mut body = resp.into_body().into_reader();
-    let mut buf = vec![0u8; 64 * 1024];
+    let (tx, rx) = crossbeam_channel::bounded::<std::io::Result<Vec<u8>>>(16);
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let r = body.read(&mut buf).map(|n| buf[..n].to_vec());
+            let end = !matches!(&r, Ok(b) if !b.is_empty());
+            if tx.send(r).is_err() || end {
+                break;
+            }
+        }
+    });
     let mut done = have;
+    let mut last = Instant::now();
     progress(done, total);
     loop {
         if cancel.load(Ordering::Relaxed) {
             bail!("download cancelled");
         }
-        let n = match body.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) => {
+        let chunk = match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(c)) if c.is_empty() => break,
+            Ok(Ok(c)) => c,
+            Ok(Err(e)) => {
                 log::info!("GET {url}: interrupted at {done} bytes: {e}");
                 return Ok(false);
             }
+            Err(_) if last.elapsed() < idle => continue,
+            Err(_) => {
+                log::info!("GET {url}: no data for {idle:?} at {done} bytes");
+                return Ok(false);
+            }
         };
-        out.write_all(&buf[..n])?;
-        done += n as u64;
+        last = Instant::now();
+        out.write_all(&chunk)?;
+        done += chunk.len() as u64;
         progress(done, total);
     }
     out.flush()?;
@@ -265,12 +284,12 @@ mod tests {
     }
 
     fn get(url: &str, sha: &str, dest: &Path) -> anyhow::Result<()> {
-        let slice = Duration::from_secs(1);
+        let idle = Duration::from_secs(1);
         fetch_url(
             url,
             sha,
             dest,
-            slice,
+            idle,
             &mut |_, _| {},
             &AtomicBool::new(false),
         )
@@ -347,7 +366,7 @@ mod tests {
             URL,
             URL_SHA,
             &dest,
-            SLICE,
+            IDLE,
             &mut |d, _| {
                 if d >= 200_000 {
                     cancel.store(true, Ordering::Relaxed);
@@ -365,7 +384,7 @@ mod tests {
             URL,
             URL_SHA,
             &dest,
-            SLICE,
+            IDLE,
             &mut |d, t| {
                 first.get_or_insert((d, t));
             },

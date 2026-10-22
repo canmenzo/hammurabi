@@ -728,6 +728,12 @@ impl Engine {
                 }
             }
             EngineCommand::Prefetch(id) => self.prefetch(id),
+            // With Read aloud off this speaker reads no captions (none are queued for it) and goes
+            // at the next Start or Reconfigure.
+            EngineCommand::Preview { text, lang, style } => self
+                .speaker
+                .get_or_insert_with(Speaker::spawn)
+                .preview(text, lang, style),
             EngineCommand::Shutdown => {}
         }
     }
@@ -846,7 +852,7 @@ impl Engine {
         }
         self.speaker
             .get_or_insert_with(Speaker::spawn)
-            .configure(s.speak_voice.clone(), s.speak_rate);
+            .configure(s.speak_style());
     }
 
     /// Workers survive Stop/Start; they are rebuilt only when their model changes.

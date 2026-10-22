@@ -16,7 +16,7 @@ use hammurabi::models::{self, ModelId, ModelPaths};
 use hammurabi::pipeline::{self, Engine};
 use hammurabi::settings::{ModelChoice, Settings, TranslatorChoice};
 use hammurabi::translate::{llm::LlmTranslator, madlad::Madlad};
-use hammurabi::tts::{self, Speaker};
+use hammurabi::tts::{self, Gender, PERSONAS, Speaker, Style, Voice};
 use hammurabi::types::{
     AudioChunk, AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, FRAME_SAMPLES,
     Recognizer, SAMPLE_RATE, SourceKind, Transcript, Translate,
@@ -103,7 +103,7 @@ enum Cmd {
     },
     /// List the voices captions can be read aloud with.
     Voices {
-        /// Only voices for this language code.
+        /// Only voices for this language code, plus the voice each persona reads it with.
         #[arg(long)]
         lang: Option<String>,
     },
@@ -113,6 +113,9 @@ enum Cmd {
         /// Language code of the text.
         #[arg(long, default_value = "en")]
         lang: String,
+        /// Read with this persona; --voice and --rate apply to `custom`, the default.
+        #[arg(long, default_value = tts::CUSTOM, value_parser = PERSONAS.map(|p| p.id))]
+        persona: String,
         /// Voice id (see `voices`); the system voice for the language when omitted.
         #[arg(long)]
         voice: Option<String>,
@@ -222,32 +225,73 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::Voices { lang } => {
-            for v in tts::voices().iter().filter(|v| {
+            let all = tts::voices();
+            for v in all.iter().filter(|v| {
                 lang.as_deref()
                     .is_none_or(|l| tts::lang_matches(&v.lang, l))
             }) {
-                println!("{:<8} {}  [{}]", v.lang, v.name, v.id);
+                let gender = match v.gender {
+                    Some(Gender::Female) => "female",
+                    Some(Gender::Male) => "male",
+                    None => "-",
+                };
+                println!("{:<8} {gender:<6} {}  [{}]", v.lang, v.name, v.id);
+            }
+            if let Some(l) = &lang {
+                println!("\nPersonas for {l}:");
+                for p in &PERSONAS {
+                    let style = Style {
+                        persona: p.id.into(),
+                        voice: None,
+                        rate: 1.0,
+                    };
+                    let (voice, rate, pitch) =
+                        style.resolve(&all, l).map_err(anyhow::Error::msg)?;
+                    println!(
+                        "  {:<8} {:<30} rate {rate:.2}, pitch {pitch:.2}",
+                        p.id,
+                        voice_label(voice, l)
+                    );
+                }
             }
             Ok(())
         }
         Cmd::Speak {
             text,
             lang,
+            persona,
             voice,
             rate,
-        } => speak(text, lang, voice, rate),
+        } => speak(
+            text,
+            lang,
+            Style {
+                persona,
+                voice,
+                rate,
+            },
+        ),
+    }
+}
+
+fn voice_label(v: Option<&Voice>, lang: &str) -> String {
+    match v {
+        Some(v) => format!("{} ({})", v.name, v.lang),
+        None => format!("the system's choice for {lang}"),
     }
 }
 
 /// Speaks through the app's queue and reports how long captured audio was muted.
-fn speak(text: String, lang: String, voice: Option<String>, rate: f32) -> anyhow::Result<()> {
+fn speak(text: String, lang: String, style: Style) -> anyhow::Result<()> {
     let all = tts::voices();
-    match tts::resolve(&all, &lang, voice.as_deref()).map_err(anyhow::Error::msg)? {
-        Some(v) => println!("Voice: {} ({})  [{}]", v.name, v.lang, v.id),
-        None => println!("Voice: the system's choice for {lang}"),
-    }
+    let (voice, rate, pitch) = style.resolve(&all, &lang).map_err(anyhow::Error::msg)?;
+    println!(
+        "Persona: {}, voice: {}, rate {rate:.2}, pitch {pitch:.2}",
+        tts::persona(&style.persona).name,
+        voice_label(voice, &lang)
+    );
     let speaker = Speaker::spawn();
-    speaker.configure(voice, rate);
+    speaker.configure(style);
     let start = Instant::now();
     speaker.say(text, lang);
     let mut began = None;

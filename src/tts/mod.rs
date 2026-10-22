@@ -22,12 +22,127 @@ const MAX_QUEUED: usize = 2;
 pub const TAIL: Duration = Duration::from_millis(600);
 const POLL: Duration = Duration::from_millis(50);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gender {
+    Female,
+    Male,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Voice {
     pub id: String,
     pub name: String,
     /// BCP 47, e.g. "tr-TR" (Linux: often just "tr").
     pub lang: String,
+    /// None when the OS does not say.
+    pub gender: Option<Gender>,
+}
+
+pub struct Persona {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    /// Preferred voice gender; None = any.
+    pub gender: Option<Gender>,
+    /// Multipliers, 1.0 = normal.
+    pub rate: f32,
+    pub pitch: f32,
+}
+
+pub const CUSTOM: &str = "custom";
+
+const fn def(
+    id: &'static str,
+    name: &'static str,
+    description: &'static str,
+    gender: Option<Gender>,
+    rate: f32,
+    pitch: f32,
+) -> Persona {
+    Persona {
+        id,
+        name,
+        description,
+        gender,
+        rate,
+        pitch,
+    }
+}
+
+const F: Option<Gender> = Some(Gender::Female);
+const M: Option<Gender> = Some(Gender::Male);
+
+/// Shared with the Babil extension: keep ids, names and values identical there.
+pub const PERSONAS: [Persona; 7] = [
+    def("lale", "Lale", "Clear and neutral", F, 1.0, 1.0),
+    def("ayla", "Ayla", "Bright and friendly", F, 1.05, 1.15),
+    def("deniz", "Deniz", "Calm and steady", M, 0.95, 0.95),
+    def("ates", "Ateş", "Warm and deep", M, 1.0, 0.8),
+    def(
+        "bilge",
+        "Bilge",
+        "Slow and patient, easy to follow",
+        F,
+        0.8,
+        1.0,
+    ),
+    def(
+        "ruzgar",
+        "Rüzgar",
+        "Quick, keeps up with fast talkers",
+        None,
+        1.35,
+        1.05,
+    ),
+    def(CUSTOM, "Custom", "Your own voice and speed", None, 1.0, 1.0),
+];
+
+/// The persona with `id`; unknown ids get the first one.
+pub fn persona(id: &str) -> &'static Persona {
+    PERSONAS.iter().find(|p| p.id == id).unwrap_or(&PERSONAS[0])
+}
+
+/// How captions are read: a persona, or for `CUSTOM` the voice and rate picked by hand.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Style {
+    pub persona: String,
+    pub voice: Option<String>,
+    pub rate: f32,
+}
+
+impl Style {
+    /// (voice, rate, pitch) for text in `lang`; the voice as in `resolve`.
+    pub fn resolve<'a>(
+        &self,
+        voices: &'a [Voice],
+        lang: &str,
+    ) -> Result<(Option<&'a Voice>, f32, f32), String> {
+        let p = persona(&self.persona);
+        if p.id == CUSTOM {
+            Ok((
+                resolve(voices, lang, self.voice.as_deref(), None)?,
+                self.rate,
+                1.0,
+            ))
+        } else {
+            Ok((resolve(voices, lang, None, p.gender)?, p.rate, p.pitch))
+        }
+    }
+}
+
+/// A short sentence to preview a persona with in `lang`.
+pub fn sample(lang: &str, name: &str) -> String {
+    let text = match lang.split(['-', '_']).next().unwrap_or(lang) {
+        "tr" => "Merhaba! Altyazıları bu sesle okuyacağım.",
+        "en" => "Hi! This is how I will read your captions.",
+        "de" => "Hallo! So lese ich deine Untertitel vor.",
+        "es" => "¡Hola! Así leeré tus subtítulos.",
+        "fr" => "Bonjour ! Voici comment je lirai vos sous-titres.",
+        "ar" => "مرحبًا! بهذا الصوت سأقرأ لك الترجمة.",
+        "ru" => "Привет! Вот так я буду читать ваши субтитры.",
+        _ => return format!("Hi, I'm {name}. This is how I will read your captions."),
+    };
+    text.into()
 }
 
 /// Installed voices; empty when the OS lists none (Linux without speech-dispatcher).
@@ -51,33 +166,56 @@ pub fn lang_matches(voice: &str, code: &str) -> bool {
     c[0] != "zh" || hant(&v) == hant(&c)
 }
 
-/// `preferred` if it speaks `lang`, else the OS default for `lang`, else the first voice that does.
+/// `preferred` if it speaks `lang`, else the voice for `lang` that best fits `gender` (None = any):
+/// that gender, then unknown, then the other; among equals the OS default for `lang`, then the
+/// first listed.
 fn pick<'a>(
     voices: &'a [Voice],
     lang: &str,
     preferred: Option<&str>,
+    gender: Option<Gender>,
     default: Option<&str>,
 ) -> Option<&'a Voice> {
     let ok = |v: &&Voice| lang_matches(&v.lang, lang);
-    let by_id = |id: Option<&str>| voices.iter().filter(ok).find(|v| Some(v.id.as_str()) == id);
-    by_id(preferred)
-        .or_else(|| by_id(default))
-        .or_else(|| voices.iter().find(ok))
+    let fit = |v: &Voice| match (gender, v.gender) {
+        (None, _) => 0,
+        (Some(want), Some(g)) if want == g => 0,
+        (_, None) => 1,
+        _ => 2,
+    };
+    let is = |v: &Voice, id: Option<&str>| Some(v.id.as_str()) == id;
+    voices
+        .iter()
+        .filter(ok)
+        .find(|v| is(v, preferred))
+        .or_else(|| {
+            voices
+                .iter()
+                .filter(ok)
+                .min_by_key(|v| (fit(v), !is(v, default)))
+        })
 }
 
-/// The voice for `lang`. Ok(None) leaves the choice to the OS (no voice list, or language unknown);
-/// Err says which voice to install.
+/// The voice for `lang` (see `pick`). Ok(None) leaves the choice to the OS (no voice list, or
+/// language unknown); Err says which voice to install.
 pub fn resolve<'a>(
     voices: &'a [Voice],
     lang: &str,
     preferred: Option<&str>,
+    gender: Option<Gender>,
 ) -> Result<Option<&'a Voice>, String> {
     if voices.is_empty() || lang.is_empty() {
         return Ok(None);
     }
-    pick(voices, lang, preferred, imp::default_voice(lang).as_deref())
-        .map(Some)
-        .ok_or_else(|| missing_voice(lang))
+    pick(
+        voices,
+        lang,
+        preferred,
+        gender,
+        imp::default_voice(lang).as_deref(),
+    )
+    .map(Some)
+    .ok_or_else(|| missing_voice(lang))
 }
 
 pub fn missing_voice(lang: &str) -> String {
@@ -88,20 +226,23 @@ pub fn missing_voice(lang: &str) -> String {
     )
 }
 
-/// Speaks `text` and returns when it is done or `cancel` is set. `rate`: 1.0 = normal speed.
+/// Speaks `text` and returns when it is done or `cancel` is set. `rate`, `pitch`: 1.0 = normal.
 pub fn speak(
     text: &str,
     lang: &str,
     voice: Option<&Voice>,
     rate: f32,
+    pitch: f32,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
-    imp::speak(text, lang, voice, rate, cancel)
+    imp::speak(text, lang, voice, rate, pitch, cancel)
 }
 
 pub struct Utterance {
     pub text: String,
     pub lang: String,
+    /// None = the configured style.
+    pub style: Option<Style>,
 }
 
 /// Adds `u`, dropping the oldest waiting utterances beyond `MAX_QUEUED`; returns how many were dropped.
@@ -128,8 +269,7 @@ impl Gate {
 struct State {
     queue: VecDeque<Utterance>,
     gate: Gate,
-    voice: Option<String>,
-    rate: f32,
+    style: Style,
     quit: bool,
 }
 
@@ -158,8 +298,11 @@ impl Speaker {
             state: Mutex::new(State {
                 queue: VecDeque::new(),
                 gate: Gate::default(),
-                voice: None,
-                rate: 1.0,
+                style: Style {
+                    persona: PERSONAS[0].id.into(),
+                    voice: None,
+                    rate: 1.0,
+                },
                 quit: false,
             }),
             wake: Condvar::new(),
@@ -174,17 +317,33 @@ impl Speaker {
         Speaker { shared, warnings }
     }
 
-    pub fn configure(&self, voice: Option<String>, rate: f32) {
-        let mut st = self.shared.lock();
-        st.voice = voice;
-        st.rate = rate;
+    pub fn configure(&self, style: Style) {
+        self.shared.lock().style = style;
     }
 
     pub fn say(&self, text: String, lang: String) {
-        let dropped = enqueue(&mut self.shared.lock().queue, Utterance { text, lang });
+        let u = Utterance {
+            text,
+            lang,
+            style: None,
+        };
+        let dropped = enqueue(&mut self.shared.lock().queue, u);
         if dropped > 0 {
             log::debug!("tts behind, dropped {dropped} utterance(s)");
         }
+        self.shared.wake.notify_one();
+    }
+
+    /// Speaks `text` with `style` right away, stopping whatever is speaking or waiting.
+    pub fn preview(&self, text: String, lang: String, style: Style) {
+        let mut st = self.shared.lock();
+        st.queue.clear();
+        st.queue.push_back(Utterance {
+            text,
+            lang,
+            style: Some(style),
+        });
+        self.shared.cancel.store(true, Ordering::Relaxed);
         self.shared.wake.notify_one();
     }
 
@@ -218,7 +377,7 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
         }
     };
     loop {
-        let (u, preferred, rate) = {
+        let (u, style) = {
             let mut st = shared.lock();
             loop {
                 if st.quit {
@@ -227,21 +386,22 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
                 if let Some(u) = st.queue.pop_front() {
                     // Under the lock, so a clear() after the pop still cancels this utterance.
                     shared.cancel.store(false, Ordering::Relaxed);
-                    break (u, st.voice.clone(), st.rate);
+                    let style = u.style.clone().unwrap_or_else(|| st.style.clone());
+                    break (u, style);
                 }
                 st = shared.wake.wait(st).unwrap_or_else(|p| p.into_inner());
             }
         };
         let all = voices();
-        let voice = match resolve(&all, &u.lang, preferred.as_deref()) {
-            Ok(v) => v,
+        let (voice, rate, pitch) = match style.resolve(&all, &u.lang) {
+            Ok(r) => r,
             Err(e) => {
                 warn(e);
                 continue;
             }
         };
         shared.lock().gate.speaking = true;
-        let r = speak(&u.text, &u.lang, voice, rate, &shared.cancel);
+        let r = speak(&u.text, &u.lang, voice, rate, pitch, &shared.cancel);
         shared.lock().gate = Gate {
             speaking: false,
             ended: Some(Instant::now()),
@@ -261,6 +421,22 @@ mod tests {
             id: id.into(),
             name: id.into(),
             lang: lang.into(),
+            gender: None,
+        }
+    }
+
+    fn gendered(id: &str, lang: &str, g: Gender) -> Voice {
+        Voice {
+            gender: Some(g),
+            ..voice(id, lang)
+        }
+    }
+
+    fn style(persona: &str) -> Style {
+        Style {
+            persona: persona.into(),
+            voice: None,
+            rate: 1.0,
         }
     }
 
@@ -286,30 +462,170 @@ mod tests {
             voice("meijia", "zh-TW"),
         ];
         let id = |v: Option<&Voice>| v.map(|v| v.id.clone());
-        assert_eq!(id(pick(&all, "tr", None, None)), Some("yelda".into()));
+        assert_eq!(id(pick(&all, "tr", None, None, None)), Some("yelda".into()));
         assert_eq!(
-            id(pick(&all, "en", None, Some("samantha"))),
+            id(pick(&all, "en", None, None, Some("samantha"))),
             Some("samantha".into())
         );
         assert_eq!(
-            id(pick(&all, "en", Some("albert"), Some("samantha"))),
+            id(pick(&all, "en", Some("albert"), None, Some("samantha"))),
             Some("albert".into())
         );
         // A preferred voice in another language does not read this one.
         assert_eq!(
-            id(pick(&all, "en", Some("yelda"), Some("samantha"))),
+            id(pick(&all, "en", Some("yelda"), None, Some("samantha"))),
             Some("samantha".into())
         );
         // An OS default for another language is ignored too.
         assert_eq!(
-            id(pick(&all, "en", None, Some("yelda"))),
+            id(pick(&all, "en", None, None, Some("yelda"))),
             Some("albert".into())
         );
-        assert_eq!(id(pick(&all, "zh-Hant", None, None)), Some("meijia".into()));
-        assert_eq!(id(pick(&all, "zh", None, None)), None);
-        assert_eq!(resolve(&[], "tr", None), Ok(None));
-        assert_eq!(resolve(&all, "", None), Ok(None));
-        assert!(resolve(&all, "ko", None).unwrap_err().contains("Korean"));
+        assert_eq!(
+            id(pick(&all, "zh-Hant", None, None, None)),
+            Some("meijia".into())
+        );
+        assert_eq!(id(pick(&all, "zh", None, None, None)), None);
+        assert_eq!(resolve(&[], "tr", None, None), Ok(None));
+        assert_eq!(resolve(&all, "", None, None), Ok(None));
+        assert!(
+            resolve(&all, "ko", None, None)
+                .unwrap_err()
+                .contains("Korean")
+        );
+    }
+
+    #[test]
+    fn picks_by_gender() {
+        use Gender::{Female, Male};
+        let all = [
+            gendered("david", "en-US", Male),
+            gendered("zira", "en-US", Female),
+            gendered("mark", "en-US", Male),
+            voice("eddy", "en-US"),
+            gendered("yelda", "tr-TR", Female),
+            voice("cem", "tr-TR"),
+            gendered("milena", "ru-RU", Female),
+        ];
+        let id = |v: Option<&Voice>| v.map(|v| v.id.clone());
+        assert_eq!(
+            id(pick(&all, "en", None, Some(Female), None)),
+            Some("zira".into())
+        );
+        assert_eq!(
+            id(pick(&all, "en", None, Some(Male), None)),
+            Some("david".into())
+        );
+        // The OS default wins among voices that fit equally, not over a better fit.
+        assert_eq!(
+            id(pick(&all, "en", None, Some(Male), Some("mark"))),
+            Some("mark".into())
+        );
+        assert_eq!(
+            id(pick(&all, "en", None, Some(Female), Some("david"))),
+            Some("zira".into())
+        );
+        assert_eq!(
+            id(pick(&all, "en", None, None, Some("mark"))),
+            Some("mark".into())
+        );
+        // Unknown gender comes before the other one.
+        assert_eq!(
+            id(pick(&all, "tr", None, Some(Male), None)),
+            Some("cem".into())
+        );
+        assert_eq!(
+            id(pick(&all, "tr", None, Some(Female), None)),
+            Some("yelda".into())
+        );
+        // No voice of that gender at all: any voice for the language.
+        assert_eq!(
+            id(pick(&all, "ru", None, Some(Male), None)),
+            Some("milena".into())
+        );
+        // A voice picked by hand beats the gender.
+        assert_eq!(
+            id(pick(&all, "en", Some("mark"), Some(Female), None)),
+            Some("mark".into())
+        );
+    }
+
+    #[test]
+    fn resolves_personas() {
+        use Gender::{Female, Male};
+        let all = [
+            gendered("david", "en-US", Male),
+            gendered("zira", "en-US", Female),
+            gendered("mark", "en-US", Male),
+            gendered("yelda", "tr-TR", Female),
+        ];
+        let r = |s: &Style, lang: &str| {
+            s.resolve(&all, lang)
+                .map(|(v, rate, pitch)| (v.map(|v| v.id.clone()), rate, pitch))
+        };
+        assert_eq!(
+            r(&style("ayla"), "en"),
+            Ok((Some("zira".into()), 1.05, 1.15))
+        );
+        assert_eq!(
+            r(&style("ates"), "en"),
+            Ok((Some("david".into()), 1.0, 0.8))
+        );
+        assert_eq!(
+            r(&style("ruzgar"), "en"),
+            Ok((Some("david".into()), 1.35, 1.05))
+        );
+        // Turkish has no male voice here: Deniz still reads it, slower and lower.
+        assert_eq!(
+            r(&style("deniz"), "tr"),
+            Ok((Some("yelda".into()), 0.95, 0.95))
+        );
+        assert!(r(&style("bilge"), "ko").unwrap_err().contains("Korean"));
+        // Unknown ids are Lale.
+        assert_eq!(r(&style("nope"), "en"), r(&style("lale"), "en"));
+
+        let custom = Style {
+            persona: CUSTOM.into(),
+            voice: Some("mark".into()),
+            rate: 1.4,
+        };
+        assert_eq!(r(&custom, "en"), Ok((Some("mark".into()), 1.4, 1.0)));
+        // The manual voice only reads its own language.
+        assert_eq!(r(&custom, "tr"), Ok((Some("yelda".into()), 1.4, 1.0)));
+        assert_eq!(
+            r(&style(CUSTOM), "en"),
+            Ok((Some("david".into()), 1.0, 1.0))
+        );
+
+        // The same persona always gets the same voice, and female personas share it.
+        for p in &PERSONAS {
+            let first = r(&style(p.id), "en");
+            assert!((0..5).all(|_| r(&style(p.id), "en") == first), "{}", p.id);
+        }
+        assert_eq!(r(&style("lale"), "en").unwrap().0, Some("zira".into()));
+        assert_eq!(r(&style("bilge"), "en").unwrap().0, Some("zira".into()));
+    }
+
+    #[test]
+    fn persona_table() {
+        let ids: Vec<&str> = PERSONAS.iter().map(|p| p.id).collect();
+        assert_eq!(
+            ids,
+            ["lale", "ayla", "deniz", "ates", "bilge", "ruzgar", "custom"]
+        );
+        assert_eq!(persona("ates").name, "Ateş");
+        assert_eq!(persona("ruzgar").name, "Rüzgar");
+        assert_eq!(persona("nope").id, "lale");
+    }
+
+    #[test]
+    fn samples() {
+        assert!(sample("tr", "Ayla").starts_with("Merhaba"));
+        assert!(sample("en", "Ayla").starts_with("Hi!"));
+        assert!(sample("zh-Hant", "Ayla").contains("Ayla"));
+        for l in ["tr", "en", "de", "es", "fr", "ar", "ru"] {
+            assert!(!sample(l, "Ayla").contains("Ayla"), "{l}");
+        }
     }
 
     #[test]
@@ -318,6 +634,7 @@ mod tests {
         let u = |t: &str| Utterance {
             text: t.into(),
             lang: "tr".into(),
+            style: None,
         };
         assert_eq!(enqueue(&mut q, u("a")), 0);
         assert_eq!(enqueue(&mut q, u("b")), 0);

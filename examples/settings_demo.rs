@@ -2,7 +2,7 @@ use eframe::egui;
 use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
 use hammurabi::settings::Settings;
-use hammurabi::tts::Voice;
+use hammurabi::tts::{Gender, Voice};
 use hammurabi::ui::settings_window::{ModelsStatus, SettingsAction, SettingsWindow};
 
 struct Demo {
@@ -68,11 +68,19 @@ fn main() -> eframe::Result {
                             id: "tr-1".into(),
                             name: "Microsoft Tolga".into(),
                             lang: "tr-TR".into(),
+                            gender: Some(Gender::Male),
+                        },
+                        Voice {
+                            id: "tr-2".into(),
+                            name: "Microsoft Emel".into(),
+                            lang: "tr-TR".into(),
+                            gender: Some(Gender::Female),
                         },
                         Voice {
                             id: "en-1".into(),
                             name: "Microsoft Aria".into(),
                             lang: "en-US".into(),
+                            gender: Some(Gender::Female),
                         },
                     ],
                 },

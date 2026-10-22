@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::tts::{self, Style};
 use crate::types::AudioSource;
 
 /// Languages Whisper is offered for (Babil's list).
@@ -129,9 +130,13 @@ pub struct Settings {
     pub instant: bool,
     /// Read final captions aloud (the translation when there is one) with an OS voice.
     pub speak: bool,
+    /// Id from `tts::PERSONAS`. Empty only while loading, so `migrated` can tell it was missing.
+    #[serde(default)]
+    pub speak_persona: String,
     /// Voice id from `tts::voices`, used for captions in its language; None = the OS default.
+    /// Custom persona only.
     pub speak_voice: Option<String>,
-    /// 1.0 = normal speed.
+    /// 1.0 = normal speed. Custom persona only.
     pub speak_rate: f32,
     pub caption: CaptionStyle,
     /// Logical px.
@@ -160,6 +165,7 @@ impl Default for Settings {
             translator: TranslatorChoice::Builtin,
             instant: false,
             speak: false,
+            speak_persona: tts::PERSONAS[0].id.into(),
             speak_voice: None,
             speak_rate: 1.0,
             caption: CaptionStyle::default(),
@@ -168,6 +174,40 @@ impl Default for Settings {
             hotkey_move: "alt+shift+KeyM".into(),
             check_updates: true,
             update_notified: None,
+        }
+    }
+}
+
+impl Settings {
+    /// Configs from before personas keep the voice and speed picked there, as Custom.
+    pub fn migrated(mut self) -> Self {
+        if self.speak_persona.is_empty() {
+            let picked = self.speak_voice.as_deref().is_some_and(|v| !v.is_empty())
+                || self.speak_rate != 1.0;
+            self.speak_persona = if picked {
+                tts::CUSTOM
+            } else {
+                tts::PERSONAS[0].id
+            }
+            .into();
+        }
+        self
+    }
+
+    pub fn speak_style(&self) -> Style {
+        Style {
+            persona: self.speak_persona.clone(),
+            voice: self.speak_voice.clone(),
+            rate: self.speak_rate,
+        }
+    }
+
+    /// The language captions are read aloud in, when known: the translation's, else the spoken one.
+    pub fn speak_lang(&self) -> Option<&str> {
+        if self.translate {
+            Some(self.target_language.as_str())
+        } else {
+            self.spoken_language.as_deref()
         }
     }
 }
@@ -230,6 +270,40 @@ mod tests {
         };
         let text = toml::to_string(&s).unwrap();
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
-        assert_eq!(toml::from_str::<Settings>("").unwrap(), Settings::default());
+        assert_eq!(
+            toml::from_str::<Settings>("").unwrap().migrated(),
+            Settings::default()
+        );
+    }
+
+    #[test]
+    fn persona_migration() {
+        let persona = |toml: &str| {
+            toml::from_str::<Settings>(toml)
+                .unwrap()
+                .migrated()
+                .speak_persona
+        };
+        assert_eq!(persona(""), "lale");
+        assert_eq!(persona("speak = true"), "lale");
+        assert_eq!(persona("speak_voice = \"\""), "lale");
+        assert_eq!(persona("speak_rate = 1.0"), "lale");
+        assert_eq!(persona("speak_voice = \"tr-1\""), "custom");
+        assert_eq!(persona("speak_rate = 1.3"), "custom");
+        assert_eq!(
+            persona("speak_persona = \"ayla\"\nspeak_voice = \"tr-1\""),
+            "ayla"
+        );
+        let s = toml::from_str::<Settings>("speak_voice = \"tr-1\"\nspeak_rate = 1.3")
+            .unwrap()
+            .migrated();
+        assert_eq!(
+            s.speak_style(),
+            Style {
+                persona: "custom".into(),
+                voice: Some("tr-1".into()),
+                rate: 1.3
+            }
+        );
     }
 }

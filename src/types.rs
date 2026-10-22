@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::ModelId;
 use crate::settings::Settings;
+use crate::tts::Style;
 
 pub const SAMPLE_RATE: u32 = 16_000;
 pub const FRAME_SAMPLES: usize = 1_600; // 100 ms
@@ -35,6 +36,13 @@ pub enum EngineCommand {
     Stop,
     Reconfigure(Settings),
     Prefetch(ModelId),
+    /// Read a sample aloud with `style` now, replacing a running preview; capture stays muted
+    /// meanwhile.
+    Preview {
+        text: String,
+        lang: String,
+        style: Style,
+    },
     Shutdown,
 }
 

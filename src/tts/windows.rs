@@ -2,12 +2,12 @@ use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use windows::Media::SpeechSynthesis::{SpeechSynthesizer, VoiceInformation};
+use windows::Media::SpeechSynthesis::{SpeechSynthesizer, VoiceGender, VoiceInformation};
 use windows::Storage::Streams::{Buffer, DataReader, InputStreamOptions};
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FLAGS, SND_MEMORY, SND_NODEFAULT};
 use windows::core::{HSTRING, PCWSTR};
 
-use super::{POLL, Voice, lang_matches};
+use super::{Gender, POLL, Voice, lang_matches};
 
 pub const VOICE_HINT: &str =
     "Add one in Windows Settings > Time & language > Speech > Manage voices.";
@@ -17,7 +17,22 @@ fn info(v: &VoiceInformation) -> windows::core::Result<Voice> {
         id: v.Id()?.to_string(),
         name: v.DisplayName()?.to_string(),
         lang: v.Language()?.to_string(),
+        gender: match v.Gender()? {
+            VoiceGender::Female => Some(Gender::Female),
+            VoiceGender::Male => Some(Gender::Male),
+            _ => None,
+        },
     })
+}
+
+/// SpeakingRate: 0.5..6.0, 1.0 = normal.
+fn speaking_rate(rate: f32) -> f64 {
+    f64::from(rate).clamp(0.5, 6.0)
+}
+
+/// AudioPitch: 0.0..2.0, 1.0 = normal.
+fn audio_pitch(pitch: f32) -> f64 {
+    f64::from(pitch).clamp(0.0, 2.0)
 }
 
 pub fn voices() -> Vec<Voice> {
@@ -37,6 +52,7 @@ pub fn speak(
     _lang: &str,
     voice: Option<&Voice>,
     rate: f32,
+    pitch: f32,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
     let synth = SpeechSynthesizer::new()?;
@@ -47,7 +63,10 @@ pub fn speak(
     {
         synth.SetVoice(&i)?;
     }
-    synth.Options()?.SetSpeakingRate(f64::from(rate))?;
+    let options = synth.Options()?;
+    options.SetSpeakingRate(speaking_rate(rate))?;
+    // Fails before Windows 10 1803, which then speaks at normal pitch.
+    let _ = options.SetAudioPitch(audio_pitch(pitch));
     let stream = synth
         .SynthesizeTextToStreamAsync(&HSTRING::from(text))?
         .join()?;
@@ -77,4 +96,19 @@ pub fn speak(
     // SAFETY: a null sound stops whatever this process is playing.
     let _ = unsafe { PlaySoundW(PCWSTR::null(), None, SND_FLAGS::default()) };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_rate_and_pitch() {
+        assert_eq!(speaking_rate(1.0), 1.0);
+        assert_eq!(speaking_rate(1.35), f64::from(1.35f32));
+        assert_eq!(speaking_rate(0.1), 0.5);
+        assert_eq!(audio_pitch(1.0), 1.0);
+        assert_eq!(audio_pitch(0.8), f64::from(0.8f32));
+        assert_eq!(audio_pitch(3.0), 2.0);
+    }
 }

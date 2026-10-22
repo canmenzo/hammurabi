@@ -21,8 +21,8 @@ fn load_from(path: &Path) -> Settings {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Settings::default();
     };
-    match toml::from_str(&text) {
-        Ok(s) => s,
+    match toml::from_str::<Settings>(&text) {
+        Ok(s) => s.migrated(),
         Err(e) => {
             log::warn!("corrupt config {}: {e}; using defaults", path.display());
             let bak = path.with_extension("toml.bak");
@@ -89,6 +89,7 @@ mod tests {
         assert!(!s.translate);
         assert_eq!(s.caption.cues, 5);
         assert_eq!(s.caption.trans_size, 30.0);
+        assert_eq!(s.speak_persona, "lale");
         assert!(!path.with_extension("toml.bak").exists());
         let _ = std::fs::remove_dir_all(dir);
     }

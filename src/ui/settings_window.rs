@@ -1,6 +1,9 @@
 use eframe::egui::{
-    self, Color32, ComboBox, Context, DragValue, ProgressBar, RichText, ScrollArea, Slider, Ui,
+    self, Color32, ComboBox, Context, CursorIcon, DragValue, ProgressBar, Rect, RichText,
+    ScrollArea, Sense, Slider, TextStyle, Ui, UiBuilder, pos2, vec2,
 };
+
+use super::icons;
 
 use crate::audio::{DeviceInfo, DeviceList};
 use crate::models::{ModelId, spec};
@@ -8,7 +11,7 @@ use crate::settings::{
     AsrBackend, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, TranslatorChoice,
     lang_name,
 };
-use crate::tts::{self, Voice};
+use crate::tts::{self, Persona, Style, Voice};
 use crate::types::AudioSource;
 
 const OLLAMA_URL: &str = "http://localhost:11434/v1";
@@ -34,6 +37,8 @@ pub enum SettingsAction {
     RefreshDevices,
     ToggleAutostart,
     OpenLogs,
+    /// Read the persona's sample aloud.
+    Preview(&'static str),
 }
 
 #[derive(Default)]
@@ -66,7 +71,7 @@ impl SettingsWindow {
                             audio(ui, settings, models, &mut changed, &mut actions);
                             speech(ui, settings, models, &mut changed, &mut actions);
                             translation(ui, settings, models, &mut changed, &mut actions);
-                            read_aloud(ui, settings, models, &mut changed);
+                            read_aloud(ui, settings, models, &mut changed, &mut actions);
                             captions(ui, settings, &mut changed);
                             section(ui, "Hotkeys");
                             ui.label(format!(
@@ -404,18 +409,81 @@ fn translation(
     });
 }
 
-fn read_aloud(ui: &mut Ui, s: &mut Settings, m: &ModelsStatus, changed: &mut bool) {
+/// A selectable persona row with a play button; returns (row clicked, play clicked).
+fn persona_card(ui: &mut Ui, p: &Persona, voice: &str, selected: bool) -> (bool, bool) {
+    let mut play = false;
+    let card = ui.scope_builder(UiBuilder::new().id_salt(p.id).sense(Sense::click()), |ui| {
+        let hovered = ui.response().hovered();
+        let v = ui.visuals();
+        let (fill, stroke) = if selected {
+            (v.selection.bg_fill, v.selection.stroke)
+        } else if hovered {
+            (v.widgets.hovered.weak_bg_fill, v.widgets.hovered.bg_stroke)
+        } else {
+            (v.faint_bg_color, v.widgets.noninteractive.bg_stroke)
+        };
+        egui::Frame::new()
+            .fill(fill)
+            .stroke(stroke)
+            .corner_radius(6)
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                if selected {
+                    ui.visuals_mut().override_text_color = Some(stroke.color);
+                }
+                ui.horizontal(|ui| {
+                    ui.strong(p.name);
+                    ui.label(p.description);
+                });
+                ui.label(RichText::new(voice).small().weak());
+                // Frameless, text-height play button centred on the row's right edge.
+                let row = ui.min_rect();
+                let size = ui.text_style_height(&TextStyle::Body) + 6.0;
+                let rect = Rect::from_center_size(
+                    pos2(row.right() - size / 2.0, row.center().y),
+                    vec2(size, size),
+                );
+                let button = ui
+                    .interact(rect, ui.scope_id().with("play"), Sense::click())
+                    .on_hover_text("Play sample")
+                    .on_hover_cursor(CursorIcon::PointingHand);
+                let v = ui.visuals();
+                if button.hovered() {
+                    ui.painter()
+                        .rect_filled(rect, 4, v.widgets.hovered.weak_bg_fill);
+                }
+                let color = if selected {
+                    stroke.color
+                } else {
+                    ui.style().interact(&button).fg_stroke.color
+                };
+                icons::paint_play(ui.painter(), rect.shrink(4.0), color);
+                play = button.clicked();
+            });
+    });
+    let clicked = card
+        .response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .clicked();
+    (clicked, play)
+}
+
+fn read_aloud(
+    ui: &mut Ui,
+    s: &mut Settings,
+    m: &ModelsStatus,
+    changed: &mut bool,
+    actions: &mut Vec<SettingsAction>,
+) {
     section(ui, "Read aloud");
     *changed |= ui
         .checkbox(&mut s.speak, "Read captions aloud")
         .on_hover_text("Speaks each finished caption, the translation when there is one, with a voice installed on this computer.")
         .changed();
-    // The language most captions will be in, if known.
-    let lang = if s.translate {
-        Some(s.target_language.clone())
-    } else {
-        s.spoken_language.clone()
-    };
+    let lang = s.speak_lang().map(str::to_string);
+    // Previews are in English while the spoken language is auto-detected.
+    let sample_lang = lang.clone().unwrap_or_else(|| "en".into());
     let voices: Vec<&Voice> = m
         .voices
         .iter()
@@ -425,42 +493,30 @@ fn read_aloud(ui: &mut Ui, s: &mut Settings, m: &ModelsStatus, changed: &mut boo
         })
         .collect();
     ui.add_enabled_ui(s.speak, |ui| {
-        grid(ui, "read_aloud", |ui| {
-            ui.label("Voice");
-            let label = |v: &Voice| format!("{} ({})", v.name, v.lang);
-            let current = match &s.speak_voice {
-                None => "Automatic".to_string(),
-                Some(id) => m
-                    .voices
-                    .iter()
-                    .find(|v| &v.id == id)
-                    .map_or_else(|| format!("{id} (missing)"), label),
+        let current = tts::persona(&s.speak_persona).id;
+        for p in &tts::PERSONAS {
+            let style = Style {
+                persona: p.id.into(),
+                ..s.speak_style()
             };
-            ComboBox::from_id_salt("voice")
-                .selected_text(current)
-                .width(260.0)
-                .show_ui(ui, |ui| {
-                    *changed |= ui
-                        .selectable_value(&mut s.speak_voice, None, "Automatic")
-                        .on_hover_text("The system voice for each caption's language.")
-                        .changed();
-                    for v in &voices {
-                        *changed |= ui
-                            .selectable_value(&mut s.speak_voice, Some(v.id.clone()), label(v))
-                            .changed();
-                    }
-                });
-            ui.end_row();
-
-            ui.label("Speed");
-            *changed |= ui
-                .add(
-                    Slider::new(&mut s.speak_rate, 0.5..=2.0)
-                        .custom_formatter(|v, _| format!("{v:.1}x")),
-                )
-                .changed();
-            ui.end_row();
-        });
+            let voice = match style.resolve(&m.voices, &sample_lang) {
+                Ok((Some(v), ..)) => format!("{} ({})", v.name, v.lang),
+                Ok((None, ..)) => "System voice".into(),
+                Err(_) => format!("No {} voice", lang_name(&sample_lang)),
+            };
+            let (select, play) = persona_card(ui, p, &voice, p.id == current);
+            if select && s.speak_persona != p.id {
+                s.speak_persona = p.id.into();
+                *changed = true;
+            }
+            if play {
+                actions.push(SettingsAction::Preview(p.id));
+            }
+        }
+        if current == tts::CUSTOM {
+            ui.add_space(4.0);
+            custom_voice(ui, s, m, &voices, changed);
+        }
         if let Some(l) = &lang
             && s.speak
             && !m.voices.is_empty()
@@ -469,6 +525,51 @@ fn read_aloud(ui: &mut Ui, s: &mut Settings, m: &ModelsStatus, changed: &mut boo
             ui.colored_label(Color32::from_rgb(230, 160, 60), tts::missing_voice(l));
         }
         ui.weak("Listening pauses while a caption is read, so the voice is not captioned again.");
+    });
+}
+
+fn custom_voice(
+    ui: &mut Ui,
+    s: &mut Settings,
+    m: &ModelsStatus,
+    voices: &[&Voice],
+    changed: &mut bool,
+) {
+    grid(ui, "read_aloud", |ui| {
+        ui.label("Voice");
+        let label = |v: &Voice| format!("{} ({})", v.name, v.lang);
+        let current = match &s.speak_voice {
+            None => "Automatic".to_string(),
+            Some(id) => m
+                .voices
+                .iter()
+                .find(|v| &v.id == id)
+                .map_or_else(|| format!("{id} (missing)"), label),
+        };
+        ComboBox::from_id_salt("voice")
+            .selected_text(current)
+            .width(260.0)
+            .show_ui(ui, |ui| {
+                *changed |= ui
+                    .selectable_value(&mut s.speak_voice, None, "Automatic")
+                    .on_hover_text("The system voice for each caption's language.")
+                    .changed();
+                for v in voices {
+                    *changed |= ui
+                        .selectable_value(&mut s.speak_voice, Some(v.id.clone()), label(v))
+                        .changed();
+                }
+            });
+        ui.end_row();
+
+        ui.label("Speed");
+        *changed |= ui
+            .add(
+                Slider::new(&mut s.speak_rate, 0.5..=2.0)
+                    .custom_formatter(|v, _| format!("{v:.1}x")),
+            )
+            .changed();
+        ui.end_row();
     });
 }
 

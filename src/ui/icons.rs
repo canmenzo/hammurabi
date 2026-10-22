@@ -1,10 +1,18 @@
 //! Tray icon: Phosphor "subtitles" (fill, MIT), pre-rasterized to straight RGBA.
 //! Files live in assets/icons/ as {idle,active}-{16,32,64}.rgba.
 //! app-64.rgba is the window icon: the same glyph on the teal tile of assets/hammurabi.ico.
+//! In-window icons are Phosphor glyphs drawn as shapes, so they take the theme's colours.
 
 use std::sync::Arc;
 
-use eframe::egui::IconData;
+use eframe::egui::{Color32, IconData, Painter, Rect, Shape, Stroke, vec2};
+
+/// Phosphor "play" (fill) in `rect`: its triangle (64,40) (240,128) (64,216) on the 256 grid.
+pub fn paint_play(painter: &Painter, rect: Rect, color: Color32) {
+    let at = |x: f32, y: f32| rect.min + vec2(x, y) / 256.0 * rect.size();
+    let points = vec![at(64.0, 40.0), at(240.0, 128.0), at(64.0, 216.0)];
+    painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
+}
 
 const IDLE: [(u32, &[u8]); 3] = [
     (16, include_bytes!("../../assets/icons/idle-16.rgba")),

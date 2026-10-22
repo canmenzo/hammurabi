@@ -45,6 +45,7 @@ pub enum UiAction {
     ToggleTranslate,
     SetTarget(&'static str),
     ToggleSpeak,
+    SetPersona(&'static str),
     ToggleMove,
     OpenSettings,
     ToggleAutostart,
@@ -194,6 +195,10 @@ impl App {
             }
             UiAction::ToggleSpeak => {
                 self.settings.speak = !self.settings.speak;
+                self.changed();
+            }
+            UiAction::SetPersona(id) => {
+                self.settings.speak_persona = id.into();
                 self.changed();
             }
             UiAction::ToggleMove => self.set_move(!self.move_mode, ctx),
@@ -558,6 +563,16 @@ impl eframe::App for App {
                     }
                     SettingsAction::ToggleAutostart => self.handle(UiAction::ToggleAutostart, &ctx),
                     SettingsAction::OpenLogs => self.handle(UiAction::OpenLogs, &ctx),
+                    SettingsAction::Preview(id) => {
+                        let lang = self.settings.speak_lang().unwrap_or("en").to_string();
+                        let style = tts::Style {
+                            persona: id.into(),
+                            ..self.settings.speak_style()
+                        };
+                        let text = tts::sample(&lang, tts::persona(id).name);
+                        self.engine()
+                            .send(EngineCommand::Preview { text, lang, style });
+                    }
                 }
             }
             if close {

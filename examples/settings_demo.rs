@@ -22,6 +22,7 @@ impl eframe::App for Demo {
                 SettingsAction::RefreshDevices => println!("refresh"),
                 SettingsAction::ToggleAutostart => println!("toggle autostart"),
                 SettingsAction::OpenLogs => println!("open logs"),
+                SettingsAction::Preview(id) => println!("preview {id}"),
             }
         }
     }
@@ -51,6 +52,8 @@ fn main() -> eframe::Result {
                 win: SettingsWindow::default(),
                 settings: Settings {
                     translate: true,
+                    target_language: "tr".into(),
+                    speak: true,
                     ..Settings::default()
                 },
                 status: ModelsStatus {

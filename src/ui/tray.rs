@@ -3,6 +3,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use super::UiAction;
 use crate::settings::{Settings, TARGET_LANGS, lang_name};
+use crate::tts::{self, PERSONAS};
 use crate::types::AudioSource;
 
 const SOURCES: [(AudioSource, &str, &str); 3] = [
@@ -19,6 +20,7 @@ pub struct Tray {
     translate: CheckMenuItem,
     targets: Vec<CheckMenuItem>,
     speak: CheckMenuItem,
+    personas: Vec<CheckMenuItem>,
     move_item: CheckMenuItem,
     autostart: CheckMenuItem,
     update: Option<MenuItem>,
@@ -43,6 +45,10 @@ impl Tray {
             .map(|c| CheckMenuItem::with_id(format!("lang:{c}"), lang_name(c), true, false, None))
             .collect();
         let speak = CheckMenuItem::with_id("speak", "Read aloud", true, false, None);
+        let personas: Vec<_> = PERSONAS
+            .iter()
+            .map(|p| CheckMenuItem::with_id(format!("voice:{}", p.id), p.name, true, false, None))
+            .collect();
         let move_item = CheckMenuItem::with_id("move", "Move captions", true, false, None);
         let autostart = CheckMenuItem::with_id("autostart", "Start at login", true, false, None);
 
@@ -54,6 +60,10 @@ impl Tray {
         for t in &targets {
             target_menu.append(t)?;
         }
+        let voice_menu = Submenu::new("Voice", true);
+        for p in &personas {
+            voice_menu.append(p)?;
+        }
         let menu = Menu::new();
         menu.append_items(&[
             &start,
@@ -61,6 +71,7 @@ impl Tray {
             &translate,
             &target_menu,
             &speak,
+            &voice_menu,
             &move_item,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id("settings", "Settings…", true, None),
@@ -92,6 +103,7 @@ impl Tray {
             translate,
             targets,
             speak,
+            personas,
             move_item,
             autostart,
             update: None,
@@ -115,6 +127,8 @@ impl Tray {
             _ => {
                 if let Some((src, _, _)) = SOURCES.iter().find(|(_, sid, _)| *sid == id) {
                     UiAction::SetSource(*src)
+                } else if let Some(p) = id.strip_prefix("voice:") {
+                    UiAction::SetPersona(PERSONAS.iter().find(|x| x.id == p)?.id)
                 } else {
                     let code = id.strip_prefix("lang:")?;
                     UiAction::SetTarget(TARGET_LANGS.iter().find(|&&c| c == code)?)
@@ -162,6 +176,10 @@ impl Tray {
             item.set_checked(s.target_language == *code);
         }
         self.speak.set_checked(s.speak);
+        let persona = tts::persona(&s.speak_persona).id;
+        for (item, p) in self.personas.iter().zip(PERSONAS.iter()) {
+            item.set_checked(persona == p.id);
+        }
         self.move_item.set_checked(move_mode);
         self.autostart.set_checked(autostart);
         let _ = self.icon.set_tooltip(Some(tooltip));

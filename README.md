@@ -113,7 +113,7 @@ Translation model (used when Translation is set to Built-in):
 Files are stored in your OS's standard folders:
 
 - Config: `config.toml` in the config folder. On Windows, for example, `%APPDATA%\menzo\Hammurabi\config\config.toml`.
-- Models: a `models` folder inside the cache folder. On Windows, for example, `%LOCALAPPDATA%\menzo\Hammurabi\cache\models`.
+- Models: a `models` folder inside the cache folder. On Windows, for example, `%LOCALAPPDATA%\menzo\Hammurabi\cache\models`. Set the `HAMMURABI_MODELS_DIR` environment variable to use another folder.
 
 Settings has **Open models folder** and **Open logs** buttons if you want to find them quickly.
 

@@ -193,6 +193,7 @@ impl App {
             UiAction::OpenSettings => {
                 if !self.settings_open {
                     self.settings_open = true;
+                    platform::activate_app();
                     self.refresh_models();
                     self.models.devices = audio::list_devices();
                     self.models.autostart = autostart::is_enabled();

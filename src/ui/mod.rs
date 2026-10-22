@@ -20,6 +20,7 @@ use crate::config;
 use crate::models::{self, ModelId};
 use crate::pipeline::{Engine, EngineHandle};
 use crate::settings::{Settings, lang_name};
+use crate::tts;
 use crate::types::{
     AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, ProgressPhase, Status,
     StatusLevel,
@@ -43,6 +44,7 @@ pub enum UiAction {
     SetSource(AudioSource),
     ToggleTranslate,
     SetTarget(&'static str),
+    ToggleSpeak,
     ToggleMove,
     OpenSettings,
     ToggleAutostart,
@@ -107,6 +109,7 @@ impl App {
                 },
                 compute: crate::device::label(),
                 autostart: autostart::is_enabled(),
+                voices: Vec::new(),
             },
             app_rx,
             running: false,
@@ -189,6 +192,10 @@ impl App {
                 self.settings.target_language = code.into();
                 self.changed();
             }
+            UiAction::ToggleSpeak => {
+                self.settings.speak = !self.settings.speak;
+                self.changed();
+            }
             UiAction::ToggleMove => self.set_move(!self.move_mode, ctx),
             UiAction::OpenSettings => {
                 if !self.settings_open {
@@ -197,6 +204,7 @@ impl App {
                     self.refresh_models();
                     self.models.devices = audio::list_devices();
                     self.models.autostart = autostart::is_enabled();
+                    self.models.voices = tts::voices();
                 }
             }
             UiAction::ToggleAutostart => {
@@ -544,7 +552,10 @@ impl eframe::App for App {
                             let _ = open::that_detached(dir);
                         }
                     }
-                    SettingsAction::RefreshDevices => self.models.devices = audio::list_devices(),
+                    SettingsAction::RefreshDevices => {
+                        self.models.devices = audio::list_devices();
+                        self.models.voices = tts::voices();
+                    }
                     SettingsAction::ToggleAutostart => self.handle(UiAction::ToggleAutostart, &ctx),
                     SettingsAction::OpenLogs => self.handle(UiAction::OpenLogs, &ctx),
                 }

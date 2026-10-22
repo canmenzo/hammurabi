@@ -2,6 +2,7 @@ use eframe::egui;
 use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
 use hammurabi::settings::Settings;
+use hammurabi::tts::Voice;
 use hammurabi::ui::settings_window::{ModelsStatus, SettingsAction, SettingsWindow};
 
 struct Demo {
@@ -62,6 +63,18 @@ fn main() -> eframe::Result {
                     },
                     compute: "CUDA 0".into(),
                     autostart: false,
+                    voices: vec![
+                        Voice {
+                            id: "tr-1".into(),
+                            name: "Microsoft Tolga".into(),
+                            lang: "tr-TR".into(),
+                        },
+                        Voice {
+                            id: "en-1".into(),
+                            name: "Microsoft Aria".into(),
+                            lang: "en-US".into(),
+                        },
+                    ],
                 },
             }))
         }),

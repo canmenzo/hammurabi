@@ -8,6 +8,7 @@ use crate::settings::{
     AsrBackend, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, TranslatorChoice,
     lang_name,
 };
+use crate::tts::{self, Voice};
 use crate::types::AudioSource;
 
 const OLLAMA_URL: &str = "http://localhost:11434/v1";
@@ -23,6 +24,7 @@ pub struct ModelsStatus {
     pub compute: String,
     /// Real OS state, not a setting.
     pub autostart: bool,
+    pub voices: Vec<Voice>,
 }
 
 pub enum SettingsAction {
@@ -64,6 +66,7 @@ impl SettingsWindow {
                             audio(ui, settings, models, &mut changed, &mut actions);
                             speech(ui, settings, models, &mut changed, &mut actions);
                             translation(ui, settings, models, &mut changed, &mut actions);
+                            read_aloud(ui, settings, models, &mut changed);
                             captions(ui, settings, &mut changed);
                             section(ui, "Hotkeys");
                             ui.label(format!(
@@ -398,6 +401,74 @@ fn translation(
         *changed |= ui
             .checkbox(&mut s.instant, "Instant (translate the live line)")
             .changed();
+    });
+}
+
+fn read_aloud(ui: &mut Ui, s: &mut Settings, m: &ModelsStatus, changed: &mut bool) {
+    section(ui, "Read aloud");
+    *changed |= ui
+        .checkbox(&mut s.speak, "Read captions aloud")
+        .on_hover_text("Speaks each finished caption, the translation when there is one, with a voice installed on this computer.")
+        .changed();
+    // The language most captions will be in, if known.
+    let lang = if s.translate {
+        Some(s.target_language.clone())
+    } else {
+        s.spoken_language.clone()
+    };
+    let voices: Vec<&Voice> = m
+        .voices
+        .iter()
+        .filter(|v| {
+            lang.as_deref()
+                .is_none_or(|l| tts::lang_matches(&v.lang, l))
+        })
+        .collect();
+    ui.add_enabled_ui(s.speak, |ui| {
+        grid(ui, "read_aloud", |ui| {
+            ui.label("Voice");
+            let label = |v: &Voice| format!("{} ({})", v.name, v.lang);
+            let current = match &s.speak_voice {
+                None => "Automatic".to_string(),
+                Some(id) => m
+                    .voices
+                    .iter()
+                    .find(|v| &v.id == id)
+                    .map_or_else(|| format!("{id} (missing)"), label),
+            };
+            ComboBox::from_id_salt("voice")
+                .selected_text(current)
+                .width(260.0)
+                .show_ui(ui, |ui| {
+                    *changed |= ui
+                        .selectable_value(&mut s.speak_voice, None, "Automatic")
+                        .on_hover_text("The system voice for each caption's language.")
+                        .changed();
+                    for v in &voices {
+                        *changed |= ui
+                            .selectable_value(&mut s.speak_voice, Some(v.id.clone()), label(v))
+                            .changed();
+                    }
+                });
+            ui.end_row();
+
+            ui.label("Speed");
+            *changed |= ui
+                .add(
+                    Slider::new(&mut s.speak_rate, 0.5..=2.0)
+                        .custom_formatter(|v, _| format!("{v:.1}x")),
+                )
+                .changed();
+            ui.end_row();
+        });
+        if let Some(l) = &lang
+            && s.speak
+            && !m.voices.is_empty()
+            && voices.is_empty()
+        {
+            ui.colored_label(Color32::from_rgb(230, 160, 60), tts::missing_voice(l));
+        }
+        ui.weak("Listening pauses while a caption is read, so the voice is not captioned again.");
     });
 }
 

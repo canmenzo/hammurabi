@@ -18,6 +18,7 @@ pub struct Tray {
     sources: Vec<CheckMenuItem>,
     translate: CheckMenuItem,
     targets: Vec<CheckMenuItem>,
+    speak: CheckMenuItem,
     move_item: CheckMenuItem,
     autostart: CheckMenuItem,
     update: Option<MenuItem>,
@@ -41,6 +42,7 @@ impl Tray {
             .iter()
             .map(|c| CheckMenuItem::with_id(format!("lang:{c}"), lang_name(c), true, false, None))
             .collect();
+        let speak = CheckMenuItem::with_id("speak", "Read aloud", true, false, None);
         let move_item = CheckMenuItem::with_id("move", "Move captions", true, false, None);
         let autostart = CheckMenuItem::with_id("autostart", "Start at login", true, false, None);
 
@@ -58,6 +60,7 @@ impl Tray {
             &source_menu,
             &translate,
             &target_menu,
+            &speak,
             &move_item,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id("settings", "Settings…", true, None),
@@ -88,6 +91,7 @@ impl Tray {
             sources,
             translate,
             targets,
+            speak,
             move_item,
             autostart,
             update: None,
@@ -100,6 +104,7 @@ impl Tray {
         Some(match id {
             "start" => UiAction::ToggleRunning,
             "translate" => UiAction::ToggleTranslate,
+            "speak" => UiAction::ToggleSpeak,
             "move" => UiAction::ToggleMove,
             "settings" => UiAction::OpenSettings,
             "autostart" => UiAction::ToggleAutostart,
@@ -156,6 +161,7 @@ impl Tray {
         for (item, code) in self.targets.iter().zip(TARGET_LANGS.iter()) {
             item.set_checked(s.target_language == *code);
         }
+        self.speak.set_checked(s.speak);
         self.move_item.set_checked(move_mode);
         self.autostart.set_checked(autostart);
         let _ = self.icon.set_tooltip(Some(tooltip));

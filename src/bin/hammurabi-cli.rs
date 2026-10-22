@@ -1,4 +1,5 @@
-//! Command-line tools: list devices, record, caption a WAV file through the real pipeline, download models.
+//! Command-line tools: list devices, record, caption a WAV file through the real pipeline, download
+//! models, read text aloud.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use hammurabi::models::{self, ModelId, ModelPaths};
 use hammurabi::pipeline::{self, Engine};
 use hammurabi::settings::{ModelChoice, Settings, TranslatorChoice};
 use hammurabi::translate::{llm::LlmTranslator, madlad::Madlad};
+use hammurabi::tts::{self, Speaker};
 use hammurabi::types::{
     AudioChunk, AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, FRAME_SAMPLES,
     Recognizer, SAMPLE_RATE, SourceKind, Transcript, Translate,
@@ -98,6 +100,25 @@ enum Cmd {
     Download {
         #[arg(value_enum)]
         model: DownloadModel,
+    },
+    /// List the voices captions can be read aloud with.
+    Voices {
+        /// Only voices for this language code.
+        #[arg(long)]
+        lang: Option<String>,
+    },
+    /// Read text aloud the way the app reads captions.
+    Speak {
+        text: String,
+        /// Language code of the text.
+        #[arg(long, default_value = "en")]
+        lang: String,
+        /// Voice id (see `voices`); the system voice for the language when omitted.
+        #[arg(long)]
+        voice: Option<String>,
+        /// 1.0 = normal speed.
+        #[arg(long, default_value_t = 1.0)]
+        rate: f32,
     },
 }
 
@@ -200,7 +221,68 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Cmd::Voices { lang } => {
+            for v in tts::voices().iter().filter(|v| {
+                lang.as_deref()
+                    .is_none_or(|l| tts::lang_matches(&v.lang, l))
+            }) {
+                println!("{:<8} {}  [{}]", v.lang, v.name, v.id);
+            }
+            Ok(())
+        }
+        Cmd::Speak {
+            text,
+            lang,
+            voice,
+            rate,
+        } => speak(text, lang, voice, rate),
     }
+}
+
+/// Speaks through the app's queue and reports how long captured audio was muted.
+fn speak(text: String, lang: String, voice: Option<String>, rate: f32) -> anyhow::Result<()> {
+    let all = tts::voices();
+    match tts::resolve(&all, &lang, voice.as_deref()).map_err(anyhow::Error::msg)? {
+        Some(v) => println!("Voice: {} ({})  [{}]", v.name, v.lang, v.id),
+        None => println!("Voice: the system's choice for {lang}"),
+    }
+    let speaker = Speaker::spawn();
+    speaker.configure(voice, rate);
+    let start = Instant::now();
+    speaker.say(text, lang);
+    let mut began = None;
+    loop {
+        if let Ok(w) = speaker.warnings.try_recv() {
+            anyhow::bail!(w);
+        }
+        let now = Instant::now();
+        match (speaker.muted(now, Duration::ZERO), began) {
+            (true, None) => began = Some(now),
+            (false, Some(b)) => {
+                anyhow::ensure!(
+                    speaker.muted(now, tts::TAIL),
+                    "capture unmuted right after speech"
+                );
+                println!(
+                    "Spoke for {:.2} s; capture muted {} ms after the request until {} ms after speech",
+                    (now - b).as_secs_f32(),
+                    (b - start).as_millis(),
+                    tts::TAIL.as_millis()
+                );
+                break;
+            }
+            (false, None) if now - start > Duration::from_secs(10) => {
+                anyhow::bail!("speech did not start")
+            }
+            _ => {}
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    if let Ok(w) = speaker.warnings.try_recv() {
+        anyhow::bail!(w);
+    }
+    Ok(())
 }
 
 fn devices() -> anyhow::Result<()> {

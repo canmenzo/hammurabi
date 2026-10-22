@@ -79,8 +79,17 @@ impl Madlad {
             .tokenizer
             .decode(&out[1..], true)
             .map_err(|e| anyhow!("{e}"))?;
-        Ok((join_cjk(text.trim()), n))
+        Ok((join_cjk(&unescape(text.trim())), n))
     }
+}
+
+/// MADLAD was trained on HTML-escaped text and sometimes emits "16 kilohertz &apos; e kadar".
+fn unescape(text: &str) -> String {
+    text.replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// MADLAD emits "你好嗎 ， 我的朋友 ？": drop spaces touching CJK or fullwidth chars,
@@ -121,6 +130,14 @@ impl Translate for Madlad {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unescape() {
+        assert_eq!(
+            super::unescape("l&apos;homme &quot;A&amp;B&quot; &amp;lt;"),
+            "l'homme \"A&B\" &lt;"
+        );
+    }
+
     #[test]
     fn join_cjk() {
         assert_eq!(

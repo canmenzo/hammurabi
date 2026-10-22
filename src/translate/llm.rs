@@ -36,15 +36,41 @@ impl LlmTranslator {
             .http_status_as_error(false)
             .build()
             .into();
-        let resp = agent
-            .get(&format!("{}/models", self.base_url))
+        let url = &self.base_url;
+        let mut resp = agent
+            .get(&format!("{url}/models"))
             .header("User-Agent", USER_AGENT)
             .call()
-            .context("LLM endpoint unreachable")?;
+            .map_err(|e| {
+                log::warn!("LLM ping {url}: {e}");
+                anyhow::anyhow!(
+                    "can't reach the local LLM at {url}, is Ollama or LM Studio running?"
+                )
+            })?;
         anyhow::ensure!(
             resp.status().is_success(),
-            "LLM endpoint returned {}",
+            "the local LLM at {url} returned {}",
             resp.status()
+        );
+        // OpenAI-style `{"data": [{"id": ...}]}`; servers that list nothing are trusted.
+        let models: Vec<String> = resp
+            .body_mut()
+            .read_to_string()
+            .ok()
+            .and_then(|b| serde_json::from_str::<Value>(&b).ok())
+            .and_then(|v| v["data"].as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| m["id"].as_str().map(str::to_owned))
+            .collect();
+        anyhow::ensure!(
+            models.is_empty()
+                || models
+                    .iter()
+                    .any(|m| *m == self.model || *m == format!("{}:latest", self.model)),
+            "the local LLM has no model named {} (it has: {})",
+            self.model,
+            models.join(", ")
         );
         Ok(())
     }

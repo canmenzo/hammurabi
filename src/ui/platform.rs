@@ -41,3 +41,18 @@ pub fn configure_overlay_window(frame: &eframe::Frame) {
     #[cfg(not(target_os = "macos"))]
     let _ = frame;
 }
+
+/// Brings the app to the front so a newly opened window is not hidden behind the active app.
+/// A menu bar (accessory) app is not activated by clicks on its status item menu.
+pub fn activate_app() {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        // SAFETY: called on the main thread; NSApplication exists once the event loop runs.
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app, activateIgnoringOtherApps: true];
+        }
+    }
+}

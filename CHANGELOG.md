@@ -2,6 +2,15 @@
 
 All notable changes to Hammurabi are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Voice personas for Read aloud: Lale (the default), Ayla, Deniz, Ateş, Bilge and Rüzgar, each with a character and a play button in Settings > Read aloud that speaks a sample. A persona picks an installed voice of its preferred gender for the language, falling back to any voice for it, and applies its own speed and pitch. With only one installed voice for a language, personas differ by speed and pitch alone.
+- Custom persona that keeps your own voice and speed. Configs that already had a voice or speed picked start on Custom.
+- A Voice submenu in the tray menu to switch persona.
+- `hammurabi-cli speak --persona <id>`. `hammurabi-cli voices` now shows each voice's gender, and with `--lang` the voice each persona gets.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
@@ -37,7 +46,7 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
-[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.2.0
 [0.1.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.0

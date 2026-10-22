@@ -25,7 +25,7 @@ The builds are not code signed yet:
 
 - Captions system audio, your microphone, or both
 - Translates into 26 languages with a built-in model (MADLAD-400) or any local OpenAI-compatible LLM (Ollama, LM Studio)
-- Reads finished captions aloud (the translation when translation is on) with the voices built into your OS
+- Reads finished captions aloud (the translation when translation is on) with the voices built into your OS, in six voice personas you can preview
 - Runs on any CPU, Apple GPUs (Metal), and RTX 50 GPUs (CUDA: ~50 ms per caption, ~0.3 s per translated sentence)
 - Can use Windows Live Captions as the speech engine (Windows 11 22H2+)
 - Click-through overlay that stays on top; tray menu and global hotkeys
@@ -42,6 +42,8 @@ Right-click the tray icon to start/stop captions, pick the source, toggle transl
 Shortcuts are `hotkey_toggle` and `hotkey_move` in `config.toml`. `hammurabi --start` starts captions on launch.
 
 **Read aloud** (tray menu or Settings) speaks each finished caption in its language with an installed system voice. Hammurabi stops listening while it speaks, so its own voice is never captioned again; whatever plays during that time is skipped. Add voices in **Windows Settings > Time & language > Speech** or **macOS System Settings > Accessibility > Spoken Content**. Linux needs `speech-dispatcher` or `espeak-ng`.
+
+**Voice personas** give Read aloud a character. In Settings > Read aloud (or the tray's **Voice** submenu), pick Lale (clear and neutral, the default), Ayla (bright and friendly), Deniz (calm and steady), Ateş (warm and deep), Bilge (slow and patient) or Rüzgar (quick, keeps up with fast talkers), and press its play button to hear a sample. Each persona uses an installed voice of its preferred gender for the language (any voice for it otherwise) at its own speed and pitch, so with only one voice installed they differ by speed and pitch alone. **Custom** keeps your own voice and speed, and is where you start if you had already picked one. Everything stays on your computer.
 
 <img src="docs/img/settings.webp" alt="The Hammurabi settings window" width="360">
 
@@ -88,8 +90,9 @@ hammurabi-cli devices                                    # list audio devices
 hammurabi-cli record --source system --secs 10 out.wav   # record system audio
 hammurabi-cli transcribe out.wav --translate tr          # caption + translate a WAV
 hammurabi-cli download base                              # tiny, base, small, turbo, madlad
-hammurabi-cli voices --lang tr                           # voices for reading aloud
+hammurabi-cli voices --lang tr                           # voices (with gender) and each persona's pick
 hammurabi-cli speak --lang tr "Merhaba dünya"            # read text aloud
+hammurabi-cli speak --lang tr --persona ayla "Merhaba"   # read it as a persona
 ```
 
 ## Limitations

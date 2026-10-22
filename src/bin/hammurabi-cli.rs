@@ -68,6 +68,10 @@ enum Cmd {
         /// Feed the audio at 1x through the real engine and its worker threads.
         #[arg(long)]
         realtime: bool,
+        /// With --realtime, feed audio right away instead of waiting for the models (like the
+        /// app's first run).
+        #[arg(long)]
+        start_now: bool,
         /// Encode Whisper's full 30 s window instead of trimming it to the audio.
         #[arg(long)]
         no_trim: bool,
@@ -141,6 +145,7 @@ fn main() -> anyhow::Result<()> {
             llm,
             llm_model,
             realtime,
+            start_now,
             no_trim,
             cpu,
             live,
@@ -169,7 +174,7 @@ fn main() -> anyhow::Result<()> {
             };
             let (rate, pcm) = read_wav(&input)?;
             if realtime {
-                transcribe_realtime(rate, pcm, settings, live)
+                transcribe_realtime(rate, pcm, settings, live, start_now)
             } else {
                 transcribe_sim(rate, pcm, &settings, cpu, live)
             }
@@ -508,13 +513,14 @@ fn transcribe_realtime(
     pcm: Vec<f32>,
     settings: Settings,
     live: bool,
+    start_now: bool,
 ) -> anyhow::Result<()> {
     let (engine, feed) = Engine::spawn_fed(Arc::new(|| {}));
     let wants_tr = settings.translate;
     engine.send(EngineCommand::Start(settings));
 
     // Wait for the speech model (and the translator) so timing reflects steady state.
-    let (mut asr_ready, mut tr_ready) = (false, !wants_tr);
+    let (mut asr_ready, mut tr_ready) = (start_now, !wants_tr || start_now);
     let mut asr_ms = Timing::default();
     let started = Instant::now();
     while !(asr_ready && tr_ready) {
@@ -536,11 +542,23 @@ fn transcribe_realtime(
     let chunk = rate as usize / 10;
     let secs = pcm.len() as f32 / rate as f32;
     let t0 = Instant::now();
-    let mut handle = |e: EngineEvent, t0: Instant| match e {
-        EngineEvent::Caption(c) => print_caption(&c, Some(t0.elapsed().as_secs_f32()), live),
-        EngineEvent::Status(s) => eprintln!("status: {}", s.text),
-        EngineEvent::Stats { asr_ms: ms, .. } => asr_ms.add(Duration::from_millis(ms as u64)),
-        _ => {}
+    let mut shown = HashMap::new();
+    let mut handle = |e: EngineEvent, t0: Instant| {
+        let at = t0.elapsed().as_secs_f32();
+        match e {
+            EngineEvent::Caption(c) => print_caption(&c, Some(at), live),
+            EngineEvent::Status(s) => eprintln!("[{at:6.1}s] status: {}", s.text),
+            EngineEvent::State(s) => eprintln!("[{at:6.1}s] state: {s:?}"),
+            EngineEvent::Stats { asr_ms: ms, .. } => asr_ms.add(Duration::from_millis(ms as u64)),
+            EngineEvent::Progress(p) => {
+                // One line per 10% of each download.
+                let step = p.total.map_or(0, |t| p.done * 10 / t.max(1));
+                if shown.insert((p.model, format!("{:?}", p.phase)), step) != Some(step) {
+                    let label = models::spec(p.model).label;
+                    eprintln!("[{at:6.1}s] {:?} {label}: {}0%", p.phase, step);
+                }
+            }
+        }
     };
     for (i, c) in pcm.chunks(chunk).enumerate() {
         let _ = feed.send(AudioChunk {

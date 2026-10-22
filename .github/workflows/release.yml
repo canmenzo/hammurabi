@@ -226,5 +226,5 @@ jobs:
             ### First run
 
             - Hammurabi downloads its speech model on first use (about 300 MB for the default `base` model). The optional built-in translation model is about 1.7 GB more.
-            - macOS: the app is not notarized. Right-click `Hammurabi.app`, choose Open, and confirm. Then allow System Audio Recording in System Settings > Privacy & Security.
+            - macOS: move `Hammurabi.app` to Applications. It is not notarized, so macOS blocks the first launch, and right-click > Open no longer gets past that. Run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app` in Terminal, or open it once, click Done, then click Open Anyway in System Settings > Privacy & Security. Hammurabi runs in the menu bar. When you start captions, allow system audio recording; if you declined, turn Hammurabi on in System Settings > Privacy & Security > Screen & System Audio Recording, under System Audio Recording Only.
             - Windows: SmartScreen may warn that the app is unrecognized. Click More info, then Run anyway.

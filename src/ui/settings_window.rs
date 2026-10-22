@@ -21,6 +21,8 @@ pub struct ModelsStatus {
     pub devices: DeviceList,
     /// Compute device label, e.g. "CPU".
     pub compute: String,
+    /// Real OS state, not a setting.
+    pub autostart: bool,
 }
 
 pub enum SettingsAction {
@@ -28,6 +30,8 @@ pub enum SettingsAction {
     Download(ModelId),
     OpenModelsFolder,
     RefreshDevices,
+    ToggleAutostart,
+    OpenLogs,
 }
 
 #[derive(Default)]
@@ -54,6 +58,7 @@ impl SettingsWindow {
                     ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            general(ui, settings, models, &mut changed, &mut actions);
                             audio(ui, settings, models, &mut changed, &mut actions);
                             speech(ui, settings, models, &mut changed, &mut actions);
                             translation(ui, settings, models, &mut changed, &mut actions);
@@ -62,9 +67,14 @@ impl SettingsWindow {
                             ui.label(format!("Start / stop captions: {}", settings.hotkey_toggle));
                             ui.label(format!("Move captions: {}", settings.hotkey_move));
                             ui.add_space(12.0);
-                            if ui.button("Open models folder").clicked() {
-                                actions.push(SettingsAction::OpenModelsFolder);
-                            }
+                            ui.horizontal(|ui| {
+                                if ui.button("Open models folder").clicked() {
+                                    actions.push(SettingsAction::OpenModelsFolder);
+                                }
+                                if ui.button("Open logs").clicked() {
+                                    actions.push(SettingsAction::OpenLogs);
+                                }
+                            });
                         });
                 });
             });
@@ -113,6 +123,29 @@ fn device_combo(
                     .changed();
             }
         });
+}
+
+fn general(
+    ui: &mut Ui,
+    s: &mut Settings,
+    m: &ModelsStatus,
+    changed: &mut bool,
+    actions: &mut Vec<SettingsAction>,
+) {
+    section(ui, "General");
+    let mut autostart = m.autostart;
+    if ui
+        .checkbox(&mut autostart, "Start Hammurabi at login")
+        .changed()
+    {
+        actions.push(SettingsAction::ToggleAutostart);
+    }
+    *changed |= ui
+        .checkbox(&mut s.check_updates, "Check for updates")
+        .on_hover_text(
+            "Asks GitHub once a day whether a newer version is out. Nothing else is sent.",
+        )
+        .changed();
 }
 
 fn audio(

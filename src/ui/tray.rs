@@ -13,13 +13,14 @@ const SOURCES: [(AudioSource, &str, &str); 3] = [
 
 pub struct Tray {
     icon: TrayIcon,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     menu: Menu,
     start: MenuItem,
     sources: Vec<CheckMenuItem>,
     translate: CheckMenuItem,
     targets: Vec<CheckMenuItem>,
     move_item: CheckMenuItem,
+    autostart: CheckMenuItem,
+    update: Option<MenuItem>,
     active: Option<bool>,
 }
 
@@ -41,6 +42,7 @@ impl Tray {
             .map(|c| CheckMenuItem::with_id(format!("lang:{c}"), lang_name(c), true, false, None))
             .collect();
         let move_item = CheckMenuItem::with_id("move", "Move captions", true, false, None);
+        let autostart = CheckMenuItem::with_id("autostart", "Start at login", true, false, None);
 
         let source_menu = Submenu::new("Source", true);
         for s in &sources {
@@ -59,6 +61,16 @@ impl Tray {
             &move_item,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id("settings", "Settings…", true, None),
+            &autostart,
+            &PredefinedMenuItem::separator(),
+            &MenuItem::with_id(
+                "about",
+                format!("About Hammurabi v{}", env!("CARGO_PKG_VERSION")),
+                true,
+                None,
+            ),
+            &MenuItem::with_id("logs", "Open logs", true, None),
+            &PredefinedMenuItem::separator(),
             &MenuItem::with_id("quit", "Quit", true, None),
         ])?;
 
@@ -77,6 +89,8 @@ impl Tray {
             translate,
             targets,
             move_item,
+            autostart,
+            update: None,
             active: Some(false),
         })
     }
@@ -88,6 +102,10 @@ impl Tray {
             "translate" => UiAction::ToggleTranslate,
             "move" => UiAction::ToggleMove,
             "settings" => UiAction::OpenSettings,
+            "autostart" => UiAction::ToggleAutostart,
+            "update" => UiAction::OpenUpdate,
+            "about" => UiAction::About,
+            "logs" => UiAction::OpenLogs,
             "quit" => UiAction::Quit,
             _ => {
                 if let Some((src, _, _)) = SOURCES.iter().find(|(_, sid, _)| *sid == id) {
@@ -100,8 +118,32 @@ impl Tray {
         })
     }
 
+    /// Adds "Update available" above About, once.
+    pub fn show_update(&mut self, version: &str) -> anyhow::Result<()> {
+        if self.update.is_none() {
+            let item = MenuItem::with_id(
+                "update",
+                format!("Update available: v{version}"),
+                true,
+                None,
+            );
+            // The menu ends with About, Open logs, separator, Quit.
+            let about = self.menu.items().len() - 4;
+            self.menu.insert(&item, about)?;
+            self.update = Some(item);
+        }
+        Ok(())
+    }
+
     /// Muda toggles check items on click, so every check is rewritten from state.
-    pub fn sync(&mut self, s: &Settings, running: bool, move_mode: bool, tooltip: &str) {
+    pub fn sync(
+        &mut self,
+        s: &Settings,
+        running: bool,
+        move_mode: bool,
+        autostart: bool,
+        tooltip: &str,
+    ) {
         self.start.set_text(if running {
             "Stop captions"
         } else {
@@ -115,6 +157,7 @@ impl Tray {
             item.set_checked(s.target_language == *code);
         }
         self.move_item.set_checked(move_mode);
+        self.autostart.set_checked(autostart);
         let _ = self.icon.set_tooltip(Some(tooltip));
         if self.active != Some(running) {
             self.active = Some(running);

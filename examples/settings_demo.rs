@@ -19,6 +19,8 @@ impl eframe::App for Demo {
                 SettingsAction::Download(id) => println!("download {id:?}"),
                 SettingsAction::OpenModelsFolder => println!("open folder"),
                 SettingsAction::RefreshDevices => println!("refresh"),
+                SettingsAction::ToggleAutostart => println!("toggle autostart"),
+                SettingsAction::OpenLogs => println!("open logs"),
             }
         }
     }
@@ -55,6 +57,7 @@ fn main() -> eframe::Result {
                         system_audio: Err("not supported on this machine".into()),
                     },
                     compute: "CPU".into(),
+                    autostart: false,
                 },
             }))
         }),

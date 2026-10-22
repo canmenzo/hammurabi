@@ -1,9 +1,11 @@
+pub mod autostart;
 pub mod hotkey;
 pub mod icons;
 pub mod overlay;
 pub mod platform;
 pub mod settings_window;
 pub mod tray;
+pub mod update;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,11 +28,13 @@ use overlay::OverlayState;
 use settings_window::{ModelsStatus, SettingsAction, SettingsWindow};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+const WEBSITE: &str = "https://hammurabi.menzo.dev";
 
 /// Sent from tray/menu/hotkey handlers (any thread) to the UI loop.
 pub enum AppEvent {
     Menu(MenuId),
     HotKey(u32),
+    Update(update::Release),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -41,6 +45,10 @@ pub enum UiAction {
     SetTarget(&'static str),
     ToggleMove,
     OpenSettings,
+    ToggleAutostart,
+    OpenUpdate,
+    About,
+    OpenLogs,
     Quit,
 }
 
@@ -64,13 +72,16 @@ pub struct App {
     status: String,
     dirty_since: Option<Instant>,
     tray_dirty: bool,
+    update: Option<update::Release>,
+    next_update_check: Option<Instant>,
+    app_tx: Sender<AppEvent>,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
         let ctx = cc.egui_ctx.clone();
         let (app_tx, app_rx) = crossbeam_channel::unbounded();
-        install_handlers(&ctx, app_tx);
+        install_handlers(&ctx, app_tx.clone());
 
         let tray = tray::Tray::new()
             .inspect_err(|e| log::error!("tray icon failed: {e:#}"))
@@ -95,6 +106,7 @@ impl App {
                     system_audio: Ok(()),
                 },
                 compute: "CPU".into(),
+                autostart: autostart::is_enabled(),
             },
             app_rx,
             running: false,
@@ -110,6 +122,9 @@ impl App {
             status: String::new(),
             dirty_since: None,
             tray_dirty: true,
+            update: None,
+            next_update_check: None,
+            app_tx,
         };
         if let Some(e) = hk_err.or_else(|| app.hotkeys.apply(&app.settings)) {
             app.warn(e);
@@ -178,9 +193,31 @@ impl App {
             UiAction::OpenSettings => {
                 if !self.settings_open {
                     self.settings_open = true;
-                    platform::activate_app();
                     self.refresh_models();
                     self.models.devices = audio::list_devices();
+                    self.models.autostart = autostart::is_enabled();
+                }
+            }
+            UiAction::ToggleAutostart => {
+                if let Err(e) = autostart::set(!self.models.autostart) {
+                    self.warn(format!("Could not change start at login: {e:#}"));
+                }
+                self.models.autostart = autostart::is_enabled();
+                log::info!("start at login: {}", self.models.autostart);
+                self.tray_dirty = true;
+            }
+            UiAction::OpenUpdate => {
+                if let Some(u) = &self.update {
+                    let _ = open::that_detached(&u.url);
+                }
+            }
+            UiAction::About => {
+                let _ = open::that_detached(WEBSITE);
+            }
+            UiAction::OpenLogs => {
+                if let Ok(dir) = crate::paths::log_dir() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = open::that_detached(dir);
                 }
             }
             UiAction::Quit => self.quit(),
@@ -295,6 +332,37 @@ impl App {
         }
     }
 
+    fn on_update(&mut self, release: update::Release) {
+        if !self.settings.check_updates {
+            return;
+        }
+        log::info!("update available: v{} {}", release.version, release.url);
+        if let Some(t) = &mut self.tray
+            && let Err(e) = t.show_update(&release.version)
+        {
+            log::warn!("tray update item failed: {e:#}");
+        }
+        if self.settings.update_notified.as_ref() != Some(&release.version) {
+            self.overlay.set_status(
+                Status {
+                    level: StatusLevel::Info,
+                    text: format!(
+                        "Hammurabi v{} is available. Open the tray menu to get it.",
+                        release.version
+                    ),
+                    ttl: Some(Duration::from_secs(10)),
+                },
+                Instant::now(),
+            );
+            self.settings.update_notified = Some(release.version.clone());
+            if let Err(e) = config::save(&self.settings) {
+                log::error!("config save failed: {e:#}");
+            }
+        }
+        self.update = Some(release);
+        self.tray_dirty = true;
+    }
+
     fn tooltip(&self) -> String {
         let state = match (self.running, self.state) {
             (false, _) => "Idle",
@@ -335,6 +403,10 @@ impl eframe::App for App {
             let action = match ev {
                 AppEvent::Menu(id) => tray::Tray::action(&id),
                 AppEvent::HotKey(id) => self.hotkeys.action(id),
+                AppEvent::Update(r) => {
+                    self.on_update(r);
+                    None
+                }
             };
             if let Some(a) = action {
                 self.handle(a, ctx);
@@ -351,7 +423,13 @@ impl eframe::App for App {
             self.tray_dirty = false;
             let tip = self.tooltip();
             if let Some(t) = &mut self.tray {
-                t.sync(&self.settings, self.running, self.move_mode, &tip);
+                t.sync(
+                    &self.settings,
+                    self.running,
+                    self.move_mode,
+                    self.models.autostart,
+                    &tip,
+                );
             }
         }
 
@@ -368,6 +446,19 @@ impl eframe::App for App {
         }
 
         let now = Instant::now();
+        if self.settings.check_updates {
+            let due = *self.next_update_check.get_or_insert(now);
+            if now >= due {
+                self.next_update_check = Some(now + update::INTERVAL);
+                let (tx, c) = (self.app_tx.clone(), ctx.clone());
+                update::spawn(move |r| {
+                    let _ = tx.send(AppEvent::Update(r));
+                    c.request_repaint();
+                });
+            } else {
+                ctx.request_repaint_after(due - now);
+            }
+        }
         if let Some(t) = self.dirty_since {
             if now >= t + SAVE_DEBOUNCE {
                 self.dirty_since = None;
@@ -428,6 +519,7 @@ impl eframe::App for App {
                 ViewportId::from_hash_of("hammurabi-settings"),
                 ViewportBuilder::default()
                     .with_title("Hammurabi Settings")
+                    .with_icon(icons::window_icon())
                     .with_inner_size([520.0, 680.0]),
                 |ui, _| {
                     close = ui.ctx().input(|i| i.viewport().close_requested());
@@ -452,6 +544,8 @@ impl eframe::App for App {
                         }
                     }
                     SettingsAction::RefreshDevices => self.models.devices = audio::list_devices(),
+                    SettingsAction::ToggleAutostart => self.handle(UiAction::ToggleAutostart, &ctx),
+                    SettingsAction::OpenLogs => self.handle(UiAction::OpenLogs, &ctx),
                 }
             }
             if close {

@@ -14,3 +14,7 @@ pub fn config_file() -> anyhow::Result<PathBuf> {
 pub fn models_dir() -> anyhow::Result<PathBuf> {
     Ok(dirs()?.cache_dir().join("models"))
 }
+
+pub fn log_dir() -> anyhow::Result<PathBuf> {
+    Ok(dirs()?.data_local_dir().join("logs"))
+}

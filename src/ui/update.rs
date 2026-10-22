@@ -44,6 +44,11 @@ fn latest() -> anyhow::Result<Release> {
         .body_mut()
         .read_to_string()?;
     let r: Resp = serde_json::from_str(&body)?;
+    anyhow::ensure!(
+        r.html_url.starts_with("https://github.com/"),
+        "unexpected release url {}",
+        r.html_url
+    );
     Ok(Release {
         version: r.tag_name.trim_start_matches('v').into(),
         url: r.html_url,

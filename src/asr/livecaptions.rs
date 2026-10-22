@@ -2,6 +2,8 @@
 //! itself; its caption text is read through UI Automation and polled on thread "hm-livecaptions".
 //! The window is moved off-screen while in use and put back on stop.
 
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -12,6 +14,7 @@ use uiautomation::types::{TreeScope, UIProperty};
 use uiautomation::variants::Variant;
 use uiautomation::{UIAutomation, UIElement};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetSystemMetrics, GetWindowRect, IsWindow, PostMessageW, SM_XVIRTUALSCREEN,
     SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, WM_CLOSE,
@@ -85,10 +88,13 @@ impl Session {
         let hwnd = match find_window() {
             Some(h) => h,
             None => {
-                let exe = std::path::Path::new(
-                    &std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into()),
-                )
-                .join(r"System32\LiveCaptions.exe");
+                let mut buf = [0u16; 260];
+                let n = unsafe { GetSystemWindowsDirectoryW(Some(&mut buf)) } as usize;
+                if n == 0 || n >= buf.len() {
+                    bail!("can't find the Windows directory");
+                }
+                let exe = std::path::PathBuf::from(OsString::from_wide(&buf[..n]))
+                    .join(r"System32\LiveCaptions.exe");
                 if !exe.exists() {
                     bail!("Windows Live Captions needs Windows 11 22H2 or newer");
                 }

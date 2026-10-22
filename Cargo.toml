@@ -54,7 +54,7 @@ raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = { version = "0.25", optional = true }
-windows = { version = "0.62", optional = true, features = ["Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", optional = true, features = ["Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"] }
 windows-registry = "0.6"
 
 [build-dependencies]

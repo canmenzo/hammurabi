@@ -311,3 +311,15 @@ Rules: only T0/T10 edit `Cargo.toml` and `lib.rs` (report needed deps). Nobody e
 10. macOS/Linux runtime untested; CI compile only; README asks for testers.
 11. Text rendering: CJK via system_fonts; RTL/Indic shaping imperfect until T13.
 12. Licensing: Whisper MIT, MADLAD Apache-2.0, candle mel bytes MIT/Apache with notice, Babil MIT (own).
+
+## 8. Phase 3: public release (v0.1.0)
+State at start: T0-T10, T12, T14 and T15 are done; T13 (RTL) was dropped. CI is green on all 3 OSes.
+
+| Task | Owner files | Goal |
+|---|---|---|
+| P1 App polish | src/ui/*, src/settings.rs, src/main.rs, build.rs, Cargo.toml | Start at login (Win Run key / macOS LaunchAgent / Linux autostart), update check against GitHub releases with a tray notice, About/version in the tray, Windows exe icon + version resource, turbo as the GPU default, log file location exposed ("Open logs"). |
+| P2 Engine QA | src/pipeline/*, src/models/*, src/audio/*, src/asr/*, src/translate/*, src/bin/* | First-run download flow with an empty models dir (env override), mic fallback, device unplug, offline/network errors, translator failures, long-run stability (30+ min), memory; fix what breaks. Optional sha256 verification of downloads. |
+| P3 macOS | macOS-only cfg code, release.yml macOS job | Run the release .app on the Mac mini: tray, overlay level over fullscreen, settings, Metal, permission prompts and their failure statuses; fix macOS bugs. |
+| P4 Docs + sites | README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, .github/ISSUE_TEMPLATE, docs/ (hammurabi.menzo.dev), babil repo docs/, canmenzo.github.io projects card | Public docs with real screenshots, a download-first website, the Babil site card switched from "coming soon" to available. |
+
+Then the coordinator tags v0.1.0, verifies the release job, and smoke-tests the published zips on Windows and the Mac.

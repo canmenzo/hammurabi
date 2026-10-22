@@ -11,7 +11,7 @@ default = ["win-livecaptions"]   # no-op off Windows
 cuda  = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]   # CUDA >= 12.8 for RTX 50xx (sm_120)
 cudnn = ["cuda", "candle-core/cudnn"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
-win-livecaptions = ["dep:uiautomation", "dep:windows"]
+win-livecaptions = ["dep:uiautomation"]
 
 [dependencies]
 candle-core = "0.11"
@@ -51,10 +51,12 @@ cpal = { version = "0.18", features = ["pulseaudio"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWindow", "NSView", "NSResponder", "NSGraphics"] }
 raw-window-handle = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSEnumerator"] }
+objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVSpeechSynthesis"] }
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = { version = "0.25", optional = true }
-windows = { version = "0.62", optional = true, features = ["Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Foundation_Collections", "Media_Core", "Media_SpeechSynthesis", "Storage_Streams", "Win32_Media_Audio", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"] }
 windows-registry = "0.6"
 
 [build-dependencies]

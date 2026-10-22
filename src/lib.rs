@@ -7,5 +7,6 @@ pub mod paths;
 pub mod pipeline;
 pub mod settings;
 pub mod translate;
+pub mod tts;
 pub mod types;
 pub mod ui;

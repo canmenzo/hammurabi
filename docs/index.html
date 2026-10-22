@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Hammurabi: live captions for your whole desktop</title>
-<meta name="description" content="Hammurabi is a tray app for Windows, macOS and Linux that turns system audio and your microphone into live captions, with optional translation. Whisper runs on your computer. No account, no API key.">
+<meta name="description" content="Hammurabi is a free tray app for Windows, macOS and Linux that turns system audio and your microphone into live captions, with optional translation. Whisper runs on your computer. No account, no API key.">
 <link rel="canonical" href="https://hammurabi.menzo.dev/">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <meta name="theme-color" content="#0d1514">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Hammurabi">
 <meta property="og:title" content="Hammurabi: live captions for your whole desktop">
-<meta property="og:description" content="Captions for any video, stream or call, and for the person talking to you. Local Whisper, optional translation, no account.">
+<meta property="og:description" content="Captions for any video, stream or call, and for the person talking to you. Local Whisper, optional translation, free download for Windows, macOS and Linux.">
 <meta property="og:url" content="https://hammurabi.menzo.dev/">
 <meta property="og:image" content="https://hammurabi.menzo.dev/og.png">
 <meta property="og:image:width" content="1200">
@@ -28,42 +28,44 @@
 <a class="skip" href="#main">Skip to content</a>
 <nav class="pill" aria-label="Main">
 <a class="brand" href="#top"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a>
-<div class="links"><a href="#features">Features</a><a href="#how">How it works</a><a href="#privacy">Privacy</a><a href="#faq">FAQ</a></div>
+<div class="links"><a href="#download">Download</a><a href="#features">Features</a><a href="#how">How it works</a><a href="#privacy">Privacy</a><a href="#faq">FAQ</a></div>
 <a class="btn sm" href="https://github.com/canmenzo/hammurabi">GitHub</a>
 </nav>
 <main id="main">
 <header class="hero" id="top">
-<p class="status"><span class="dot"></span>In development, no download yet</p>
+<p class="status"><span class="dot"></span>Version 0.1.0 is out</p>
 <h1>Live captions for everything your computer plays</h1>
 <p class="sub">Hammurabi turns system audio and your microphone into captions on screen, translated if you want. It runs on Windows, macOS and Linux, entirely on your machine.</p>
-<div class="cta"><a class="btn lg" href="https://github.com/canmenzo/hammurabi">Follow on GitHub</a><a class="btn ghost lg" href="https://babil.menzo.dev">Try Babil in the browser</a></div>
-<p class="proof">Free. No account. No API key. Audio never leaves your computer.</p>
-
-<div class="stage" role="img" aria-label="Mock of the Hammurabi caption overlay on a video, showing a Spanish line and its English translation">
-<div class="frame">
-<div class="chrome"><i></i><i></i><i></i><span>Any video, stream or call</span></div>
-<div class="scene"><div class="sun"></div><div class="hill a"></div><div class="hill b"></div></div>
-<div class="seek"><span class="play"></span><span class="bar"><span></span></span><span class="time">12:48</span></div>
-<div class="overlay">
-<div class="ohead"><span class="live"><span class="dot"></span>Live</span><span>System audio</span><span class="langs">ES to EN</span></div>
-<p class="orig">Mañana tenemos que cerrar el contrato antes de las cinco.</p>
-<p class="tr">Tomorrow we have to close the contract before five.</p>
-</div>
-</div>
-<div class="tray"><span class="trayicon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 11h6M7 14h9"/></svg></span><span>Captions on</span><kbd>Hotkey</kbd></div>
-</div>
+<div class="cta"><a class="btn lg" id="dl" href="https://github.com/canmenzo/hammurabi/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">Download</span></a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">View on GitHub</a></div>
+<p class="files" id="files"><a data-os="win" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64.zip">Windows</a><a data-os="cuda" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda.zip">Windows, NVIDIA RTX 50 series</a><a data-os="mac" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">macOS (Apple silicon)</a><a data-os="linux" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">Linux (x64)</a></p>
+<p class="proof">Free and open source. No account. No API key. Audio never leaves your computer.</p>
+<figure class="shot hero-shot">
+<picture><source media="(max-width:640px)" srcset="img/overlay-mobile.webp" width="800" height="500"><img src="img/overlay.webp" width="1280" height="800" alt="The Hammurabi caption overlay at the bottom of a video, showing a Turkish line with its English translation underneath"></picture>
+</figure>
 </header>
+
+<section class="wrap" id="download">
+<p class="eyebrow rv">Download</p>
+<h2 class="rv">Pick your system, unzip, run</h2>
+<div class="grid os">
+<div class="card rv" id="os-win"><h3>Windows 10 and 11</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64.zip">hammurabi-windows-x64.zip</a></p><p>Works on any 64-bit PC. Unzip it and run <code>hammurabi.exe</code>. SmartScreen may say the app is unrecognized: click <strong>More info</strong>, then <strong>Run anyway</strong>.</p></div>
+<div class="card rv" id="os-cuda"><span class="tag">NVIDIA RTX 50 series</span><h3>Windows with CUDA</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda.zip">hammurabi-windows-cuda.zip</a></p><p>Runs Whisper and translation on an RTX 50 series card: 30 to 56 ms per caption and about 0.3 s per translated sentence. Needs a recent NVIDIA driver. Older cards use the regular Windows build.</p></div>
+<div class="card rv" id="os-mac"><h3>macOS on Apple silicon</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">hammurabi-macos-arm64.zip</a></p><p>Uses the GPU through Metal. The app is not notarized, so the first launch is blocked: open <strong>System Settings &gt; Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>, or run <code>xattr -dr com.apple.quarantine Hammurabi.app</code>. Then allow <strong>Microphone</strong> and <strong>System Audio Recording</strong>.</p></div>
+<div class="card rv" id="os-linux"><h3>Linux x64</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">hammurabi-linux-x64.tar.gz</a></p><p>Extract it and run <code>./hammurabi</code>. System audio needs PulseAudio or PipeWire with <code>pipewire-pulse</code>. Use an X11 session: Wayland blocks always-on-top windows and global hotkeys.</p></div>
+</div>
+<div class="note rv"><strong>First run.</strong> Hammurabi downloads its speech model the first time it needs one: about 300 MB for the CPU default, 1.6 GB for the GPU default. The built-in translation model is about 1.7 GB more and only downloads if you turn translation on. Downloads resume if they are interrupted.</div>
+</section>
 
 <section class="wrap" id="features">
 <p class="eyebrow rv">What it does</p>
 <h2 class="rv">Captions for sound that has none</h2>
 <div class="grid">
 <div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><h3>System audio</h3><p>Films, streams, lectures and calls. If your computer plays it, Hammurabi captions it.</p></div>
-<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg><h3>Microphone</h3><p>Talking to someone in person? Captions appear as they speak, even across a language gap.</p></div>
-<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><h3>Optional translation</h3><p>Show the original line, a translated line, or both together while you learn.</p></div>
-<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h6"/></svg><h3>Always on top overlay</h3><p>Captions float above every window, including fullscreen. Move them where you like.</p></div>
-<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16M4 16h16M9 4l-2 16M17 4l-2 16"/></svg><h3>Tray and hotkey</h3><p>It lives in the tray and stays out of the way. One global hotkey toggles captions.</p></div>
-<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg><h3>Free and local</h3><p>Whisper runs on your computer. No subscription, no account, no API key.</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg><h3>Microphone</h3><p>Talking to someone in person? Captions appear as they speak, even across a language gap. Or caption both at once.</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><h3>Optional translation</h3><p>Into 26 languages with the built-in MADLAD-400 model, or with your own local LLM through Ollama or LM Studio.</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h6"/></svg><h3>Always on top overlay</h3><p>Captions float above your windows, including borderless fullscreen. Drag them anywhere and style the text.</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><h3>Tray and hotkeys</h3><p>It lives in the tray and stays out of the way. <kbd>Alt+Shift+T</kbd> toggles captions, <kbd>Alt+Shift+M</kbd> moves them.</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg><h3>Fast on a GPU, fine on a CPU</h3><p>Whisper runs on any CPU, on Apple GPUs through Metal, and on RTX 50 series cards with the CUDA build. Windows 11 can also use Live Captions as the engine.</p></div>
 </div>
 </section>
 
@@ -71,33 +73,34 @@
 
 <section class="wrap" id="how">
 <p class="eyebrow rv">How it works</p>
-<h2 class="rv">Three steps, then it stays out of sight</h2>
+<h2 class="rv">Set it up once, then it stays out of sight</h2>
+<div class="split">
 <ol class="steps rv">
 <li><strong>Pick a source</strong><span>Choose system audio, your microphone, or both from the tray menu.</span></li>
-<li><strong>Pick a language</strong><span>Leave it on automatic, or name the spoken language for better accuracy. Add a target language to translate.</span></li>
-<li><strong>Press the hotkey</strong><span>Captions appear in the overlay. Press the hotkey again to hide them. The app keeps running in the tray.</span></li>
+<li><strong>Pick a language</strong><span>Leave it on automatic, or name the spoken language for better accuracy. Turn on translation and pick a target language if you want one.</span></li>
+<li><strong>Press the hotkey</strong><span>Captions appear in the overlay. Press <kbd>Alt+Shift+T</kbd> again to hide them. The app keeps running in the tray.</span></li>
+<li><strong>Tune it in Settings</strong><span>Speech model, translation engine, caption size, colors, background, number of lines and how long they stay. Hammurabi can also start at login.</span></li>
 </ol>
+<figure class="shot settings-shot rv"><img src="img/settings.webp" width="560" height="1055" loading="lazy" alt="The Hammurabi settings window with sections for General, Audio, Speech, Translation, Captions and Hotkeys"></figure>
+</div>
 </section>
 
 <section class="wrap" id="privacy">
 <p class="eyebrow rv">Privacy</p>
 <h2 class="rv">Your audio stays on your computer</h2>
-<p class="lead rv">Speech recognition and translation both run locally, so nothing you hear or say is uploaded for processing. There is no account to create and no server of ours in the loop. The code is public on GitHub, so you can check it yourself.</p>
-</section>
-
-<section class="wrap" id="status">
-<p class="eyebrow rv">Status</p>
-<h2 class="rv">Being built in the open</h2>
-<div class="note rv"><strong>In development.</strong> Hammurabi is a Rust app and there is no download yet. Follow or star the repository to hear when the first build lands. Windows, macOS and Linux are the targets.</div>
+<p class="lead rv">Speech recognition and translation both run locally, so nothing you hear or say is uploaded for processing. There is no account to create and no server of ours in the loop. The only network traffic is model downloads from Hugging Face and a check for new versions on GitHub. If you choose a local LLM for translation, captions go to that server on your machine. The code is public on GitHub, so you can check it yourself.</p>
 </section>
 
 <section class="wrap" id="faq">
 <p class="eyebrow rv">FAQ</p>
 <h2 class="rv">Questions people ask</h2>
-<details class="rv"><summary>Can I download it today?</summary><p>Not yet. It is in development. Follow the GitHub repository to be first to know.</p></details>
-<details class="rv"><summary>Will it be free?</summary><p>Yes. There is no paid tier, no trial and no API key to buy.</p></details>
+<details class="rv"><summary>Is it free?</summary><p>Yes. Hammurabi is open source under the MIT License. There is no paid tier, no trial and no API key to buy.</p></details>
+<details class="rv"><summary>Which download do I need?</summary><p>On Windows, take the CUDA build only if you have an NVIDIA RTX 50 series card; everyone else takes the regular Windows build. Mac users take the macOS build (Apple silicon only), and Linux users the tar.gz.</p></details>
+<details class="rv"><summary>Why does Windows or macOS warn me about the app?</summary><p>The builds are not code signed with a paid certificate yet. On Windows, click More info, then Run anyway. On macOS, use Open Anyway in System Settings &gt; Privacy &amp; Security, or remove the quarantine flag with <code>xattr -dr com.apple.quarantine Hammurabi.app</code>.</p></details>
 <details class="rv"><summary>Does it send my audio anywhere?</summary><p>No. Whisper runs on your computer, and so does translation. Nothing is uploaded.</p></details>
-<details class="rv"><summary>Which systems will it support?</summary><p>Windows, macOS and Linux, as a tray app.</p></details>
+<details class="rv"><summary>How fast is it?</summary><p>On a modern CPU the default model keeps up with normal speech. With the CUDA build on an RTX 50 series card, each caption takes 30 to 56 ms and a translated sentence about 0.3 s. On a slower machine, pick the tiny or base model in Settings.</p></details>
+<details class="rv"><summary>Can it caption games?</summary><p>Borderless and windowed games, yes. Games in exclusive fullscreen on Windows draw over every other window, so the overlay cannot appear on top of them.</p></details>
+<details class="rv"><summary>The hotkey does not work. What now?</summary><p>Windows uses Alt+Shift to switch keyboard layouts, which can swallow the shortcut. Change <code>hotkey_toggle</code> and <code>hotkey_move</code> in the config file. On Linux, global hotkeys need an X11 session.</p></details>
 <details class="rv"><summary>What is the difference from Babil?</summary><p>Babil captions videos inside your browser. Hammurabi captions the whole computer and your microphone, so it also works for native apps, calls and conversations.</p></details>
 <details class="rv"><summary>Why the name?</summary><p>Hammurabi ruled Babylon, and Babil is the Turkish name for Babylon. The desktop app is the sibling of the browser extension.</p></details>
 </section>
@@ -108,11 +111,17 @@
 </section>
 
 <section class="wrap final">
-<div class="panel rv"><h2>Hear it first</h2><p>Hammurabi is in development. Follow the repository and you will see the first build the day it ships.</p><div class="cta"><a class="btn lg" href="https://github.com/canmenzo/hammurabi">Follow on GitHub</a><a class="btn ghost lg" href="https://babil.menzo.dev">Try Babil</a></div></div>
+<div class="panel rv"><h2>Read every voice on your screen</h2><p>Free for Windows, macOS and Linux. Download it, pick a source, press the hotkey.</p><div class="cta"><a class="btn lg" href="https://github.com/canmenzo/hammurabi/releases/latest">Download Hammurabi</a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">View on GitHub</a></div></div>
 </section>
 </main>
-<footer><div class="wrap"><div class="fb"><a class="brand" href="#top"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a><p>Live captions for your whole desktop. Made by <a href="https://menzo.dev">menzo</a>.</p></div><nav aria-label="Footer"><a href="https://github.com/canmenzo/hammurabi">GitHub</a><a href="https://babil.menzo.dev">Babil</a><a href="https://menzo.dev">menzo.dev</a></nav></div></footer>
+<footer><div class="wrap"><div class="fb"><a class="brand" href="#top"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a><p>Live captions for your whole desktop. MIT licensed. Made by <a href="https://menzo.dev">menzo</a>.</p></div><nav aria-label="Footer"><a href="https://github.com/canmenzo/hammurabi">GitHub</a><a href="https://github.com/canmenzo/hammurabi/releases/latest">Releases</a><a href="https://babil.menzo.dev">Babil</a><a href="https://menzo.dev">menzo.dev</a></nav></div></footer>
 <script>
+(function(){
+var ua=navigator.userAgent,p=(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||"";
+var os=/iPhone|iPad|iPod|Android/i.test(ua)?"":/Win/i.test(p)?"win":/Mac/i.test(p)?"mac":/Linux|X11/i.test(p)?"linux":"";
+var names={win:"Windows",mac:"macOS",linux:"Linux"};
+if(os){document.getElementById("dl-label").textContent="Download for "+names[os];var a=document.querySelector('#files a[data-os="'+os+'"]');if(a)a.setAttribute("aria-current","true")}
+})();
 (function(){
 var rm=matchMedia("(prefers-reduced-motion: reduce)").matches;
 var t=document.getElementById("tag");

@@ -1,0 +1,89 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS 15 or newer
+        - macOS 14
+        - macOS 13
+        - Linux (X11)
+        - Linux (Wayland)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version and hardware
+      placeholder: "Windows 11 24H2, Ryzen 7 7800X3D, RTX 5070"
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      options:
+        - CPU (hammurabi-windows-x64 or hammurabi-linux-x64)
+        - CUDA (hammurabi-windows-cuda)
+        - Metal (hammurabi-macos-arm64)
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hammurabi version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Speech model
+      options:
+        - Auto
+        - tiny
+        - base
+        - small
+        - turbo
+        - Windows Live Captions
+    validations:
+      required: true
+  - type: dropdown
+    id: translation
+    attributes:
+      label: Translation
+      options:
+        - "Off"
+        - Built-in (MADLAD-400)
+        - Local LLM (Ollama, LM Studio or another server)
+  - type: dropdown
+    id: source
+    attributes:
+      label: Audio source
+      options:
+        - System audio
+        - Microphone
+        - Both
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: The lines around the problem from the log file (tray menu, Open logs). Remove anything private.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, steps to reproduce, or whether it happens every time.

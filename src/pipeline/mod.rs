@@ -20,7 +20,6 @@ use crate::audio::{AudioCapture, Frames16k};
 use crate::models::{self, ModelId};
 use crate::settings::{AsrBackend, ModelChoice, Settings, TranslatorChoice};
 use crate::translate::TranslatorWorker;
-use crate::types::AudioSource;
 use crate::types::{
     AsrEvent, AsrRequest, AsrResult, AudioChunk, CaptionUpdate, EngineCommand, EngineEvent,
     EngineState, Notifier, Progress, ProgressPhase, Recognizer, Status, StatusLevel, Translate,
@@ -454,6 +453,11 @@ pub struct Engine {
     buf: Vec<Vec<f32>>,
     last_audio: Instant,
     padded_until: Instant,
+    /// Earliest time to reopen a capture whose device went away.
+    reopen_at: Instant,
+    /// A worker is downloading its model (Stop cancels that download).
+    asr_downloading: bool,
+    tr_downloading: bool,
 }
 
 impl Engine {
@@ -498,6 +502,9 @@ impl Engine {
                     buf: Vec::new(),
                     last_audio: now,
                     padded_until: now,
+                    reopen_at: now,
+                    asr_downloading: false,
+                    tr_downloading: false,
                 };
                 engine.run(cmd_rx);
                 engine.stop_capture();
@@ -560,6 +567,7 @@ impl Engine {
             }
             let now = Instant::now();
             if self.running {
+                self.check_capture(now);
                 self.pad_silence(now);
             }
             self.core.tick(now);
@@ -638,6 +646,7 @@ impl Engine {
             }
             EngineCommand::Stop => {
                 self.stop();
+                self.cancel_downloads();
                 self.events().send(EngineEvent::State(EngineState::Idle));
             }
             EngineCommand::Reconfigure(s) => {
@@ -683,21 +692,16 @@ impl Engine {
                 self.audio_tx.clone(),
             )
         };
-        let result = start(s.source).or_else(|e| {
-            if s.source == AudioSource::Microphone {
-                return Err(e);
-            }
-            log::warn!("system audio capture failed: {e:#}");
-            let c = start(AudioSource::Microphone)?;
-            self.events().status(
-                StatusLevel::Warning,
-                format!("System audio unavailable, using the microphone ({e})"),
-                Some(Duration::from_secs(8)),
-            );
-            Ok(c)
-        });
-        match result {
+        match start(s.source) {
             Ok(c) => {
+                for note in &c.notes {
+                    log::warn!("{note}");
+                    self.events().status(
+                        StatusLevel::Warning,
+                        note.clone(),
+                        Some(Duration::from_secs(8)),
+                    );
+                }
                 self.capture = Some(c);
                 true
             }
@@ -710,6 +714,51 @@ impl Engine {
                 self.events().send(EngineEvent::State(EngineState::Error));
                 false
             }
+        }
+    }
+
+    /// Reopens the capture when its device went away (unplugged headset, default device changed).
+    fn check_capture(&mut self, now: Instant) {
+        if now < self.reopen_at {
+            return;
+        }
+        let Some(reason) = self.capture.as_ref().and_then(AudioCapture::failure) else {
+            return;
+        };
+        self.reopen_at = now + Duration::from_secs(2);
+        log::warn!("audio capture lost ({reason}), reopening");
+        self.stop_capture();
+        if self.start_capture() {
+            self.events().status(
+                StatusLevel::Info,
+                "Audio device changed, captions continue".into(),
+                Some(Duration::from_secs(3)),
+            );
+        } else {
+            self.stop();
+        }
+    }
+
+    /// Stopping during a model download cancels it; the next Start resumes it.
+    fn cancel_downloads(&mut self) {
+        let (asr, tr) = (self.asr_downloading, self.tr_downloading);
+        if asr {
+            self.asr = None;
+            self.asr_downloading = false;
+            self.core.sched.forget_in_flight();
+            self.core.sched.ready = false;
+        }
+        if tr {
+            self.tr = None;
+            self.tr_downloading = false;
+            self.core.translator_replaced(false);
+        }
+        if asr || tr {
+            self.events().status(
+                StatusLevel::Warning,
+                "Download paused, it continues on the next Start".into(),
+                Some(Duration::from_secs(4)),
+            );
         }
     }
 
@@ -736,6 +785,7 @@ impl Engine {
         let key = (self.core.settings.model, self.core.settings.trim_audio);
         if !self.lc_active() && self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
             self.asr = Some((key, AsrWorker::spawn(key.0, key.1)));
+            self.asr_downloading = false;
             self.core.reset();
             self.core.sched.forget_in_flight();
             self.core.sched.ready = false;
@@ -746,13 +796,17 @@ impl Engine {
         let choice = &self.core.settings.translator;
         if self.core.settings.translate && self.tr.as_ref().is_none_or(|(c, _)| c != choice) {
             self.tr = Some((choice.clone(), TranslatorWorker::spawn(choice.clone())));
+            self.tr_downloading = false;
             self.core.translator_replaced(false);
         }
     }
 
     fn on_asr(&mut self, ev: AsrEvent) {
         match ev {
-            AsrEvent::Progress(p) => self.events().send(EngineEvent::Progress(p)),
+            AsrEvent::Progress(p) => {
+                self.asr_downloading = downloading(&p);
+                self.events().send(EngineEvent::Progress(p));
+            }
             AsrEvent::Ready { model, device } => {
                 self.core.asr_ready();
                 if self.running {
@@ -775,6 +829,7 @@ impl Engine {
             }
             AsrEvent::Error(e) => {
                 self.asr = None;
+                self.asr_downloading = false;
                 self.core.sched.forget_in_flight();
                 self.core.sched.ready = false;
                 if self.running {
@@ -889,7 +944,10 @@ impl Engine {
 
     fn on_tr(&mut self, ev: TranslatorEvent) {
         match ev {
-            TranslatorEvent::Progress(p) => self.events().send(EngineEvent::Progress(p)),
+            TranslatorEvent::Progress(p) => {
+                self.tr_downloading = downloading(&p);
+                self.events().send(EngineEvent::Progress(p));
+            }
             TranslatorEvent::Ready => {
                 self.core.tr_ready = true;
                 self.events().status(
@@ -901,6 +959,7 @@ impl Engine {
             TranslatorEvent::Result { id, text } => self.core.translation(id, text),
             TranslatorEvent::Error(e) => {
                 self.tr = None;
+                self.tr_downloading = false;
                 self.core.translator_replaced(false);
                 self.events().status(
                     StatusLevel::Warning,
@@ -933,6 +992,10 @@ impl Engine {
             }
         });
     }
+}
+
+fn downloading(p: &Progress) -> bool {
+    matches!(p.phase, ProgressPhase::Downloading) && p.total.is_none_or(|t| p.done < t)
 }
 
 pub struct EngineHandle {

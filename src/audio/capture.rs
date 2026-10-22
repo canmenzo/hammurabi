@@ -5,29 +5,33 @@ use cpal::{
 };
 use crossbeam_channel::Sender;
 
+use super::Failure;
+
 use crate::types::{AudioChunk, SourceKind};
 
 /// Builds and starts an input stream that sends mono f32 chunks at the device rate.
+/// A lost device or invalidated stream is recorded in `failure`.
 pub fn start_stream(
     device: &Device,
     config: SupportedStreamConfig,
     source: SourceKind,
     tx: Sender<AudioChunk>,
+    failure: Failure,
 ) -> anyhow::Result<Stream> {
     let cfg = config.config();
     let stream = match config.sample_format() {
-        SampleFormat::I8 => build::<i8>(device, cfg, source, tx),
-        SampleFormat::I16 => build::<i16>(device, cfg, source, tx),
-        SampleFormat::I24 => build::<I24>(device, cfg, source, tx),
-        SampleFormat::I32 => build::<i32>(device, cfg, source, tx),
-        SampleFormat::I64 => build::<i64>(device, cfg, source, tx),
-        SampleFormat::U8 => build::<u8>(device, cfg, source, tx),
-        SampleFormat::U16 => build::<u16>(device, cfg, source, tx),
-        SampleFormat::U24 => build::<U24>(device, cfg, source, tx),
-        SampleFormat::U32 => build::<u32>(device, cfg, source, tx),
-        SampleFormat::U64 => build::<u64>(device, cfg, source, tx),
-        SampleFormat::F32 => build::<f32>(device, cfg, source, tx),
-        SampleFormat::F64 => build::<f64>(device, cfg, source, tx),
+        SampleFormat::I8 => build::<i8>(device, cfg, source, tx, failure),
+        SampleFormat::I16 => build::<i16>(device, cfg, source, tx, failure),
+        SampleFormat::I24 => build::<I24>(device, cfg, source, tx, failure),
+        SampleFormat::I32 => build::<i32>(device, cfg, source, tx, failure),
+        SampleFormat::I64 => build::<i64>(device, cfg, source, tx, failure),
+        SampleFormat::U8 => build::<u8>(device, cfg, source, tx, failure),
+        SampleFormat::U16 => build::<u16>(device, cfg, source, tx, failure),
+        SampleFormat::U24 => build::<U24>(device, cfg, source, tx, failure),
+        SampleFormat::U32 => build::<u32>(device, cfg, source, tx, failure),
+        SampleFormat::U64 => build::<u64>(device, cfg, source, tx, failure),
+        SampleFormat::F32 => build::<f32>(device, cfg, source, tx, failure),
+        SampleFormat::F64 => build::<f64>(device, cfg, source, tx, failure),
         f => anyhow::bail!("Unsupported sample format {f} on {device}"),
     }?;
     stream.play()?;
@@ -45,6 +49,7 @@ fn build<T>(
     cfg: StreamConfig,
     source: SourceKind,
     tx: Sender<AudioChunk>,
+    failure: Failure,
 ) -> anyhow::Result<Stream>
 where
     T: SizedSample,
@@ -66,6 +71,12 @@ where
         // WASAPI flags a discontinuity on the first packet of every stream, so xruns are noise.
         move |e: cpal::Error| match e.kind() {
             cpal::ErrorKind::Xrun => log::debug!("{source:?} capture: {e}"),
+            // Unplugged, or the default device changed (WASAPI streams do not follow it).
+            cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated => {
+                log::warn!("{source:?} capture lost: {e}");
+                let mut f = failure.lock().unwrap_or_else(|p| p.into_inner());
+                f.get_or_insert_with(|| e.to_string());
+            }
             _ => log::warn!("{source:?} capture error: {e}"),
         },
         None,

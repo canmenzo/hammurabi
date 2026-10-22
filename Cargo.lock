@@ -2304,6 +2304,7 @@ dependencies = [
  "rubato",
  "serde",
  "serde_json",
+ "sha2",
  "single-instance",
  "sys-locale",
  "thiserror 2.0.21",

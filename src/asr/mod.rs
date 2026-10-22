@@ -64,7 +64,7 @@ fn load(
         done,
         total,
     };
-    let paths = models::ensure(
+    let engine = models::ensure_and_load(
         model,
         &mut |done, total| {
             let _ = tx.send(AsrEvent::Progress(progress(
@@ -74,13 +74,15 @@ fn load(
             )));
         },
         cancel,
+        |paths| {
+            let _ = tx.send(AsrEvent::Progress(progress(
+                ProgressPhase::Loading,
+                0,
+                None,
+            )));
+            WhisperEngine::load(paths, &device)
+        },
     )?;
-    let _ = tx.send(AsrEvent::Progress(progress(
-        ProgressPhase::Loading,
-        0,
-        None,
-    )));
-    let engine = WhisperEngine::load(&paths, &device)?;
     let _ = tx.send(AsrEvent::Ready {
         model: models::spec(model).label.to_string(),
         device: label,

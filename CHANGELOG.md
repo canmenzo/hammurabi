@@ -2,6 +2,15 @@
 
 All notable changes to Hammurabi are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Read aloud: speaks each finished caption with the voices built into the OS (WinRT voices on Windows, AVSpeechSynthesizer on macOS, speech-dispatcher or espeak-ng on Linux). It reads the translation when translation is on, in the caption's language, and never the live line. Off by default; turn it on from the tray menu or Settings, where you can also pick a voice and the speed.
+- Hammurabi stops listening while it reads a caption and for a moment after, so its own voice is not captioned and read again. Anything said in the audio during that time is skipped.
+- When speech falls behind, the oldest waiting captions are dropped so it stays close to real time.
+- `hammurabi-cli voices` lists the installed voices and `hammurabi-cli speak` reads text aloud.
+
 ## [0.1.1] - 2026-10-22
 
 ### Fixed
@@ -28,5 +37,6 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.0

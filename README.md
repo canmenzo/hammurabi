@@ -25,6 +25,7 @@ The builds are not code signed yet:
 
 - Captions system audio, your microphone, or both
 - Translates into 26 languages with a built-in model (MADLAD-400) or any local OpenAI-compatible LLM (Ollama, LM Studio)
+- Reads finished captions aloud (the translation when translation is on) with the voices built into your OS
 - Runs on any CPU, Apple GPUs (Metal), and RTX 50 GPUs (CUDA: ~50 ms per caption, ~0.3 s per translated sentence)
 - Can use Windows Live Captions as the speech engine (Windows 11 22H2+)
 - Click-through overlay that stays on top; tray menu and global hotkeys
@@ -39,6 +40,8 @@ Right-click the tray icon to start/stop captions, pick the source, toggle transl
 | `Alt+Shift+M` | Move captions (double-click to finish) |
 
 Shortcuts are `hotkey_toggle` and `hotkey_move` in `config.toml`. `hammurabi --start` starts captions on launch.
+
+**Read aloud** (tray menu or Settings) speaks each finished caption in its language with an installed system voice. Hammurabi stops listening while it speaks, so its own voice is never captioned again; whatever plays during that time is skipped. Add voices in **Windows Settings > Time & language > Speech** or **macOS System Settings > Accessibility > Spoken Content**. Linux needs `speech-dispatcher` or `espeak-ng`.
 
 <img src="docs/img/settings.webp" alt="The Hammurabi settings window" width="360">
 
@@ -58,7 +61,7 @@ Config lives in `%APPDATA%\menzo\Hammurabi\config` on Windows (the OS equivalent
 
 ## Privacy
 
-Audio is processed locally and never uploaded. No telemetry. Network use is limited to model downloads from Hugging Face, a GitHub release check, and the LLM URL you configure.
+Audio is processed locally and never uploaded. Read aloud uses your OS's offline voices. No telemetry. Network use is limited to model downloads from Hugging Face, a GitHub release check, and the LLM URL you configure.
 
 ## Build from source
 
@@ -85,6 +88,8 @@ hammurabi-cli devices                                    # list audio devices
 hammurabi-cli record --source system --secs 10 out.wav   # record system audio
 hammurabi-cli transcribe out.wav --translate tr          # caption + translate a WAV
 hammurabi-cli download base                              # tiny, base, small, turbo, madlad
+hammurabi-cli voices --lang tr                           # voices for reading aloud
+hammurabi-cli speak --lang tr "Merhaba dünya"            # read text aloud
 ```
 
 ## Limitations

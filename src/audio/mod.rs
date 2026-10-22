@@ -96,7 +96,11 @@ fn open_stream(
             (device, config)
         }
     };
-    capture::start_stream(&device, config, kind, tx, failure)
+    let stream = capture::start_stream(&device, config, kind, tx, failure)?;
+    // On macOS building the stream waits for the permission prompt; a denial only shows here.
+    #[cfg(target_os = "macos")]
+    loopback::check_permission(kind)?;
+    Ok(stream)
 }
 
 fn source_name(kind: SourceKind, start: bool) -> &'static str {

@@ -12,6 +12,11 @@ fn exe() -> anyhow::Result<PathBuf> {
     // canonicalize would add a \\?\ prefix on Windows.
     #[cfg(not(windows))]
     let exe = exe.canonicalize()?;
+    // A quarantined app opened in place runs from a random read-only copy that is gone at next login.
+    #[cfg(target_os = "macos")]
+    if exe.to_string_lossy().contains("/AppTranslocation/") {
+        anyhow::bail!("move Hammurabi.app to the Applications folder first");
+    }
     Ok(exe)
 }
 

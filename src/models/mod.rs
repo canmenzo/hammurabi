@@ -25,10 +25,10 @@ impl ModelId {
         Self::Madlad3bQ4k,
     ];
 
-    /// `Auto` = small on CUDA/Metal, base on CPU.
+    /// `Auto` = turbo on CUDA/Metal (faster than small there), base on CPU.
     pub fn whisper(choice: ModelChoice, gpu: bool) -> ModelId {
         match choice {
-            ModelChoice::Auto if gpu => Self::WhisperSmall,
+            ModelChoice::Auto if gpu => Self::WhisperTurbo,
             ModelChoice::Auto => Self::WhisperBase,
             ModelChoice::Tiny => Self::WhisperTiny,
             ModelChoice::Base => Self::WhisperBase,

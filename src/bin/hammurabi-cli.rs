@@ -233,6 +233,9 @@ fn record(
     };
     let (tx, rx) = crossbeam_channel::bounded(64);
     let capture = AudioCapture::start(source, input, output, tx)?;
+    for note in &capture.notes {
+        eprintln!("note: {note}");
+    }
     let mut wav = hound::WavWriter::create(out, wav_spec())?;
     let mut frames = Frames16k::new();
     let mut buf = Vec::new();

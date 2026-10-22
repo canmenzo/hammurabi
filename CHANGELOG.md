@@ -2,7 +2,7 @@
 
 All notable changes to Hammurabi are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-22
 
 ### Added
 
@@ -46,7 +46,8 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
-[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.2.0
 [0.1.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.0

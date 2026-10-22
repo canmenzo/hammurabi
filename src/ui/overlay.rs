@@ -393,6 +393,7 @@ pub fn viewport_builder(settings: &Settings) -> ViewportBuilder {
     );
     ViewportBuilder::default()
         .with_title("Hammurabi")
+        .with_icon(super::icons::window_icon())
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()

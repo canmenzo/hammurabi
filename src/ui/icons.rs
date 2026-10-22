@@ -1,5 +1,10 @@
 //! Tray icon: Phosphor "subtitles" (fill, MIT), pre-rasterized to straight RGBA.
 //! Files live in assets/icons/ as {idle,active}-{16,32,64}.rgba.
+//! app-64.rgba is the window icon: the same glyph on the teal tile of assets/hammurabi.ico.
+
+use std::sync::Arc;
+
+use eframe::egui::IconData;
 
 const IDLE: [(u32, &[u8]); 3] = [
     (16, include_bytes!("../../assets/icons/idle-16.rgba")),
@@ -24,6 +29,14 @@ pub fn icon_rgba(active: bool, size: u32) -> (Vec<u8>, u32, u32) {
     (px.to_vec(), dim, dim)
 }
 
+pub fn window_icon() -> Arc<IconData> {
+    Arc::new(IconData {
+        rgba: include_bytes!("../../assets/icons/app-64.rgba").to_vec(),
+        width: 64,
+        height: 64,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,6 +50,12 @@ mod tests {
                 assert_eq!(buf.len(), (size * size * 4) as usize);
             }
         }
+    }
+
+    #[test]
+    fn window_icon_shape() {
+        let i = window_icon();
+        assert_eq!(i.rgba.len(), (i.width * i.height * 4) as usize);
     }
 
     #[test]

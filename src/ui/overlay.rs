@@ -142,6 +142,14 @@ impl OverlayState {
     }
 
     pub fn set_status(&mut self, status: Status, now: Instant) {
+        // An info line ("Running: ...") must not hide a warning the user has not had time to read.
+        if matches!(status.level, StatusLevel::Info)
+            && self.status.as_ref().is_some_and(|s| {
+                !matches!(s.level, StatusLevel::Info) && s.expires.is_none_or(|e| e > now)
+            })
+        {
+            return;
+        }
         self.status = Some(StatusPill {
             level: status.level,
             text: status.text,

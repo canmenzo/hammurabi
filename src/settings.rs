@@ -127,6 +127,12 @@ pub struct Settings {
     pub target_language: String,
     pub translator: TranslatorChoice,
     pub instant: bool,
+    /// Read final captions aloud (the translation when there is one) with an OS voice.
+    pub speak: bool,
+    /// Voice id from `tts::voices`, used for captions in its language; None = the OS default.
+    pub speak_voice: Option<String>,
+    /// 1.0 = normal speed.
+    pub speak_rate: f32,
     pub caption: CaptionStyle,
     /// Logical px.
     pub overlay_pos: Option<[f32; 2]>,
@@ -153,6 +159,9 @@ impl Default for Settings {
             target_language: default_target(sys_locale::get_locale().as_deref()),
             translator: TranslatorChoice::Builtin,
             instant: false,
+            speak: false,
+            speak_voice: None,
+            speak_rate: 1.0,
             caption: CaptionStyle::default(),
             overlay_pos: None,
             hotkey_toggle: "alt+shift+KeyT".into(),

@@ -161,6 +161,12 @@ impl RollingText {
         step
     }
 
+    /// Takes everything the window shows as already said, without emitting any of it.
+    pub fn reseed(&mut self, text: &str, now: Instant) {
+        self.seeded = false;
+        self.update(text, now);
+    }
+
     /// Emits the tail once it has not changed for a while.
     pub fn tick(&mut self, now: Instant) -> Step {
         let mut step = Step::default();
@@ -246,6 +252,25 @@ mod tests {
         assert_eq!(split("“Stop!” he said."), ["“Stop!”", "he said."]);
         assert_eq!(split("你好。谢谢"), ["你好。", "谢谢"]);
         assert!(split("   ").is_empty());
+    }
+
+    #[test]
+    fn reseed_absorbs_text_heard_while_muted() {
+        let t = Instant::now();
+        let mut r = RollingText::default();
+        run(&mut r, "", t);
+        run(&mut r, "Before. Our own", t);
+        r.reseed("Before. Our own voice reading", t);
+        assert_eq!(r.tick(t + STALE_AFTER), Step::default());
+        let (s, tail) = run(&mut r, "Before. Our own voice reading this. Next", t);
+        assert!(s.is_empty());
+        assert_eq!(tail.as_deref(), Some("Next"));
+        let (s, _) = run(
+            &mut r,
+            "Before. Our own voice reading this. Next one. Then",
+            t,
+        );
+        assert_eq!(s, ["Next one."]);
     }
 
     #[test]

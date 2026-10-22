@@ -20,6 +20,7 @@ use crate::audio::{AudioCapture, Frames16k};
 use crate::models::{self, ModelId};
 use crate::settings::{AsrBackend, ModelChoice, Settings, TranslatorChoice};
 use crate::translate::TranslatorWorker;
+use crate::tts::{self, Speaker};
 use crate::types::{
     AsrEvent, AsrRequest, AsrResult, AudioChunk, CaptionUpdate, EngineCommand, EngineEvent,
     EngineState, Notifier, Progress, ProgressPhase, Recognizer, Status, StatusLevel, Translate,
@@ -37,6 +38,8 @@ const CONTEXT_PAIRS: usize = 3;
 /// Live Captions does not report what it hears (its language is set in Windows); English is
 /// its default, and the translators read the source text itself either way.
 const LC_LANG: &str = "en";
+/// Live Captions shows what it heard about a second late, so its text stays muted longer after speech.
+const LC_TAIL: Duration = Duration::from_secs(2);
 
 #[cfg(not(all(windows, feature = "win-livecaptions")))]
 enum LcEvent {}
@@ -89,6 +92,8 @@ struct Core {
     live_in_flight: bool,
     asr_out: Vec<AsrRequest>,
     tr_out: Vec<TranslateRequest>,
+    /// Final captions to read aloud: (text, language).
+    speak_out: Vec<(String, String)>,
     events: Events,
 }
 
@@ -109,6 +114,7 @@ impl Core {
             live_in_flight: false,
             asr_out: Vec::new(),
             tr_out: Vec::new(),
+            speak_out: Vec::new(),
             events,
         }
     }
@@ -155,6 +161,12 @@ impl Core {
     fn lc_text(&mut self, text: &str, now: Instant) {
         let step = self.rolling.update(text, now);
         self.apply_step(step, now);
+    }
+
+    /// Live Captions text heard while we were speaking: taken as already said.
+    #[cfg(any(test, all(windows, feature = "win-livecaptions")))]
+    fn lc_muted(&mut self, text: &str, now: Instant) {
+        self.rolling.reseed(text, now);
     }
 
     fn apply_step(&mut self, step: Step, now: Instant) {
@@ -269,13 +281,17 @@ impl Core {
                         original: text.clone(),
                         lang: lang.clone(),
                     };
+                    let before = self.next_tr;
                     if let Some(t) = self.request(&text, &lang, p) {
+                        self.speak(&t, &lang);
                         self.caption(CaptionUpdate::Final {
                             id,
                             original: text,
                             translated: Some(t),
                             lang,
                         });
+                    } else if self.next_tr == before {
+                        self.speak(&text, &lang);
                     }
                 }
                 Out::Live { text, lang } => {
@@ -320,7 +336,11 @@ impl Core {
         };
         match p {
             Pending::Final { id, original, lang } => {
-                let Some(t) = text else { return };
+                let Some(t) = text else {
+                    return self.speak(&original, &lang);
+                };
+                let target = self.settings.target_language.clone();
+                self.speak(&t, &target);
                 self.context.push_back((original.clone(), t.clone()));
                 if self.context.len() > CONTEXT_PAIRS {
                     self.context.pop_front();
@@ -346,6 +366,13 @@ impl Core {
                     });
                 }
             }
+        }
+    }
+
+    /// Only final text is read; a translation is read in place of its original.
+    fn speak(&mut self, text: &str, lang: &str) {
+        if self.settings.speak && !text.trim().is_empty() {
+            self.speak_out.push((text.to_string(), lang.to_string()));
         }
     }
 
@@ -445,6 +472,7 @@ pub struct Engine {
     capture: Option<AudioCapture>,
     #[cfg(all(windows, feature = "win-livecaptions"))]
     lc: Option<LiveCaptions>,
+    speaker: Option<Speaker>,
     /// Audio arrives through `audio_tx` from outside (CLI) instead of capture devices.
     fed: bool,
     audio_tx: Sender<AudioChunk>,
@@ -495,6 +523,7 @@ impl Engine {
                     capture: None,
                     #[cfg(all(windows, feature = "win-livecaptions"))]
                     lc: None,
+                    speaker: None,
                     fed,
                     audio_tx,
                     audio_rx,
@@ -537,6 +566,10 @@ impl Engine {
                 .map_or_else(never, |(_, w)| w.events.clone());
             let audio_rx = self.audio_rx.clone();
             let lc_rx = self.lc_rx();
+            let tts_rx = self
+                .speaker
+                .as_ref()
+                .map_or_else(never, |s| s.warnings.clone());
             let mut timeout = if self.running {
                 FRAME
             } else {
@@ -563,6 +596,10 @@ impl Engine {
                     Ok(e) => self.on_tr(e),
                     Err(_) => self.on_tr(TranslatorEvent::Error("translation worker stopped".into())),
                 },
+                recv(tts_rx) -> w => match w {
+                    Ok(text) => self.events().status(StatusLevel::Warning, text, Some(Duration::from_secs(8))),
+                    Err(_) => self.speaker = None,
+                },
                 default(timeout) => {}
             }
             let now = Instant::now();
@@ -587,6 +624,11 @@ impl Engine {
                 None => self.core.translation(req.id, None),
             }
         }
+        for (text, lang) in std::mem::take(&mut self.core.speak_out) {
+            if let Some(s) = &self.speaker {
+                s.say(text, lang);
+            }
+        }
     }
 
     fn feed(&mut self, now: Instant) {
@@ -595,11 +637,22 @@ impl Engine {
         }
     }
 
-    fn audio(&mut self, chunk: AudioChunk) {
+    /// Captured audio holds our own speech (loopback, or the microphone hearing the speakers).
+    /// Muting it misses whatever else plays meanwhile, but a voice that is never captioned
+    /// cannot be read aloud again.
+    fn muted(&self, now: Instant) -> bool {
+        let tail = if self.lc_active() { LC_TAIL } else { tts::TAIL };
+        self.speaker.as_ref().is_some_and(|s| s.muted(now, tail))
+    }
+
+    fn audio(&mut self, mut chunk: AudioChunk) {
         if !self.running {
             return;
         }
         let now = Instant::now();
+        if self.muted(now) {
+            chunk.samples.fill(0.0);
+        }
         self.frames.push(chunk, &mut self.buf);
         self.last_audio = now;
         self.feed(now);
@@ -626,6 +679,7 @@ impl Engine {
                 }
                 self.core.set_settings(s);
                 self.core.reset();
+                self.sync_speaker();
                 if self.start_lc() {
                     self.ensure_workers();
                     self.running = true;
@@ -655,6 +709,7 @@ impl Engine {
                     return self.command(EngineCommand::Start(s));
                 }
                 self.core.set_settings(s);
+                self.sync_speaker();
                 if !self.running {
                     return;
                 }
@@ -771,6 +826,9 @@ impl Engine {
 
     fn stop(&mut self) {
         self.stop_capture();
+        if let Some(s) = &self.speaker {
+            s.clear();
+        }
         #[cfg(all(windows, feature = "win-livecaptions"))]
         {
             self.lc = None;
@@ -778,6 +836,17 @@ impl Engine {
         self.running = false;
         self.core.reset();
         self.core.caption(CaptionUpdate::Clear);
+    }
+
+    fn sync_speaker(&mut self) {
+        let s = &self.core.settings;
+        if !s.speak {
+            self.speaker = None;
+            return;
+        }
+        self.speaker
+            .get_or_insert_with(Speaker::spawn)
+            .configure(s.speak_voice.clone(), s.speak_rate);
     }
 
     /// Workers survive Stop/Start; they are rebuilt only when their model changes.
@@ -905,8 +974,11 @@ impl Engine {
                 }
             }
             LcEvent::Text(t) => {
-                if self.running {
-                    self.core.lc_text(&t, Instant::now());
+                let now = Instant::now();
+                if self.running && self.muted(now) {
+                    self.core.lc_muted(&t, now);
+                } else if self.running {
+                    self.core.lc_text(&t, now);
                 }
             }
             LcEvent::Error(e) => self.lc_failed(e),
@@ -1068,5 +1140,75 @@ mod tests {
         // The paused tail became a sentence of its own.
         assert!(captions.iter().any(|c| matches!(c,
             CaptionUpdate::Final { original, translated: None, .. } if original == "How are")));
+    }
+
+    #[test]
+    fn reads_final_captions_aloud() {
+        let core = |speak, translate, ready| {
+            let (tx, _rx) = crossbeam_channel::unbounded();
+            let settings = Settings {
+                speak,
+                translate,
+                instant: true,
+                target_language: "tr".into(),
+                ..Settings::default()
+            };
+            let mut c = Core::new(
+                settings,
+                Events {
+                    tx,
+                    notify: Arc::new(|| {}),
+                },
+            );
+            c.tr_ready = ready;
+            c
+        };
+        fn said(c: &Core) -> Vec<(&str, &str)> {
+            c.speak_out
+                .iter()
+                .map(|(t, l)| (t.as_str(), l.as_str()))
+                .collect()
+        }
+        let t = Instant::now();
+
+        // The translation is read once it arrives, never the live line or the untranslated original.
+        let mut c = core(true, true, true);
+        c.lc_text("", t);
+        c.lc_text("Hello there. How are", t);
+        assert!(said(&c).is_empty());
+        let ids: Vec<u64> = c.tr_out.iter().map(|r| r.id).collect();
+        assert_eq!(ids.len(), 2);
+        c.translation(ids[1], Some("Nasıl".into()));
+        c.translation(ids[0], Some("Merhaba.".into()));
+        assert_eq!(said(&c), [("Merhaba.", "tr")]);
+
+        // A failed translation reads the original.
+        let mut c = core(true, true, true);
+        c.lc_text("", t);
+        c.lc_text("Hello there. How are", t);
+        let id = c.tr_out[0].id;
+        c.translation(id, None);
+        assert_eq!(said(&c), [("Hello there.", "en")]);
+
+        // No translation (off, or the translator not ready): the original right away.
+        for (translate, ready) in [(false, true), (true, false)] {
+            let mut c = core(true, translate, ready);
+            c.lc_text("", t);
+            c.lc_text("Hello there. How are", t);
+            assert_eq!(said(&c), [("Hello there.", "en")]);
+        }
+
+        let mut c = core(false, false, true);
+        c.lc_text("", t);
+        c.lc_text("Hello there. How are", t);
+        assert!(said(&c).is_empty());
+
+        // What Live Captions shows while we speak is never captioned.
+        let mut c = core(true, false, true);
+        c.lc_text("", t);
+        c.lc_muted("Merhaba dünya nasılsınız", t);
+        c.tick(t + Duration::from_secs(2));
+        c.lc_text("Merhaba dünya nasılsınız. Next", t + Duration::from_secs(2));
+        assert!(said(&c).is_empty());
     }
 }

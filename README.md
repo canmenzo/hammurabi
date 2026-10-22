@@ -35,10 +35,10 @@ Every archive also contains `hammurabi-cli`, the [command line tool](#command-li
 ### macOS
 
 1. Unzip `hammurabi-macos-arm64.zip` and move `Hammurabi.app` to Applications.
-2. The app is not notarized, so macOS blocks the first launch. On macOS 15 and newer, right-click > **Open** no longer gets past this. Instead, either:
-   - open the app once, then go to **System Settings > Privacy & Security**, scroll down, click **Open Anyway** next to the Hammurabi message, and confirm; or
-   - run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app` in Terminal.
-3. Allow the permissions macOS asks for: **Microphone** for mic captions and **System Audio Recording** for system audio. If you dismissed a prompt, turn it on later in **System Settings > Privacy & Security**.
+2. The app is not notarized, so macOS blocks the first launch, and on macOS 15 and newer right-click > **Open** no longer gets past that. Either:
+   - run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app` in Terminal; or
+   - open the app once, click **Done** in the warning, then go to **System Settings > Privacy & Security**, scroll down and click **Open Anyway** next to the Hammurabi message.
+3. Hammurabi runs in the menu bar. When you start captions, allow **System Audio Recording** (and **Microphone** if you caption the mic). If you declined, turn Hammurabi on in **System Settings > Privacy & Security > Screen & System Audio Recording**, under **System Audio Recording Only**, or under **Microphone**.
 
 Hammurabi uses the Apple GPU through Metal. It needs Apple silicon; Intel Macs are not supported by the prebuilt build.
 

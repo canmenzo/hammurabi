@@ -48,6 +48,8 @@ jobs:
     runs-on: windows-2022
     env:
       CUDA_COMPUTE_CAP: '120'
+      # cl.exe defaults to the static CRT (/MT), but ort's prebuilt ONNX Runtime needs /MD.
+      NVCC_APPEND_FLAGS: '-Xcompiler=/MD'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

@@ -46,6 +46,10 @@ pub enum UiAction {
     SetTarget(&'static str),
     ToggleSpeak,
     SetPersona(&'static str),
+    #[cfg(omnivoice)]
+    ToggleSpeakerVoice,
+    #[cfg(omnivoice)]
+    RelearnVoice,
     ToggleMove,
     OpenSettings,
     ToggleAutostart,
@@ -201,6 +205,28 @@ impl App {
                 self.settings.speak_persona = id.into();
                 self.changed();
             }
+            #[cfg(omnivoice)]
+            UiAction::ToggleSpeakerVoice => {
+                let s = &mut self.settings;
+                s.speak_engine = if s.speak_engine == tts::Engine::Speaker {
+                    if models::is_cached(ModelId::Supertonic) {
+                        tts::Engine::Supertonic
+                    } else {
+                        tts::Engine::System
+                    }
+                } else {
+                    tts::Engine::Speaker
+                };
+                let download = s.speak_engine == tts::Engine::Speaker
+                    && !models::is_cached(ModelId::OmniVoice);
+                self.changed();
+                // The licence note and the download are in Settings > Read aloud.
+                if download {
+                    self.handle(UiAction::OpenSettings, ctx);
+                }
+            }
+            #[cfg(omnivoice)]
+            UiAction::RelearnVoice => self.engine().send(EngineCommand::RelearnVoice),
             UiAction::ToggleMove => self.set_move(!self.move_mode, ctx),
             UiAction::OpenSettings => {
                 if !self.settings_open {

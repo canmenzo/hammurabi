@@ -21,6 +21,8 @@ pub struct Tray {
     targets: Vec<CheckMenuItem>,
     speak: CheckMenuItem,
     personas: Vec<CheckMenuItem>,
+    #[cfg(omnivoice)]
+    speaker_voice: (CheckMenuItem, MenuItem),
     move_item: CheckMenuItem,
     autostart: CheckMenuItem,
     update: Option<MenuItem>,
@@ -64,6 +66,17 @@ impl Tray {
         for p in &personas {
             voice_menu.append(p)?;
         }
+        #[cfg(omnivoice)]
+        let speaker_voice = (
+            CheckMenuItem::with_id("speaker-voice", "Speaker's voice", true, false, None),
+            MenuItem::with_id("relearn", "Learn the voice again", true, None),
+        );
+        #[cfg(omnivoice)]
+        voice_menu.append_items(&[
+            &PredefinedMenuItem::separator(),
+            &speaker_voice.0,
+            &speaker_voice.1,
+        ])?;
         let menu = Menu::new();
         menu.append_items(&[
             &start,
@@ -104,6 +117,8 @@ impl Tray {
             targets,
             speak,
             personas,
+            #[cfg(omnivoice)]
+            speaker_voice,
             move_item,
             autostart,
             update: None,
@@ -117,6 +132,10 @@ impl Tray {
             "start" => UiAction::ToggleRunning,
             "translate" => UiAction::ToggleTranslate,
             "speak" => UiAction::ToggleSpeak,
+            #[cfg(omnivoice)]
+            "speaker-voice" => UiAction::ToggleSpeakerVoice,
+            #[cfg(omnivoice)]
+            "relearn" => UiAction::RelearnVoice,
             "move" => UiAction::ToggleMove,
             "settings" => UiAction::OpenSettings,
             "autostart" => UiAction::ToggleAutostart,
@@ -179,6 +198,12 @@ impl Tray {
         let persona = tts::persona(&s.speak_persona).id;
         for (item, p) in self.personas.iter().zip(PERSONAS.iter()) {
             item.set_checked(persona == p.id);
+        }
+        #[cfg(omnivoice)]
+        {
+            let on = s.speak_engine == tts::Engine::Speaker;
+            self.speaker_voice.0.set_checked(on);
+            self.speaker_voice.1.set_enabled(on && s.speak);
         }
         self.move_item.set_checked(move_mode);
         self.autostart.set_checked(autostart);

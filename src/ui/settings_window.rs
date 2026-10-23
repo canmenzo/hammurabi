@@ -495,10 +495,12 @@ fn read_aloud(
     ui.add_enabled_ui(s.speak, |ui| {
         grid(ui, "voice_engine", |ui| {
             ui.label("Voice engine");
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 for (v, label) in [
                     (tts::Engine::System, "System voices"),
                     (tts::Engine::Supertonic, "Supertonic 3 (about 210 MB)"),
+                    #[cfg(omnivoice)]
+                    (tts::Engine::Speaker, "Speaker's voice (GPU, about 945 MB)"),
                 ] {
                     *changed |= ui.radio_value(&mut s.speak_engine, v, label).changed();
                 }
@@ -509,9 +511,34 @@ fn read_aloud(
                 model_status(ui, ModelId::Supertonic, m, actions);
                 ui.end_row();
             }
+            #[cfg(omnivoice)]
+            if s.speak_engine == tts::Engine::Speaker {
+                ui.label("Voice model");
+                if s.omnivoice_accepted {
+                    model_status(ui, ModelId::OmniVoice, m, actions);
+                } else {
+                    *changed |= ui
+                        .checkbox(
+                            &mut s.omnivoice_accepted,
+                            "I will use it for personal, non-commercial use only",
+                        )
+                        .changed();
+                }
+                ui.end_row();
+            }
         });
         if s.speak_engine == tts::Engine::Supertonic {
             ui.weak("Natural voices that run on this computer, for 22 languages. Other languages and Custom use system voices.");
+        }
+        #[cfg(omnivoice)]
+        if s.speak_engine == tts::Engine::Speaker {
+            ui.weak("Reads each caption in the voice of whoever is speaking, learned on this computer from a few seconds of their speech and again every minute. Until then it reads in a voice of its own. Needs a GPU with Vulkan; without one, Supertonic 3 or system voices read.");
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.weak("OmniVoice by k2-fsa, CC-BY-NC-4.0: for personal, non-commercial use only (");
+                ui.hyperlink_to("license", "https://huggingface.co/k2-fsa/OmniVoice#license");
+                ui.weak("). Do not use it to pass yourself off as someone.");
+            });
         }
         ui.add_space(4.0);
         let neural = m.cached.contains(&ModelId::Supertonic);

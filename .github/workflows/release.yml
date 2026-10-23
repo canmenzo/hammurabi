@@ -86,6 +86,47 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  # Speaker's voice (omnivoice.cpp on GGML's Vulkan backend: NVIDIA, AMD and Intel GPUs).
+  build-windows-gpu:
+    runs-on: windows-latest
+    env:
+      VULKAN_VERSION: '1.4.363.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+
+      - name: Install the Vulkan SDK
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP/vulkansdk.exe"
+          curl.exe -sSfL -A "OpenAI File Downloader, XaiImageApiFetch/1.0" -o $exe "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or -not (Test-Path "C:/VulkanSDK/$env:VULKAN_VERSION/Lib/vulkan-1.lib")) { throw "Vulkan SDK install failed ($($p.ExitCode))" }
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\Bin"
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - name: Build
+        run: cargo build --release --bins --features omnivoice
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "dist/hammurabi-windows-gpu"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
+          Compress-Archive -Path $stage -DestinationPath dist/hammurabi-windows-gpu.zip
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-windows-gpu
+          path: dist/hammurabi-windows-gpu.zip
+          if-no-files-found: error
+
   build-macos:
     runs-on: macos-latest
     steps:
@@ -195,7 +236,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build-windows, build-windows-cuda, build-macos, build-linux]
+    needs: [build-windows, build-windows-cuda, build-windows-gpu, build-macos, build-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -223,6 +264,7 @@ jobs:
 
             - Windows (x64): `hammurabi-windows-x64.zip`
             - Windows with an NVIDIA RTX 50 series GPU: `hammurabi-windows-cuda.zip` (much faster captions and translation; needs a recent NVIDIA driver)
+            - Windows with a GPU (NVIDIA, AMD or Intel): `hammurabi-windows-gpu.zip` adds Read aloud in the speaker's own voice (Speaker's voice). Its voice model is for personal, non-commercial use only.
             - macOS (Apple silicon): `hammurabi-macos-arm64.zip`
             - Linux (x64): `hammurabi-linux-x64.tar.gz`
 

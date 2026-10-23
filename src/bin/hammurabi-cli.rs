@@ -87,6 +87,10 @@ enum Cmd {
         /// Also print live (unfinished) lines.
         #[arg(long)]
         live: bool,
+        /// With --realtime, also read final captions aloud with this engine (persona from
+        /// Settings).
+        #[arg(long, value_enum)]
+        speak: Option<EngineArg>,
     },
     /// Caption system audio through Windows Live Captions (it must be set up once in Windows).
     #[cfg(all(windows, feature = "win-livecaptions"))]
@@ -104,6 +108,10 @@ enum Cmd {
     Download {
         #[arg(value_enum)]
         model: DownloadModel,
+        /// Agree that the OmniVoice weights are for personal, non-commercial use only.
+        #[cfg(omnivoice)]
+        #[arg(long)]
+        accept_license: bool,
     },
     /// List the voices captions can be read aloud with.
     Voices {
@@ -129,9 +137,21 @@ enum Cmd {
         /// Voice engine; the one picked in Settings when omitted.
         #[arg(long, value_enum)]
         engine: Option<EngineArg>,
-        /// Write the Supertonic audio to this WAV file instead of playing it.
+        /// Write the Supertonic or OmniVoice audio to this WAV file instead of playing it.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// OmniVoice: WAV of the voice to read in (3 to 10 s); its own voice when omitted.
+        #[cfg(omnivoice)]
+        #[arg(long, requires = "ref_text")]
+        r#ref: Option<PathBuf>,
+        /// OmniVoice: what --ref says.
+        #[cfg(omnivoice)]
+        #[arg(long)]
+        ref_text: Option<String>,
+        /// OmniVoice: MaskGIT steps.
+        #[cfg(omnivoice)]
+        #[arg(long, default_value_t = tts::omnivoice::STEPS)]
+        steps: i32,
     },
 }
 
@@ -139,6 +159,20 @@ enum Cmd {
 enum EngineArg {
     System,
     Supertonic,
+    /// Speaker's voice.
+    #[cfg(omnivoice)]
+    Omnivoice,
+}
+
+impl EngineArg {
+    fn engine(self) -> tts::Engine {
+        match self {
+            EngineArg::System => tts::Engine::System,
+            EngineArg::Supertonic => tts::Engine::Supertonic,
+            #[cfg(omnivoice)]
+            EngineArg::Omnivoice => tts::Engine::Speaker,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -165,6 +199,8 @@ enum DownloadModel {
     Turbo,
     Madlad,
     Supertonic,
+    #[cfg(omnivoice)]
+    Omnivoice,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -192,6 +228,7 @@ fn main() -> anyhow::Result<()> {
             no_trim,
             cpu,
             live,
+            speak,
         } => {
             let model = match model {
                 Model::Auto => ModelChoice::Auto,
@@ -213,6 +250,9 @@ fn main() -> anyhow::Result<()> {
                     },
                     None => TranslatorChoice::Builtin,
                 },
+                speak: speak.is_some(),
+                speak_engine: speak.map_or(tts::Engine::System, EngineArg::engine),
+                speak_persona: hammurabi::config::load().speak_persona,
                 ..Settings::default()
             };
             let (rate, pcm) = read_wav(&input)?;
@@ -228,7 +268,11 @@ fn main() -> anyhow::Result<()> {
             translate,
             live,
         } => live_captions(secs, translate, live),
-        Cmd::Download { model } => {
+        Cmd::Download {
+            model,
+            #[cfg(omnivoice)]
+            accept_license,
+        } => {
             let id = match model {
                 DownloadModel::Tiny => ModelId::WhisperTiny,
                 DownloadModel::Base => ModelId::WhisperBase,
@@ -236,6 +280,20 @@ fn main() -> anyhow::Result<()> {
                 DownloadModel::Turbo => ModelId::WhisperTurbo,
                 DownloadModel::Madlad => ModelId::Madlad3bQ4k,
                 DownloadModel::Supertonic => ModelId::Supertonic,
+                #[cfg(omnivoice)]
+                DownloadModel::Omnivoice => {
+                    let mut cfg = hammurabi::config::load();
+                    if !cfg.omnivoice_accepted {
+                        anyhow::ensure!(
+                            accept_license,
+                            "The OmniVoice weights are licensed CC-BY-NC-4.0, for personal, non-commercial use only \
+                             (https://huggingface.co/k2-fsa/OmniVoice#license). Run again with --accept-license to agree."
+                        );
+                        cfg.omnivoice_accepted = true;
+                        hammurabi::config::save(&cfg)?;
+                    }
+                    ModelId::OmniVoice
+                }
             };
             ensure(id)?;
             println!("{}", models::model_dir(id)?.display());
@@ -282,12 +340,20 @@ fn main() -> anyhow::Result<()> {
             rate,
             engine,
             out,
+            #[cfg(omnivoice)]
+            r#ref,
+            #[cfg(omnivoice)]
+            ref_text,
+            #[cfg(omnivoice)]
+            steps,
         } => {
-            let engine = match engine {
-                Some(EngineArg::System) => tts::Engine::System,
-                Some(EngineArg::Supertonic) => tts::Engine::Supertonic,
-                None => hammurabi::config::load().speak_engine,
-            };
+            let engine =
+                engine.map_or_else(|| hammurabi::config::load().speak_engine, EngineArg::engine);
+            #[cfg(omnivoice)]
+            if engine == tts::Engine::Speaker {
+                let voice = r#ref.as_deref().zip(ref_text.as_deref());
+                return speak_omnivoice(&text, &lang, voice, steps, out.as_deref());
+            }
             let style = Style {
                 persona,
                 voice,
@@ -348,6 +414,70 @@ fn speak_to_file(text: &str, lang: &str, style: &Style, out: &Path) -> anyhow::R
         synth / secs,
         out.display()
     );
+    Ok(())
+}
+
+/// Reads `text` with OmniVoice, in the voice of `voice` (WAV, its transcript) when given, to
+/// `out` or the speakers, and reports the timings.
+#[cfg(omnivoice)]
+fn speak_omnivoice(
+    text: &str,
+    lang: &str,
+    voice: Option<(&Path, &str)>,
+    steps: i32,
+    out: Option<&Path>,
+) -> anyhow::Result<()> {
+    use hammurabi::tts::omnivoice::{self, OmniVoice};
+    anyhow::ensure!(
+        models::is_cached(ModelId::OmniVoice),
+        "OmniVoice is not downloaded; run `hammurabi-cli download omnivoice`"
+    );
+    let t = Instant::now();
+    let mut ov = OmniVoice::load(&models::model_dir(ModelId::OmniVoice)?)?;
+    println!("Loaded and warmed up in {} ms", t.elapsed().as_millis());
+    if let Some((path, ref_text)) = voice {
+        let (rate, pcm) = read_wav(path)?;
+        let t = Instant::now();
+        ov.learn(&pcm, rate, ref_text)?;
+        println!(
+            "Learned the voice of {} ({:.1} s) in {} ms",
+            path.display(),
+            pcm.len() as f32 / rate as f32,
+            t.elapsed().as_millis()
+        );
+    }
+    let t = Instant::now();
+    let pcm = ov.synthesize(text, lang, steps)?;
+    let synth = t.elapsed().as_secs_f32();
+    let secs = pcm.len() as f32 / omnivoice::SAMPLE_RATE as f32;
+    println!(
+        "OmniVoice ({}, {} steps, {}): {secs:.2} s of audio in {synth:.2} s (RTF {:.2})",
+        if ov.has_voice() {
+            "cloned voice"
+        } else {
+            "own voice"
+        },
+        steps,
+        omnivoice::language(lang),
+        synth / secs
+    );
+    match out {
+        Some(out) => {
+            let mut wav = hound::WavWriter::create(
+                out,
+                hound::WavSpec {
+                    sample_rate: omnivoice::SAMPLE_RATE,
+                    ..wav_spec()
+                },
+            )?;
+            for s in &pcm {
+                wav.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+            }
+            wav.finalize()?;
+            println!("Wrote {}", out.display());
+        }
+        None => tts::supertonic::play(&pcm, omnivoice::SAMPLE_RATE, &AtomicBool::new(false))?,
+    }
     Ok(())
 }
 

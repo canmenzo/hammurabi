@@ -18,16 +18,21 @@ pub enum ModelId {
     Madlad3bQ4k,
     /// Supertonic 3 neural voices for Read aloud.
     Supertonic,
+    /// OmniVoice for Read aloud in the speaker's voice. Non-commercial weights.
+    #[cfg(omnivoice)]
+    OmniVoice,
 }
 
 impl ModelId {
-    pub const ALL: [ModelId; 6] = [
+    pub const ALL: &[ModelId] = &[
         Self::WhisperTiny,
         Self::WhisperBase,
         Self::WhisperSmall,
         Self::WhisperTurbo,
         Self::Madlad3bQ4k,
         Self::Supertonic,
+        #[cfg(omnivoice)]
+        Self::OmniVoice,
     ];
 
     /// `Auto` = turbo on CUDA/Metal (faster than small there), base on CPU.
@@ -194,6 +199,20 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
         approx_bytes: 210 * MB,
         label: "Supertonic 3",
     };
+    // CC-BY-NC-4.0 (k2-fsa/OmniVoice), GGUF conversion for omnivoice.cpp.
+    #[cfg(omnivoice)]
+    static OMNIVOICE: ModelSpec = ModelSpec {
+        repo: "Serveurperso/OmniVoice-GGUF",
+        revision: "017094167b5c9ed565a5076ac9b3b93c5ecf5c73",
+        files: &[crate::tts::omnivoice::MODEL, crate::tts::omnivoice::CODEC],
+        sha256: &[
+            "2882d887921798aea13d45236556bdf8012842ab6f8cd2690943eead6289f298",
+            "75204fa566a8e30984e7a1066da6557184c9fd099c8f1bc0cb5b9415edfec255",
+        ],
+        mirror: None,
+        approx_bytes: 945 * MB,
+        label: "OmniVoice",
+    };
     match id {
         ModelId::WhisperTiny => &TINY,
         ModelId::WhisperBase => &BASE,
@@ -201,6 +220,8 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
         ModelId::WhisperTurbo => &TURBO,
         ModelId::Madlad3bQ4k => &MADLAD,
         ModelId::Supertonic => &SUPERTONIC,
+        #[cfg(omnivoice)]
+        ModelId::OmniVoice => &OMNIVOICE,
     }
 }
 
@@ -209,14 +230,14 @@ pub fn model_dir(id: ModelId) -> anyhow::Result<PathBuf> {
     Ok(crate::paths::models_dir()?.join(spec(id).repo.replace('/', "--")))
 }
 
-/// The first three files as weights, config and tokenizer.
+/// The first three files as weights, config and tokenizer (the directory where a pack has fewer).
 fn paths_in(id: ModelId, dir: &Path) -> ModelPaths {
-    let (w, c, t) = (spec(id).files[0], spec(id).files[1], spec(id).files[2]);
+    let file = |i: usize| dir.join(spec(id).files.get(i).copied().unwrap_or_default());
     ModelPaths {
-        weights: dir.join(w),
-        config: dir.join(c),
-        tokenizer: dir.join(t),
-        quantized: w.ends_with(".gguf"),
+        weights: file(0),
+        config: file(1),
+        tokenizer: file(2),
+        quantized: spec(id).files[0].ends_with(".gguf"),
     }
 }
 
@@ -361,7 +382,7 @@ mod tests {
 
     #[test]
     fn revisions_pinned() {
-        for id in ModelId::ALL {
+        for &id in ModelId::ALL {
             let s = spec(id);
             for r in [s.revision]
                 .into_iter()

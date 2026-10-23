@@ -1,12 +1,14 @@
 //! Reads final captions aloud with the OS's own voices: WinRT SpeechSynthesizer (Windows),
 //! AVSpeechSynthesizer (macOS), spd-say or espeak-ng (Linux; spawned, so the binary does not
-//! link libspeechd), or with downloaded Supertonic 3 voices (`supertonic`). Utterances are spoken
-//! one at a time on thread "hm-tts".
+//! link libspeechd), with downloaded Supertonic 3 voices (`supertonic`), or in the captioned
+//! speaker's own voice (`omnivoice`). Utterances are spoken one at a time on thread "hm-tts".
 
 #[cfg_attr(windows, path = "windows.rs")]
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(not(any(windows, target_os = "macos")), path = "unix.rs")]
 mod imp;
+#[cfg(omnivoice)]
+pub mod omnivoice;
 pub mod supertonic;
 
 use std::collections::{HashSet, VecDeque};
@@ -114,6 +116,9 @@ pub enum Engine {
     System,
     /// Supertonic 3 where it speaks the language and the pack is downloaded; OS voices otherwise.
     Supertonic,
+    /// The captioned speaker's voice, cloned by OmniVoice (Windows builds with the `omnivoice`
+    /// feature); Supertonic 3 as above when it cannot run.
+    Speaker,
 }
 
 /// How captions are read: a persona, or for `CUSTOM` the voice and rate picked by hand.
@@ -128,7 +133,7 @@ pub struct Style {
 /// Supertonic (language, voice style, speed) for text in `lang` read with `style`, from Babil's
 /// catalog; None when an OS voice reads it. Custom always uses an OS voice.
 pub fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, f32)> {
-    if style.engine != Engine::Supertonic {
+    if style.engine == Engine::System {
         return None;
     }
     let base = lang.split(['-', '_']).next()?;
@@ -306,6 +311,11 @@ struct State {
     gate: Gate,
     style: Style,
     quit: bool,
+    /// Speech (16 kHz) and its transcript for Speaker's voice to learn.
+    #[cfg(omnivoice)]
+    learn: Option<(Vec<f32>, String)>,
+    #[cfg(omnivoice)]
+    forget: bool,
 }
 
 struct Shared {
@@ -325,6 +335,9 @@ pub struct Speaker {
     shared: Arc<Shared>,
     /// Problems for the user (missing voice, no speech program), each sent once.
     pub warnings: Receiver<String>,
+    /// Disconnects when hm-tts has ended (and freed the GPU).
+    #[cfg(omnivoice)]
+    done: Receiver<()>,
 }
 
 impl Speaker {
@@ -340,21 +353,54 @@ impl Speaker {
                     engine: Engine::System,
                 },
                 quit: false,
+                #[cfg(omnivoice)]
+                learn: None,
+                #[cfg(omnivoice)]
+                forget: false,
             }),
             wake: Condvar::new(),
             cancel: AtomicBool::new(false),
         });
         let (tx, warnings) = crossbeam_channel::unbounded();
+        #[cfg(omnivoice)]
+        let (done_tx, done) = crossbeam_channel::bounded::<()>(1);
         let s = shared.clone();
         std::thread::Builder::new()
             .name("hm-tts".into())
-            .spawn(move || run(&s, &tx))
+            .spawn(move || {
+                run(&s, &tx);
+                #[cfg(omnivoice)]
+                drop(done_tx);
+            })
             .expect("spawn hm-tts");
-        Speaker { shared, warnings }
+        Speaker {
+            shared,
+            warnings,
+            #[cfg(omnivoice)]
+            done,
+        }
     }
 
     pub fn configure(&self, style: Style) {
         self.shared.lock().style = style;
+        // Speaker's voice loads as soon as it is picked.
+        self.shared.wake.notify_one();
+    }
+
+    /// Speaker's voice learns the voice in `pcm` (16 kHz) that says `text`.
+    #[cfg(omnivoice)]
+    pub fn learn(&self, pcm: Vec<f32>, text: String) {
+        self.shared.lock().learn = Some((pcm, text));
+        self.shared.wake.notify_one();
+    }
+
+    /// Speaker's voice drops the learned voice until it learns one again.
+    #[cfg(omnivoice)]
+    pub fn forget_voice(&self) {
+        let mut st = self.shared.lock();
+        st.learn = None;
+        st.forget = true;
+        self.shared.wake.notify_one();
     }
 
     pub fn say(&self, text: String, lang: String) {
@@ -401,7 +447,24 @@ impl Drop for Speaker {
         self.shared.lock().quit = true;
         self.shared.cancel.store(true, Ordering::Relaxed);
         self.shared.wake.notify_one();
+        // The GPU context must be freed before the process exits.
+        #[cfg(omnivoice)]
+        let _ = self.done.recv_timeout(Duration::from_secs(2));
     }
+}
+
+/// Plays synthesized `pcm` with captured audio muted, unless cancelled meanwhile.
+fn play(shared: &Shared, pcm: &[f32], rate: u32) -> anyhow::Result<()> {
+    if shared.cancel.load(Ordering::Relaxed) || pcm.is_empty() {
+        return Ok(());
+    }
+    shared.lock().gate.speaking = true;
+    let r = supertonic::play(pcm, rate, &shared.cancel);
+    shared.lock().gate = Gate {
+        speaking: false,
+        ended: Some(Instant::now()),
+    };
+    r
 }
 
 /// Synthesizes `text` with Supertonic (loading it into `engine` first) and plays it.
@@ -425,20 +488,49 @@ fn speak_neural(
         "supertonic {voice}: {secs:.2} s of audio in {ms} ms (RTF {:.2})",
         ms as f32 / 1000.0 / secs
     );
-    if shared.cancel.load(Ordering::Relaxed) || pcm.is_empty() {
-        return Ok(());
-    }
-    shared.lock().gate.speaking = true;
-    let r = supertonic::play(&pcm, st.sample_rate, &shared.cancel);
-    shared.lock().gate = Gate {
-        speaking: false,
-        ended: Some(Instant::now()),
+    play(shared, &pcm, st.sample_rate)
+}
+
+/// Synthesizes `text` with OmniVoice in the learned voice and plays it.
+#[cfg(omnivoice)]
+fn speak_cloned(
+    shared: &Shared,
+    ov: &mut omnivoice::OmniVoice,
+    text: &str,
+    lang: &str,
+) -> anyhow::Result<()> {
+    let t = Instant::now();
+    let pcm = ov.synthesize(text, lang, omnivoice::STEPS)?;
+    let (ms, secs) = (
+        t.elapsed().as_millis(),
+        pcm.len() as f32 / omnivoice::SAMPLE_RATE as f32,
+    );
+    let voice = if ov.has_voice() {
+        "speaker's voice"
+    } else {
+        "own voice"
     };
-    r
+    log::info!(
+        "omnivoice ({voice}): {secs:.2} s of audio in {ms} ms (RTF {:.2})",
+        ms as f32 / 1000.0 / secs
+    );
+    play(shared, &pcm, omnivoice::SAMPLE_RATE)
+}
+
+enum Job {
+    Speak(Utterance, Style),
+    /// Load or unload Speaker's voice to match the style.
+    #[cfg(omnivoice)]
+    Load,
+    #[cfg(omnivoice)]
+    Learn(Vec<f32>, String),
 }
 
 fn run(shared: &Shared, warnings: &Sender<String>) {
     let mut neural_engine = None;
+    // Speaker's voice: the loaded context, and whether loading it failed.
+    #[cfg(omnivoice)]
+    let (mut ov, mut ov_failed) = (None::<omnivoice::OmniVoice>, false);
     let mut warned = HashSet::new();
     let mut warn = |text: String| {
         if warned.insert(text.clone()) {
@@ -447,21 +539,98 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
         }
     };
     loop {
-        let (u, style) = {
+        let job = {
             let mut st = shared.lock();
             loop {
                 if st.quit {
                     return;
                 }
+                #[cfg(omnivoice)]
+                {
+                    let wanted = st.style.engine == Engine::Speaker;
+                    if (wanted
+                        && ov.is_none()
+                        && !ov_failed
+                        && models::is_cached(ModelId::OmniVoice))
+                        || (!wanted && (ov.is_some() || ov_failed))
+                    {
+                        break Job::Load;
+                    }
+                    if std::mem::take(&mut st.forget)
+                        && let Some(ov) = &mut ov
+                    {
+                        ov.forget();
+                    }
+                    if let Some((pcm, text)) = st.learn.take() {
+                        break Job::Learn(pcm, text);
+                    }
+                }
                 if let Some(u) = st.queue.pop_front() {
                     // Under the lock, so a clear() after the pop still cancels this utterance.
                     shared.cancel.store(false, Ordering::Relaxed);
                     let style = u.style.clone().unwrap_or_else(|| st.style.clone());
-                    break (u, style);
+                    break Job::Speak(u, style);
                 }
                 st = shared.wake.wait(st).unwrap_or_else(|p| p.into_inner());
             }
         };
+        let (u, style) = match job {
+            Job::Speak(u, style) => (u, style),
+            #[cfg(omnivoice)]
+            Job::Load => {
+                if ov.is_some() || ov_failed {
+                    (ov, ov_failed) = (None, false);
+                    log::info!("Speaker's voice unloaded");
+                    continue;
+                }
+                let t = Instant::now();
+                match models::model_dir(ModelId::OmniVoice)
+                    .and_then(|d| omnivoice::OmniVoice::load(&d))
+                {
+                    Ok(o) => {
+                        log::info!("Speaker's voice ready in {} ms", t.elapsed().as_millis());
+                        ov = Some(o);
+                    }
+                    Err(e) => {
+                        ov_failed = true;
+                        warn(format!(
+                            "Speaker's voice could not start, reading with other voices: {e:#}"
+                        ));
+                    }
+                }
+                continue;
+            }
+            #[cfg(omnivoice)]
+            Job::Learn(pcm, text) => {
+                if let Some(ov) = &mut ov {
+                    let t = Instant::now();
+                    match ov.learn(&pcm, crate::types::SAMPLE_RATE, &text) {
+                        Ok(()) => log::info!(
+                            "learned the speaker's voice in {} ms",
+                            t.elapsed().as_millis()
+                        ),
+                        Err(e) => log::warn!("Speaker's voice: {e:#}"),
+                    }
+                }
+                continue;
+            }
+        };
+        #[cfg(omnivoice)]
+        if style.engine == Engine::Speaker {
+            match &mut ov {
+                Some(o) => match speak_cloned(shared, o, &u.text, &u.lang) {
+                    Ok(()) => continue,
+                    Err(e) => warn(format!(
+                        "Speaker's voice could not read aloud, using other voices: {e:#}"
+                    )),
+                },
+                None if !models::is_cached(ModelId::OmniVoice) => warn(
+                    "Speaker's voice is not downloaded yet (Settings > Read aloud), using other voices"
+                        .into(),
+                ),
+                None => {}
+            }
+        }
         if let Some(n) = neural(&style, &u.lang)
             && models::is_cached(ModelId::Supertonic)
         {
@@ -708,6 +877,12 @@ mod tests {
         assert_eq!(neural(&st("ayla"), "zh"), None);
         assert_eq!(neural(&st("ayla"), "th"), None);
         assert_eq!(neural(&style("ayla"), "tr"), None);
+        // Speaker's voice falls back to the same Supertonic voices.
+        let sp = Style {
+            engine: Engine::Speaker,
+            ..style("lale")
+        };
+        assert_eq!(neural(&sp, "tr"), Some(("tr", "F3", 1.05)));
         for p in &PERSONAS[..6] {
             assert!(neural(&st(p.id), "en").is_some(), "{}", p.id);
         }

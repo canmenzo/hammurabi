@@ -253,7 +253,8 @@ impl App {
 
     fn refresh_models(&mut self) {
         self.models.cached = ModelId::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|&m| models::is_cached(m))
             .collect();
     }

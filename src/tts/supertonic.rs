@@ -287,7 +287,7 @@ impl Supertonic {
     }
 }
 
-fn resample(pcm: &[f32], from: u32, to: u32) -> anyhow::Result<Vec<f32>> {
+pub(super) fn resample(pcm: &[f32], from: u32, to: u32) -> anyhow::Result<Vec<f32>> {
     let mut r = Fft::<f32>::new(from as usize, to as usize, 1024, 1, FixedSync::Both)?;
     let mut out = vec![0.0; r.process_all_needed_output_len(pcm.len())];
     let n = out.len();

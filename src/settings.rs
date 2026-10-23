@@ -139,6 +139,9 @@ pub struct Settings {
     /// 1.0 = normal speed. Custom persona only.
     pub speak_rate: f32,
     pub speak_engine: tts::Engine,
+    /// The user agreed to use Speaker's voice (CC-BY-NC-4.0 weights) for personal, non-commercial
+    /// use only; its download waits for this.
+    pub omnivoice_accepted: bool,
     pub caption: CaptionStyle,
     /// Logical px.
     pub overlay_pos: Option<[f32; 2]>,
@@ -170,6 +173,7 @@ impl Default for Settings {
             speak_voice: None,
             speak_rate: 1.0,
             speak_engine: tts::Engine::System,
+            omnivoice_accepted: false,
             caption: CaptionStyle::default(),
             overlay_pos: None,
             hotkey_toggle: "alt+shift+KeyT".into(),
@@ -269,7 +273,8 @@ mod tests {
                 model: "qwen3".into(),
             },
             overlay_pos: Some([10.0, 20.0]),
-            speak_engine: tts::Engine::Supertonic,
+            speak_engine: tts::Engine::Speaker,
+            omnivoice_accepted: true,
             ..Settings::default()
         };
         let text = toml::to_string(&s).unwrap();

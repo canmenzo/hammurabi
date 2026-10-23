@@ -5,6 +5,8 @@ pub mod rolling;
 pub mod scheduler;
 pub mod segmenter;
 pub mod text;
+#[cfg(omnivoice)]
+mod voice;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -94,11 +96,19 @@ struct Core {
     tr_out: Vec<TranslateRequest>,
     /// Final captions to read aloud: (text, language).
     speak_out: Vec<(String, String)>,
+    /// Speaker's voice: captured speech paired with its transcript.
+    #[cfg(omnivoice)]
+    voice: voice::Sampler,
+    /// A voice sample (16 kHz, transcript) for the speaker to learn.
+    #[cfg(omnivoice)]
+    voice_out: Option<(Vec<f32>, String)>,
     events: Events,
 }
 
 impl Core {
     fn new(settings: Settings, events: Events) -> Self {
+        #[cfg(omnivoice)]
+        let enabled = settings.speak && settings.speak_engine == tts::Engine::Speaker;
         Self {
             settings,
             seg: Segmenter::new(),
@@ -115,11 +125,19 @@ impl Core {
             asr_out: Vec::new(),
             tr_out: Vec::new(),
             speak_out: Vec::new(),
+            #[cfg(omnivoice)]
+            voice: voice::Sampler::new(enabled),
+            #[cfg(omnivoice)]
+            voice_out: None,
             events,
         }
     }
 
     fn set_settings(&mut self, s: Settings) {
+        #[cfg(omnivoice)]
+        {
+            self.voice.enabled = s.speak && s.speak_engine == tts::Engine::Speaker;
+        }
         if s.spoken_language != self.settings.spoken_language {
             self.prior.clear();
         }
@@ -130,6 +148,8 @@ impl Core {
     }
 
     fn reset(&mut self) {
+        #[cfg(omnivoice)]
+        self.voice.reset();
         self.seg.reset();
         self.sched.reset();
         self.asm.reset();
@@ -178,7 +198,18 @@ impl Core {
     }
 
     fn frame(&mut self, f: Vec<f32>, now: Instant) {
-        if let Some(closed) = self.seg.push(f) {
+        #[cfg(omnivoice)]
+        let copy = self.voice.enabled.then(|| f.clone());
+        let closed = self.seg.push(f);
+        #[cfg(omnivoice)]
+        if let Some(f) = copy {
+            self.voice
+                .push(self.seg.pushed() - 1, f, self.seg.last_loud);
+        }
+        if let Some(closed) = closed {
+            #[cfg(omnivoice)]
+            self.voice
+                .closed(closed.id, closed.start, closed.frames.len());
             let c = self.sched.close(closed, now);
             if c.lagging {
                 self.events.status(
@@ -225,6 +256,10 @@ impl Core {
                 let text = text::clean(&r.text, &r.language, r.no_speech, r.lang_conf);
                 let words: Vec<String> = text.split_whitespace().map(String::from).collect();
                 if job.is_final {
+                    #[cfg(omnivoice)]
+                    if let Some(v) = self.voice.final_text(job.segment, &words.join(" "), now) {
+                        self.voice_out = Some(v);
+                    }
                     if words.len() >= 3 {
                         self.prior.values_mut().for_each(|v| *v *= 0.7);
                         *self.prior.entry(r.language.clone()).or_default() += 0.3;
@@ -537,6 +572,8 @@ impl Engine {
                 };
                 engine.run(cmd_rx);
                 engine.stop_capture();
+                // Read aloud ends (and frees its GPU context) before the app may exit.
+                drop(engine.speaker.take());
                 drop(done_tx);
             })
             .expect("spawn engine thread");
@@ -628,6 +665,12 @@ impl Engine {
             if let Some(s) = &self.speaker {
                 s.say(text, lang);
             }
+        }
+        #[cfg(omnivoice)]
+        if let Some((pcm, text)) = self.core.voice_out.take()
+            && let Some(s) = &self.speaker
+        {
+            s.learn(pcm, text);
         }
     }
 
@@ -734,6 +777,13 @@ impl Engine {
                 .speaker
                 .get_or_insert_with(Speaker::spawn)
                 .preview(text, lang, style),
+            #[cfg(omnivoice)]
+            EngineCommand::RelearnVoice => {
+                self.core.voice.relearn();
+                if let Some(s) = &self.speaker {
+                    s.forget_voice();
+                }
+            }
             EngineCommand::Shutdown => {}
         }
     }

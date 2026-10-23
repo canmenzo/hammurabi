@@ -43,6 +43,9 @@ pub enum EngineCommand {
         lang: String,
         style: Style,
     },
+    /// Speaker's voice learns the voice again from the next speech that qualifies.
+    #[cfg(omnivoice)]
+    RelearnVoice,
     Shutdown,
 }
 

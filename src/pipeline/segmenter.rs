@@ -22,6 +22,8 @@ const PREROLL: usize = 3;
 
 pub struct Segment {
     pub id: u64,
+    /// Index of the first frame among all frames pushed.
+    pub start: u64,
     pub frames: Vec<Vec<f32>>,
     rms: Vec<f32>,
     pub speech: usize,
@@ -44,6 +46,10 @@ pub struct Segmenter {
     preroll: VecDeque<(Vec<f32>, f32)>,
     open: Option<Segment>,
     next_id: u64,
+    /// Frames pushed so far, across resets.
+    pushed: u64,
+    /// Whether the last frame pushed was speech.
+    pub last_loud: bool,
 }
 
 impl Default for Segmenter {
@@ -66,6 +72,8 @@ impl Segmenter {
             preroll: VecDeque::new(),
             open: None,
             next_id: 1,
+            pushed: 0,
+            last_loud: false,
         }
     }
 
@@ -76,6 +84,10 @@ impl Segmenter {
         self.open = None;
     }
 
+    pub fn pushed(&self) -> u64 {
+        self.pushed
+    }
+
     pub fn open_id(&self) -> Option<u64> {
         self.open.as_ref().map(|s| s.id)
     }
@@ -84,11 +96,18 @@ impl Segmenter {
         0.004f32.max(self.noise * 2.5)
     }
 
-    fn new_segment(&mut self, frames: Vec<Vec<f32>>, rms: Vec<f32>, speech: usize) -> Segment {
+    fn new_segment(
+        &mut self,
+        start: u64,
+        frames: Vec<Vec<f32>>,
+        rms: Vec<f32>,
+        speech: usize,
+    ) -> Segment {
         let id = self.next_id;
         self.next_id += 1;
         Segment {
             id,
+            start,
             since_probe: frames.len(),
             frames,
             rms,
@@ -107,6 +126,8 @@ impl Segmenter {
             self.noise * 1.002
         };
         let loud = r > self.threshold();
+        self.pushed += 1;
+        self.last_loud = loud;
 
         if self.open.is_none() {
             if !loud {
@@ -116,8 +137,9 @@ impl Segmenter {
                 }
                 return None;
             }
+            let start = self.pushed - 1 - self.preroll.len() as u64;
             let (frames, rms) = self.preroll.drain(..).unzip();
-            self.open = Some(self.new_segment(frames, rms, 0));
+            self.open = Some(self.new_segment(start, frames, rms, 0));
         }
         let seg = self.open.as_mut().unwrap();
         seg.frames.push(frame);
@@ -155,7 +177,8 @@ impl Segmenter {
         let t = self.threshold();
         let speech = rest_rms.iter().filter(|&&r| r > t).count();
         if speech > 0 {
-            self.open = Some(self.new_segment(rest, rest_rms, speech));
+            let start = closed.start + end as u64;
+            self.open = Some(self.new_segment(start, rest, rest_rms, speech));
         }
         closed
     }
@@ -203,6 +226,10 @@ mod tests {
         let c = run(&mut s, &[(0.0, 5), (0.3, 10), (0.0, 10)]);
         assert_eq!(c, vec![(17, 3 + 10 + 1, 10)]);
         assert_eq!(s.open_id(), None);
+        // The preroll is part of the segment, so it starts 3 frames before the speech.
+        let mut s = Segmenter::new();
+        run(&mut s, &[(0.0, 5), (0.3, 1)]);
+        assert_eq!(s.open.as_ref().unwrap().start, 2);
     }
 
     #[test]
@@ -221,6 +248,7 @@ mod tests {
         // Closes at 50 frames, cut after the quiet frame: 41 frames; the rest (9 loud) stays open.
         assert_eq!(c[0], (49, 41, 50));
         assert_eq!(s.open_id(), Some(2));
+        assert_eq!(s.open.as_ref().unwrap().start, 41);
         assert_eq!(c.len(), 1);
     }
 

@@ -2,6 +2,13 @@
 
 All notable changes to Hammurabi are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.4.0 (unreleased)
+
+### Added
+
+- Supertonic 3 neural voices for Read aloud, the same voices the Babil extension uses. Pick **Voice engine: Supertonic 3** in Settings > Read aloud and download it once (about 210 MB, resumable, checked by SHA-256). It runs locally on the CPU through ONNX Runtime and reads 22 languages; each persona gets its own Supertonic voice and speed (Lale F3, Ayla F2, Deniz M4, Ateş M2, Bilge F5, Rüzgar M1). Other languages, the Custom persona, and Supertonic before it is downloaded use system voices as before.
+- `hammurabi-cli download supertonic`, and `hammurabi-cli speak --engine supertonic` with `--out file.wav` to write the audio instead of playing it. It prints the synthesis time and real-time factor; `--verbose` logs it for played speech.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

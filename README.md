@@ -25,7 +25,7 @@ The builds are not code signed yet:
 
 - Captions system audio, your microphone, or both
 - Translates into 26 languages with a built-in model (MADLAD-400) or any local OpenAI-compatible LLM (Ollama, LM Studio)
-- Reads finished captions aloud (the translation when translation is on) with the voices built into your OS, in six voice personas you can preview
+- Reads finished captions aloud (the translation when translation is on) with the voices built into your OS or downloadable Supertonic 3 neural voices, in six voice personas you can preview
 - Runs on any CPU, Apple GPUs (Metal), and RTX 50 GPUs (CUDA: ~50 ms per caption, ~0.3 s per translated sentence)
 - Can use Windows Live Captions as the speech engine (Windows 11 22H2+)
 - Click-through overlay that stays on top; tray menu and global hotkeys
@@ -43,7 +43,9 @@ Shortcuts are `hotkey_toggle` and `hotkey_move` in `config.toml`. `hammurabi --s
 
 **Read aloud** (tray menu or Settings) speaks each finished caption in its language with an installed system voice. Hammurabi stops listening while it speaks, so its own voice is never captioned again; whatever plays during that time is skipped. Add voices in **Windows Settings > Time & language > Speech** or **macOS System Settings > Accessibility > Spoken Content**. Linux needs `speech-dispatcher` or `espeak-ng`.
 
-**Voice personas** give Read aloud a character. In Settings > Read aloud (or the tray's **Voice** submenu), pick Lale (clear and neutral, the default), Ayla (bright and friendly), Deniz (calm and steady), Ateş (warm and deep), Bilge (slow and patient) or Rüzgar (quick, keeps up with fast talkers), and press its play button to hear a sample. Each persona uses an installed voice of its preferred gender for the language (any voice for it otherwise) at its own speed and pitch, so with only one voice installed they differ by speed and pitch alone. **Custom** keeps your own voice and speed, and is where you start if you had already picked one. Everything stays on your computer.
+For natural voices, set **Voice engine** in Settings > Read aloud to **Supertonic 3** and press **Download** (about 210 MB, once). Supertonic 3 by Supertone runs on the CPU, reads 22 languages (Turkish, English, Spanish, French, German, Italian, Portuguese, Russian, Arabic, Hindi, Japanese, Korean, Indonesian, Vietnamese, Dutch, Polish, Ukrainian, Greek, Swedish, Romanian, Czech, Hungarian) and needs no installed voices. Other languages, and the Custom persona, keep using system voices.
+
+**Voice personas** give Read aloud a character. In Settings > Read aloud (or the tray's **Voice** submenu), pick Lale (clear and neutral, the default), Ayla (bright and friendly), Deniz (calm and steady), Ateş (warm and deep), Bilge (slow and patient) or Rüzgar (quick, keeps up with fast talkers), and press its play button to hear a sample. Each persona uses an installed voice of its preferred gender for the language (any voice for it otherwise) at its own speed and pitch, so with only one voice installed they differ by speed and pitch alone. With Supertonic 3 each persona has its own voice, the same one it has in Babil. **Custom** keeps your own voice and speed, and is where you start if you had already picked one. Everything stays on your computer.
 
 <img src="docs/img/settings.webp" alt="The Hammurabi settings window" width="360">
 
@@ -58,12 +60,13 @@ Downloaded on first use, resumable, verified by checksum.
 | small | 967 MB | More accurate |
 | turbo | 1.62 GB | Auto default on GPU |
 | MADLAD-400 3B | 1.7 GB | Built-in translation |
+| Supertonic 3 | 210 MB | Neural voices for Read aloud |
 
 Config lives in `%APPDATA%\menzo\Hammurabi\config` on Windows (the OS equivalent elsewhere), models in the cache folder (override with `HAMMURABI_MODELS_DIR`). Settings has **Open models folder** and **Open logs**.
 
 ## Privacy
 
-Audio is processed locally and never uploaded. Read aloud uses your OS's offline voices. No telemetry. Network use is limited to model downloads from Hugging Face, a GitHub release check, and the LLM URL you configure.
+Audio is processed locally and never uploaded. Read aloud uses your OS's offline voices or Supertonic 3, which also runs on your computer. No telemetry. Network use is limited to model downloads from Hugging Face, a GitHub release check, and the LLM URL you configure.
 
 ## Build from source
 
@@ -89,10 +92,11 @@ For CUDA on Windows, build from a Visual Studio developer prompt with `CUDA_PATH
 hammurabi-cli devices                                    # list audio devices
 hammurabi-cli record --source system --secs 10 out.wav   # record system audio
 hammurabi-cli transcribe out.wav --translate tr          # caption + translate a WAV
-hammurabi-cli download base                              # tiny, base, small, turbo, madlad
+hammurabi-cli download base                              # tiny, base, small, turbo, madlad, supertonic
 hammurabi-cli voices --lang tr                           # voices (with gender) and each persona's pick
 hammurabi-cli speak --lang tr "Merhaba dünya"            # read text aloud
 hammurabi-cli speak --lang tr --persona ayla "Merhaba"   # read it as a persona
+hammurabi-cli speak --lang tr --persona ayla --engine supertonic --out tr.wav "Merhaba"   # Supertonic to a WAV
 ```
 
 ## Limitations
@@ -106,4 +110,6 @@ Bugs and logs: [open an issue](https://github.com/canmenzo/hammurabi/issues/new/
 
 ## License
 
-[MIT](LICENSE). Whisper (MIT), MADLAD-400 (Apache-2.0), candle (MIT/Apache-2.0), Phosphor Icons (MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [CHANGELOG.md](CHANGELOG.md), [SECURITY.md](SECURITY.md).
+[MIT](LICENSE). Whisper (MIT), MADLAD-400 (Apache-2.0), candle (MIT/Apache-2.0), ONNX Runtime (MIT), Phosphor Icons (MIT).
+
+The downloadable voices have their own license: [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3) by Supertone (22 languages) is OpenRAIL-M. Hammurabi downloads a [copy with an 8-bit vector estimator](https://huggingface.co/payam1394/traxlate-supertonic-3-q8ve), or the original if that copy is gone. Hammurabi's Supertonic code is ported from Supertone's MIT sample code. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [CHANGELOG.md](CHANGELOG.md), [SECURITY.md](SECURITY.md).

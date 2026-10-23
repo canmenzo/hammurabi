@@ -2,7 +2,7 @@
 
 All notable changes to Hammurabi are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## 0.4.0 (unreleased)
+## [0.4.0] - 2026-10-23
 
 ### Added
 
@@ -57,6 +57,7 @@ First public release.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
 [Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.2.0
 [0.1.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.1.1

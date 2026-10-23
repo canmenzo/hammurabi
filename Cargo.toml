@@ -12,6 +12,9 @@ cuda  = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]   # C
 cudnn = ["cuda", "candle-core/cudnn"]
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 win-livecaptions = ["dep:uiautomation"]
+# Speaker's voice (omnivoice.cpp). Windows + Vulkan only: needs cmake and the Vulkan SDK to build,
+# does nothing on other platforms.
+omnivoice = ["dep:cmake", "dep:cc"]
 
 [dependencies]
 candle-core = "0.11"
@@ -64,6 +67,8 @@ windows-registry = "0.6"
 
 [build-dependencies]
 winresource = "0.1"
+cmake = { version = "0.1", optional = true }
+cc = { version = "1", optional = true }
 
 [profile.dev.package."*"]
 opt-level = 3

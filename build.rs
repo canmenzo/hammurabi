@@ -52,20 +52,15 @@ fn omnivoice() {
         .define("GGML_F16C", "ON")
         .define("GGML_BUILD_TESTS", "OFF")
         .define("GGML_BUILD_EXAMPLES", "OFF")
+        // Debug ggml is far too slow, and it would link the debug C runtime.
+        .profile("Release")
         .build_target("omnivoice-core")
         .build()
         .join("build");
-    let profile = if dst.join("Release").is_dir() {
-        "Release"
-    } else {
-        "RelWithDebInfo"
-    };
-    for dir in ["", "ggml/src", "ggml/src/ggml-cpu", "ggml/src/ggml-vulkan"] {
-        let d = dst.join(dir);
-        println!("cargo:rustc-link-search=native={}", d.display());
+    for dir in ["", "ggml/src", "ggml/src/ggml-vulkan"] {
         println!(
             "cargo:rustc-link-search=native={}",
-            d.join(profile).display()
+            dst.join(dir).join("Release").display()
         );
     }
     println!(

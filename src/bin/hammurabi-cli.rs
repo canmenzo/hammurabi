@@ -16,6 +16,7 @@ use hammurabi::models::{self, ModelId, ModelPaths};
 use hammurabi::pipeline::{self, Engine};
 use hammurabi::settings::{ModelChoice, Settings, TranslatorChoice};
 use hammurabi::translate::{llm::LlmTranslator, madlad::Madlad};
+use hammurabi::tts::supertonic::Supertonic;
 use hammurabi::tts::{self, Gender, PERSONAS, Speaker, Style, Voice};
 use hammurabi::types::{
     AudioChunk, AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, FRAME_SAMPLES,
@@ -31,6 +32,9 @@ use hammurabi::types::{
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+    /// Log what happens (timings included).
+    #[arg(long, short, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -122,7 +126,19 @@ enum Cmd {
         /// 1.0 = normal speed.
         #[arg(long, default_value_t = 1.0)]
         rate: f32,
+        /// Voice engine; the one picked in Settings when omitted.
+        #[arg(long, value_enum)]
+        engine: Option<EngineArg>,
+        /// Write the Supertonic audio to this WAV file instead of playing it.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum EngineArg {
+    System,
+    Supertonic,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -148,11 +164,14 @@ enum DownloadModel {
     Small,
     Turbo,
     Madlad,
+    Supertonic,
 }
 
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-    match Cli::parse().cmd {
+    let cli = Cli::parse();
+    let level = if cli.verbose { "info" } else { "warn" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    match cli.cmd {
         Cmd::Devices => devices(),
         Cmd::Record {
             source,
@@ -216,12 +235,10 @@ fn main() -> anyhow::Result<()> {
                 DownloadModel::Small => ModelId::WhisperSmall,
                 DownloadModel::Turbo => ModelId::WhisperTurbo,
                 DownloadModel::Madlad => ModelId::Madlad3bQ4k,
+                DownloadModel::Supertonic => ModelId::Supertonic,
             };
-            let paths = ensure(id)?;
-            println!(
-                "{}",
-                paths.weights.parent().unwrap_or(Path::new("")).display()
-            );
+            ensure(id)?;
+            println!("{}", models::model_dir(id)?.display());
             Ok(())
         }
         Cmd::Voices { lang } => {
@@ -244,6 +261,7 @@ fn main() -> anyhow::Result<()> {
                         persona: p.id.into(),
                         voice: None,
                         rate: 1.0,
+                        engine: tts::Engine::System,
                     };
                     let (voice, rate, pitch) =
                         style.resolve(&all, l).map_err(anyhow::Error::msg)?;
@@ -262,15 +280,25 @@ fn main() -> anyhow::Result<()> {
             persona,
             voice,
             rate,
-        } => speak(
-            text,
-            lang,
-            Style {
+            engine,
+            out,
+        } => {
+            let engine = match engine {
+                Some(EngineArg::System) => tts::Engine::System,
+                Some(EngineArg::Supertonic) => tts::Engine::Supertonic,
+                None => hammurabi::config::load().speak_engine,
+            };
+            let style = Style {
                 persona,
                 voice,
                 rate,
-            },
-        ),
+                engine,
+            };
+            match out {
+                Some(out) => speak_to_file(&text, &lang, &style, &out),
+                None => speak(text, lang, style),
+            }
+        }
     }
 }
 
@@ -281,15 +309,64 @@ fn voice_label(v: Option<&Voice>, lang: &str) -> String {
     }
 }
 
+/// Supertonic (language, voice, speed) for `style`, when it reads `lang` and is downloaded.
+fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, f32)> {
+    tts::neural(style, lang).filter(|_| models::is_cached(ModelId::Supertonic))
+}
+
+/// Synthesizes with Supertonic into a WAV file and reports the real-time factor.
+fn speak_to_file(text: &str, lang: &str, style: &Style, out: &Path) -> anyhow::Result<()> {
+    let (lang, voice, speed) = tts::neural(style, lang).context(
+        "--out needs --engine supertonic, a persona other than custom and a language Supertonic speaks",
+    )?;
+    anyhow::ensure!(
+        models::is_cached(ModelId::Supertonic),
+        "Supertonic is not downloaded; run `hammurabi-cli download supertonic`"
+    );
+    let t = Instant::now();
+    let mut st = Supertonic::load(&models::model_dir(ModelId::Supertonic)?)?;
+    let load = t.elapsed();
+    let t = Instant::now();
+    let pcm = st.synthesize(text, lang, voice, speed)?;
+    let synth = t.elapsed().as_secs_f32();
+    let secs = pcm.len() as f32 / st.sample_rate as f32;
+    let mut wav = hound::WavWriter::create(
+        out,
+        hound::WavSpec {
+            sample_rate: st.sample_rate,
+            ..wav_spec()
+        },
+    )?;
+    for s in &pcm {
+        wav.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+    }
+    wav.finalize()?;
+    println!(
+        "Persona: {}, Supertonic {voice} ({lang}), speed {speed:.2}: loaded in {} ms, {secs:.2} s of audio in {synth:.2} s (RTF {:.2}), wrote {}",
+        tts::persona(&style.persona).name,
+        load.as_millis(),
+        synth / secs,
+        out.display()
+    );
+    Ok(())
+}
+
 /// Speaks through the app's queue and reports how long captured audio was muted.
 fn speak(text: String, lang: String, style: Style) -> anyhow::Result<()> {
-    let all = tts::voices();
-    let (voice, rate, pitch) = style.resolve(&all, &lang).map_err(anyhow::Error::msg)?;
-    println!(
-        "Persona: {}, voice: {}, rate {rate:.2}, pitch {pitch:.2}",
-        tts::persona(&style.persona).name,
-        voice_label(voice, &lang)
-    );
+    if let Some((l, voice, speed)) = neural(&style, &lang) {
+        println!(
+            "Persona: {}, voice: Supertonic {voice} ({l}), speed {speed:.2}",
+            tts::persona(&style.persona).name
+        );
+    } else {
+        let all = tts::voices();
+        let (voice, rate, pitch) = style.resolve(&all, &lang).map_err(anyhow::Error::msg)?;
+        println!(
+            "Persona: {}, voice: {}, rate {rate:.2}, pitch {pitch:.2}",
+            tts::persona(&style.persona).name,
+            voice_label(voice, &lang)
+        );
+    }
     let speaker = Speaker::spawn();
     speaker.configure(style);
     let start = Instant::now();
@@ -315,7 +392,8 @@ fn speak(text: String, lang: String, style: Style) -> anyhow::Result<()> {
                 );
                 break;
             }
-            (false, None) if now - start > Duration::from_secs(10) => {
+            // Supertonic loads and synthesizes before it speaks.
+            (false, None) if now - start > Duration::from_secs(30) => {
                 anyhow::bail!("speech did not start")
             }
             _ => {}

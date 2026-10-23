@@ -37,10 +37,13 @@ thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 regex = "1"
+rand = "0.9"
+unicode-normalization = "0.1"
 clap = { version = "4", features = ["derive"] }
 single-instance = "0.3"
 sys-locale = "0.3"
 open = "5"
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls"] }
 winit = { version = "0.30", default-features = false }   # eframe 0.37 does not re-export winit/egui_winit
 
 [target.'cfg(target_os = "linux")'.dependencies]

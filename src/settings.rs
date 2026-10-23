@@ -138,6 +138,7 @@ pub struct Settings {
     pub speak_voice: Option<String>,
     /// 1.0 = normal speed. Custom persona only.
     pub speak_rate: f32,
+    pub speak_engine: tts::Engine,
     pub caption: CaptionStyle,
     /// Logical px.
     pub overlay_pos: Option<[f32; 2]>,
@@ -168,6 +169,7 @@ impl Default for Settings {
             speak_persona: tts::PERSONAS[0].id.into(),
             speak_voice: None,
             speak_rate: 1.0,
+            speak_engine: tts::Engine::System,
             caption: CaptionStyle::default(),
             overlay_pos: None,
             hotkey_toggle: "alt+shift+KeyT".into(),
@@ -199,6 +201,7 @@ impl Settings {
             persona: self.speak_persona.clone(),
             voice: self.speak_voice.clone(),
             rate: self.speak_rate,
+            engine: self.speak_engine,
         }
     }
 
@@ -266,6 +269,7 @@ mod tests {
                 model: "qwen3".into(),
             },
             overlay_pos: Some([10.0, 20.0]),
+            speak_engine: tts::Engine::Supertonic,
             ..Settings::default()
         };
         let text = toml::to_string(&s).unwrap();
@@ -302,7 +306,8 @@ mod tests {
             Style {
                 persona: "custom".into(),
                 voice: Some("tr-1".into()),
-                rate: 1.3
+                rate: 1.3,
+                engine: tts::Engine::System,
             }
         );
     }

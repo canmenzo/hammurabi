@@ -1,11 +1,13 @@
 //! Reads final captions aloud with the OS's own voices: WinRT SpeechSynthesizer (Windows),
 //! AVSpeechSynthesizer (macOS), spd-say or espeak-ng (Linux; spawned, so the binary does not
-//! link libspeechd). Utterances are spoken one at a time on thread "hm-tts".
+//! link libspeechd), or with downloaded Supertonic 3 voices (`supertonic`). Utterances are spoken
+//! one at a time on thread "hm-tts".
 
 #[cfg_attr(windows, path = "windows.rs")]
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(not(any(windows, target_os = "macos")), path = "unix.rs")]
 mod imp;
+pub mod supertonic;
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,8 +15,11 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
+use serde::{Deserialize, Serialize};
 
+use crate::models::{self, ModelId};
 use crate::settings::lang_name;
+use supertonic::Supertonic;
 
 /// Utterances waiting behind the one being spoken; older ones are dropped to stay near real time.
 const MAX_QUEUED: usize = 2;
@@ -102,12 +107,42 @@ pub fn persona(id: &str) -> &'static Persona {
     PERSONAS.iter().find(|p| p.id == id).unwrap_or(&PERSONAS[0])
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Engine {
+    /// The OS's voices.
+    #[default]
+    System,
+    /// Supertonic 3 where it speaks the language and the pack is downloaded; OS voices otherwise.
+    Supertonic,
+}
+
 /// How captions are read: a persona, or for `CUSTOM` the voice and rate picked by hand.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style {
     pub persona: String,
     pub voice: Option<String>,
     pub rate: f32,
+    pub engine: Engine,
+}
+
+/// Supertonic (language, voice style, speed) for text in `lang` read with `style`, from Babil's
+/// catalog; None when an OS voice reads it. Custom always uses an OS voice.
+pub fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, f32)> {
+    if style.engine != Engine::Supertonic {
+        return None;
+    }
+    let base = lang.split(['-', '_']).next()?;
+    let lang = supertonic::LANGS.iter().find(|&&l| l == base)?;
+    let (voice, speed) = match persona(&style.persona).id {
+        "lale" => ("F3", 1.05),
+        "ayla" => ("F2", 1.1),
+        "deniz" => ("M4", 1.0),
+        "ates" => ("M2", 1.05),
+        "bilge" => ("F5", 0.84),
+        "ruzgar" => ("M1", 1.42),
+        _ => return None,
+    };
+    Some((lang, voice, speed))
 }
 
 impl Style {
@@ -302,6 +337,7 @@ impl Speaker {
                     persona: PERSONAS[0].id.into(),
                     voice: None,
                     rate: 1.0,
+                    engine: Engine::System,
                 },
                 quit: false,
             }),
@@ -368,7 +404,41 @@ impl Drop for Speaker {
     }
 }
 
+/// Synthesizes `text` with Supertonic (loading it into `engine` first) and plays it.
+fn speak_neural(
+    shared: &Shared,
+    engine: &mut Option<Supertonic>,
+    text: &str,
+    (lang, voice, speed): (&str, &str, f32),
+) -> anyhow::Result<()> {
+    let st = match engine {
+        Some(st) => st,
+        None => engine.insert(Supertonic::load(&models::model_dir(ModelId::Supertonic)?)?),
+    };
+    let t = Instant::now();
+    let pcm = st.synthesize(text, lang, voice, speed)?;
+    let (ms, secs) = (
+        t.elapsed().as_millis(),
+        pcm.len() as f32 / st.sample_rate as f32,
+    );
+    log::info!(
+        "supertonic {voice}: {secs:.2} s of audio in {ms} ms (RTF {:.2})",
+        ms as f32 / 1000.0 / secs
+    );
+    if shared.cancel.load(Ordering::Relaxed) || pcm.is_empty() {
+        return Ok(());
+    }
+    shared.lock().gate.speaking = true;
+    let r = supertonic::play(&pcm, st.sample_rate, &shared.cancel);
+    shared.lock().gate = Gate {
+        speaking: false,
+        ended: Some(Instant::now()),
+    };
+    r
+}
+
 fn run(shared: &Shared, warnings: &Sender<String>) {
+    let mut neural_engine = None;
     let mut warned = HashSet::new();
     let mut warn = |text: String| {
         if warned.insert(text.clone()) {
@@ -392,6 +462,22 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
                 st = shared.wake.wait(st).unwrap_or_else(|p| p.into_inner());
             }
         };
+        if let Some(n) = neural(&style, &u.lang)
+            && models::is_cached(ModelId::Supertonic)
+        {
+            let loaded = neural_engine.is_some();
+            match speak_neural(shared, &mut neural_engine, &u.text, n) {
+                Ok(()) => continue,
+                Err(e) => {
+                    if !loaded {
+                        models::remove_corrupt(ModelId::Supertonic);
+                    }
+                    warn(format!(
+                        "Supertonic could not read aloud, using a system voice: {e:#}"
+                    ));
+                }
+            }
+        }
         let all = voices();
         let (voice, rate, pitch) = match style.resolve(&all, &u.lang) {
             Ok(r) => r,
@@ -437,6 +523,7 @@ mod tests {
             persona: persona.into(),
             voice: None,
             rate: 1.0,
+            engine: Engine::System,
         }
     }
 
@@ -588,6 +675,7 @@ mod tests {
             persona: CUSTOM.into(),
             voice: Some("mark".into()),
             rate: 1.4,
+            engine: Engine::System,
         };
         assert_eq!(r(&custom, "en"), Ok((Some("mark".into()), 1.4, 1.0)));
         // The manual voice only reads its own language.
@@ -604,6 +692,25 @@ mod tests {
         }
         assert_eq!(r(&style("lale"), "en").unwrap().0, Some("zira".into()));
         assert_eq!(r(&style("bilge"), "en").unwrap().0, Some("zira".into()));
+    }
+
+    #[test]
+    fn neural_voices() {
+        let st = |p: &str| Style {
+            engine: Engine::Supertonic,
+            ..style(p)
+        };
+        assert_eq!(neural(&st("lale"), "tr"), Some(("tr", "F3", 1.05)));
+        assert_eq!(neural(&st("ruzgar"), "en"), Some(("en", "M1", 1.42)));
+        assert_eq!(neural(&st("bilge"), "pt-BR"), Some(("pt", "F5", 0.84)));
+        assert_eq!(neural(&st("nope"), "de"), neural(&st("lale"), "de"));
+        assert_eq!(neural(&st(CUSTOM), "tr"), None);
+        assert_eq!(neural(&st("ayla"), "zh"), None);
+        assert_eq!(neural(&st("ayla"), "th"), None);
+        assert_eq!(neural(&style("ayla"), "tr"), None);
+        for p in &PERSONAS[..6] {
+            assert!(neural(&st(p.id), "en").is_some(), "{}", p.id);
+        }
     }
 
     #[test]

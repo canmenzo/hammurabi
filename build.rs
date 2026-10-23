@@ -8,4 +8,9 @@ fn main() {
             .set("LegalCopyright", "Copyright (c) 2026 Can Ozmen");
         res.compile().expect("compile Windows resources");
     }
+    // ONNX Runtime's CoreML code calls clang's __isPlatformVersionAtLeast (compiler-rt), which
+    // rustc does not link by itself.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-arg=-fapple-link-rtlib");
+    }
 }

@@ -318,7 +318,11 @@ where
             }
             pos.store(i.min(pcm.len()), Ordering::Relaxed);
         },
-        |e: cpal::Error| log::warn!("speech output: {e}"),
+        // Core Audio reports an xrun as the stream starts.
+        |e: cpal::Error| match e.kind() {
+            cpal::ErrorKind::Xrun => log::debug!("speech output: {e}"),
+            _ => log::warn!("speech output: {e}"),
+        },
         None,
     )?)
 }

@@ -493,16 +493,39 @@ fn read_aloud(
         })
         .collect();
     ui.add_enabled_ui(s.speak, |ui| {
+        grid(ui, "voice_engine", |ui| {
+            ui.label("Voice engine");
+            ui.horizontal(|ui| {
+                for (v, label) in [
+                    (tts::Engine::System, "System voices"),
+                    (tts::Engine::Supertonic, "Supertonic 3 (about 210 MB)"),
+                ] {
+                    *changed |= ui.radio_value(&mut s.speak_engine, v, label).changed();
+                }
+            });
+            ui.end_row();
+            if s.speak_engine == tts::Engine::Supertonic {
+                ui.label("Voices");
+                model_status(ui, ModelId::Supertonic, m, actions);
+                ui.end_row();
+            }
+        });
+        if s.speak_engine == tts::Engine::Supertonic {
+            ui.weak("Natural voices that run on this computer, for 22 languages. Other languages and Custom use system voices.");
+        }
+        ui.add_space(4.0);
+        let neural = m.cached.contains(&ModelId::Supertonic);
         let current = tts::persona(&s.speak_persona).id;
         for p in &tts::PERSONAS {
             let style = Style {
                 persona: p.id.into(),
                 ..s.speak_style()
             };
-            let voice = match style.resolve(&m.voices, &sample_lang) {
-                Ok((Some(v), ..)) => format!("{} ({})", v.name, v.lang),
-                Ok((None, ..)) => "System voice".into(),
-                Err(_) => format!("No {} voice", lang_name(&sample_lang)),
+            let voice = match (tts::neural(&style, &sample_lang).filter(|_| neural), style.resolve(&m.voices, &sample_lang)) {
+                (Some((_, v, _)), _) => format!("Supertonic 3 {v}"),
+                (_, Ok((Some(v), ..))) => format!("{} ({})", v.name, v.lang),
+                (_, Ok((None, ..))) => "System voice".into(),
+                (_, Err(_)) => format!("No {} voice", lang_name(&sample_lang)),
             };
             let (select, play) = persona_card(ui, p, &voice, p.id == current);
             if select && s.speak_persona != p.id {

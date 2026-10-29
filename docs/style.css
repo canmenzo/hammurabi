@@ -94,7 +94,7 @@ footer nav a:hover{border-color:var(--accent);color:var(--accent);transform:tran
 @keyframes pulse{50%{opacity:.35}}
 .btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .files{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 20px;margin:20px auto 0;max-width:680px;font-size:14px;line-height:20px;font-weight:600}
-.files a{color:var(--soft);text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:4px;transition:color .5s var(--ease),text-decoration-color .5s var(--ease)}
+.files a{cursor:pointer;color:var(--soft);text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:4px;transition:color .5s var(--ease),text-decoration-color .5s var(--ease)}
 .files a:hover,.files a[aria-current]{color:var(--text);text-decoration-color:var(--accent)}
 .hero-shot{margin-top:56px}
 .os .card{display:flex;flex-direction:column}

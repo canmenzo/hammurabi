@@ -120,8 +120,12 @@
 (function(){
 var ua=navigator.userAgent,p=(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||"";
 var os=/iPhone|iPad|iPod|Android/i.test(ua)?"":/Win/i.test(p)?"win":/Mac/i.test(p)?"mac":/Linux|X11/i.test(p)?"linux":"";
-var names={win:"Windows",mac:"macOS",linux:"Linux"};
-if(os){document.getElementById("dl-label").textContent="Download for "+names[os];var a=document.querySelector('#files a[data-os="'+os+'"]');if(a)a.setAttribute("aria-current","true")}
+var names={win:"Windows",cuda:"Windows (RTX 50)",mac:"macOS",linux:"Linux"};
+var dl=document.getElementById("dl"),label=document.getElementById("dl-label"),links=[].slice.call(document.querySelectorAll("#files a"));
+function pick(k){links.forEach(function(a){if(a.getAttribute("data-os")===k){a.setAttribute("aria-current","true");dl.href=a.href;label.textContent="Download for "+names[k]}else a.removeAttribute("aria-current")})}
+links.forEach(function(a){a.addEventListener("click",function(e){e.preventDefault();pick(a.getAttribute("data-os"))})});
+if(os==="win"){try{var c=document.createElement("canvas"),g=c.getContext("webgl")||c.getContext("experimental-webgl"),x=g&&g.getExtension("WEBGL_debug_renderer_info");var r=x?g.getParameter(x.UNMASKED_RENDERER_WEBGL):"";if(/RTX 50\d\d/i.test(r))os="cuda"}catch(e){}}
+if(os)pick(os);
 })();
 (function(){
 var rm=matchMedia("(prefers-reduced-motion: reduce)").matches;

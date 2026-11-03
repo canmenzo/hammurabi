@@ -55,8 +55,8 @@ fn scale_wav16(wav: &mut [u8], volume: f32) {
         let start = at + 8;
         if &wav[at..at + 4] == b"data" {
             let end = start.saturating_add(size).min(wav.len());
-            for s in wav[start..end].chunks_exact_mut(2) {
-                let v = f32::from(i16::from_le_bytes([s[0], s[1]])) * volume;
+            for s in wav[start..end].as_chunks_mut::<2>().0 {
+                let v = f32::from(i16::from_le_bytes(*s)) * volume;
                 s.copy_from_slice(&(v as i16).to_le_bytes());
             }
             return;
@@ -99,7 +99,6 @@ pub fn speak(
     let r = hound::WavReader::new(Cursor::new(&wav))?;
     let length = Duration::from_secs_f64(f64::from(r.duration()) / f64::from(r.spec().sample_rate));
     let bits = r.spec().bits_per_sample;
-    drop(r);
     if bits == 16 {
         scale_wav16(&mut wav, volume);
     }

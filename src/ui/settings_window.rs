@@ -106,6 +106,8 @@ pub fn apply_theme(ctx: &Context) {
             rgb(49, 49, 49),
             rgb(94, 234, 212),
             rgb(19, 18, 9),
+            rgb(208, 205, 195),
+            rgb(150, 148, 138),
         ),
         (
             Theme::Light,
@@ -115,9 +117,11 @@ pub fn apply_theme(ctx: &Context) {
             rgb(226, 224, 216),
             rgb(15, 118, 110),
             rgb(255, 255, 255),
+            rgb(60, 58, 50),
+            rgb(92, 90, 82),
         ),
     ];
-    for (theme, mut v, bg, surface, border, accent, on_accent) in palettes {
+    for (theme, mut v, bg, surface, border, accent, on_accent, text, weak) in palettes {
         v.panel_fill = bg;
         v.window_fill = surface;
         v.faint_bg_color = surface;
@@ -126,6 +130,8 @@ pub fn apply_theme(ctx: &Context) {
         v.selection.stroke = Stroke::new(1.0, on_accent);
         v.slider_trailing_fill = true;
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+        v.widgets.noninteractive.fg_stroke.color = text;
+        v.weak_text_color = Some(weak);
         v.window_stroke = Stroke::new(1.0, border);
         for w in [
             &mut v.widgets.noninteractive,
@@ -574,9 +580,7 @@ fn model_status(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<Se
                 ui.add(bar.desired_width(160.0));
             }
             _ if m.cached.contains(&id) => {
-                ui.label(
-                    RichText::new("\u{2714} Downloaded").color(Color32::from_rgb(90, 190, 110)),
-                );
+                ui.colored_label(Color32::from_rgb(90, 190, 110), "Downloaded");
             }
             _ => {
                 if ui.button("Download").clicked() {
@@ -777,7 +781,8 @@ fn persona_card(
         let hovered = ui.response().hovered();
         let v = ui.visuals();
         let (fill, stroke) = if selected {
-            (v.selection.bg_fill, v.selection.stroke)
+            let accent = v.selection.bg_fill;
+            (accent.gamma_multiply(0.14), Stroke::new(1.5, accent))
         } else if hovered {
             (v.widgets.hovered.weak_bg_fill, v.widgets.hovered.bg_stroke)
         } else {
@@ -790,9 +795,6 @@ fn persona_card(
             .inner_margin(egui::Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                if selected {
-                    ui.visuals_mut().override_text_color = Some(stroke.color);
-                }
                 ui.horizontal(|ui| {
                     ui.strong(p.name);
                     ui.label(p.description);
@@ -814,11 +816,7 @@ fn persona_card(
                     ui.painter()
                         .rect_filled(rect, 4, v.widgets.hovered.weak_bg_fill);
                 }
-                let color = if selected {
-                    stroke.color
-                } else {
-                    ui.style().interact(&button).fg_stroke.color
-                };
+                let color = ui.style().interact(&button).fg_stroke.color;
                 if playing {
                     icons::paint_stop(ui.painter(), rect.shrink(4.0), color);
                 } else {
@@ -834,11 +832,20 @@ fn persona_card(
     (clicked, play)
 }
 
+/// Lines up with the text of the radio button above.
+fn indented(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 24,
+            ..Default::default()
+        })
+        .show(ui, |ui| ui.horizontal_wrapped(add));
+}
+
 /// A radio button with its explanation under it.
 fn engine_row(ui: &mut Ui, s: &mut Settings, v: tts::Engine, title: &str, about: &str) -> bool {
     let changed = ui.radio_value(&mut s.speak_engine, v, title).changed();
-    ui.horizontal_wrapped(|ui| {
-        ui.add_space(24.0);
+    indented(ui, |ui| {
         ui.weak(about);
     });
     changed
@@ -887,13 +894,9 @@ fn read_aloud(
             "Natural voices that run on this computer, for 22 languages. Others use system voices.",
         );
         if s.speak_engine == tts::Engine::Supertonic {
-            ui.horizontal(|ui| {
-                ui.add_space(24.0);
-                model_status(ui, ModelId::Supertonic, m, actions);
-            });
+            indented(ui, |ui| model_status(ui, ModelId::Supertonic, m, actions));
             if !m.cached.contains(&ModelId::Supertonic) {
-                ui.horizontal(|ui| {
-                    ui.add_space(24.0);
+                indented(ui, |ui| {
                     ui.colored_label(WARN, "System voices read until it is downloaded.");
                 });
             }
@@ -902,8 +905,7 @@ fn read_aloud(
         {
             ui.add_enabled(false, egui::RadioButton::new(false, "Speaker's voice"))
                 .on_disabled_hover_text("Comes with the Windows GPU build");
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(24.0);
+            indented(ui, |ui| {
                 ui.weak("Reads in the voice of whoever is speaking. Comes with the Windows GPU build, hammurabi-windows-gpu.zip.");
             });
         }
@@ -996,14 +998,8 @@ fn speaker_voice(
     changed: &mut bool,
     actions: &mut Vec<SettingsAction>,
 ) {
-    let indent = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(24.0);
-            add(ui);
-        });
-    };
     if !s.omnivoice_accepted {
-        indent(ui, &mut |ui| {
+        indented(ui, |ui| {
             *changed |= ui
                 .checkbox(
                     &mut s.omnivoice_accepted,
@@ -1012,11 +1008,9 @@ fn speaker_voice(
                 .changed();
         });
     } else {
-        indent(ui, &mut |ui| {
-            model_status(ui, ModelId::OmniVoice, m, actions);
-        });
+        indented(ui, |ui| model_status(ui, ModelId::OmniVoice, m, actions));
         if m.cached.contains(&ModelId::OmniVoice) {
-            indent(ui, &mut |ui| {
+            indented(ui, |ui| {
                 ui.label(if m.voice_learned {
                     "Reading in the speaker's voice."
                 } else {
@@ -1028,7 +1022,7 @@ fn speaker_voice(
             });
         }
     }
-    indent(ui, &mut |ui| {
+    indented(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.weak("OmniVoice by k2-fsa, CC-BY-NC-4.0: for personal, non-commercial use only (");
         ui.hyperlink_to("license", "https://huggingface.co/k2-fsa/OmniVoice#license");

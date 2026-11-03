@@ -42,7 +42,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hammurabi Settings")
             .with_inner_size([740.0, 600.0])
-            .with_position([40.0, 20.0]),
+            .with_position([40.0, 20.0])
+            .with_active(false),
         ..Default::default()
     };
     eframe::run_native(

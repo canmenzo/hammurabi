@@ -715,7 +715,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
         #[cfg(omnivoice)]
         if style.engine == Engine::Speaker {
             match &mut ov {
-                Some(o) => match {
+                Some(o) => {
                     report(Activity::Reading(
                         if o.has_voice() {
                             "the speaker's voice"
@@ -724,13 +724,13 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                         }
                         .into(),
                     ));
-                    speak_cloned(shared, o, &u.text, &u.lang, style.volume)
-                } {
-                    Ok(()) => continue,
-                    Err(e) => warn(format!(
-                        "Speaker's voice could not read aloud, using other voices: {e:#}"
-                    )),
-                },
+                    match speak_cloned(shared, o, &u.text, &u.lang, style.volume) {
+                        Ok(()) => continue,
+                        Err(e) => warn(format!(
+                            "Speaker's voice could not read aloud, using other voices: {e:#}"
+                        )),
+                    }
+                }
                 None if !models::is_cached(ModelId::OmniVoice) => warn(
                     "Speaker's voice is not downloaded yet (Settings > Read aloud), using other voices"
                         .into(),

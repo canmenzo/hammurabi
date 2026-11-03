@@ -3,7 +3,9 @@ use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
 use hammurabi::settings::Settings;
 use hammurabi::tts::{Gender, Voice};
-use hammurabi::ui::settings_window::{ModelsStatus, Page, SettingsAction, SettingsWindow, apply_theme};
+use hammurabi::ui::settings_window::{
+    ModelsStatus, Page, SettingsAction, SettingsWindow, apply_theme,
+};
 
 struct Demo {
     win: SettingsWindow,

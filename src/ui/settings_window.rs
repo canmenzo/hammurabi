@@ -300,7 +300,11 @@ impl SettingsWindow {
         }
         if !m.status.is_empty() {
             let text = RichText::new(&m.status);
-            ui.label(if m.alert { text.color(WARN) } else { text.weak() });
+            ui.label(if m.alert {
+                text.color(WARN)
+            } else {
+                text.weak()
+            });
         }
         if !m.running {
             let pending = pending_downloads(s, m);
@@ -413,8 +417,7 @@ impl SettingsWindow {
 }
 
 fn nav_item(ui: &mut Ui, label: &str, selected: bool) -> bool {
-    let (rect, resp) =
-        ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
     resp.widget_info(|| WidgetInfo::selected(egui::Role::Tab, true, selected, label));
     let v = ui.visuals();
     let (accent, text) = (v.selection.bg_fill, v.text_color());
@@ -1118,12 +1121,7 @@ fn color_row(ui: &mut Ui, hex: &mut String, changed: &mut bool) {
     }
 }
 
-fn captions(
-    ui: &mut Ui,
-    s: &mut Settings,
-    changed: &mut bool,
-    actions: &mut Vec<SettingsAction>,
-) {
+fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec<SettingsAction>) {
     section(ui, "Position");
     ui.weak("A sample caption is on screen while this page is open.");
     ui.horizontal(|ui| {
@@ -1349,9 +1347,6 @@ mod tests {
         assert_eq!(pending_downloads(&off, &status(Vec::new(), "CPU")), [base]);
         let mut downloading = status(Vec::new(), "CPU");
         downloading.downloading.push((base, 1, None));
-        assert_eq!(
-            pending_downloads(&off, &downloading),
-            Vec::<ModelId>::new()
-        );
+        assert_eq!(pending_downloads(&off, &downloading), Vec::<ModelId>::new());
     }
 }

@@ -51,7 +51,8 @@ pub fn default_voice(lang: &str) -> Option<String> {
 fn scale_wav16(wav: &mut [u8], volume: f32) {
     let mut at = 12;
     while at + 8 <= wav.len() {
-        let size = u32::from_le_bytes([wav[at + 4], wav[at + 5], wav[at + 6], wav[at + 7]]) as usize;
+        let size =
+            u32::from_le_bytes([wav[at + 4], wav[at + 5], wav[at + 6], wav[at + 7]]) as usize;
         let start = at + 8;
         if &wav[at..at + 4] == b"data" {
             let end = start.saturating_add(size).min(wav.len());

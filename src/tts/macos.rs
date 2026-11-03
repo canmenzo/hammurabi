@@ -1,3 +1,4 @@
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -7,7 +8,7 @@ use objc2_avf_audio::{
 };
 use objc2_foundation::NSString;
 
-use super::{Gender, POLL, Voice};
+use super::{Gender, Output, POLL, Voice, decode_wav, play_rendered};
 
 pub const VOICE_HINT: &str = "Add one in System Settings > Accessibility > Spoken Content (Read & Speak) > System voice > Manage Voices.";
 const START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -63,15 +64,53 @@ fn pitch_multiplier(pitch: f32) -> f32 {
     pitch.clamp(0.5, 2.0)
 }
 
+/// AVSpeechSynthesizer only plays on the default device, and its render call delivers nothing to
+/// a background thread, so another device takes the audio of `say`. It has no pitch setting.
+fn speak_on_device(
+    text: &str,
+    voice: Option<&Voice>,
+    rate: f32,
+    out: Output,
+    cancel: &AtomicBool,
+) -> anyhow::Result<()> {
+    let path = std::env::temp_dir().join(format!("hammurabi-say-{}.wav", std::process::id()));
+    let mut cmd = Command::new("say");
+    if let Some(v) = voice {
+        cmd.args(["-v", &v.name]);
+    }
+    let wpm = ((175.0 * rate).round() as u32).max(60).to_string();
+    let status = cmd
+        .args([
+            "-r",
+            &wpm,
+            "--file-format=WAVE",
+            "--data-format=LEI16@22050",
+            "-o",
+        ])
+        .arg(&path)
+        .arg("--")
+        .arg(text)
+        .stderr(Stdio::null())
+        .status()?;
+    anyhow::ensure!(status.success(), "say exited with {status}");
+    let wav = std::fs::read(&path);
+    let _ = std::fs::remove_file(&path);
+    let (mut pcm, sample_rate) = decode_wav(&wav?)?;
+    play_rendered(&mut pcm, sample_rate, out, cancel)
+}
+
 pub fn speak(
     text: &str,
     _lang: &str,
     voice: Option<&Voice>,
     rate: f32,
     pitch: f32,
-    volume: f32,
+    out: Output,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
+    if out.device.is_some() {
+        return speak_on_device(text, voice, rate, out, cancel);
+    }
     // SAFETY: the synthesizer is created, used and dropped on this thread; it speaks without a
     // run loop and `isSpeaking` reflects its state.
     unsafe {
@@ -84,7 +123,7 @@ pub fn speak(
         }
         utterance.setRate(av_rate(rate));
         utterance.setPitchMultiplier(pitch_multiplier(pitch));
-        utterance.setVolume(volume);
+        utterance.setVolume(out.volume);
         synth.speakUtterance(&utterance);
         let start = Instant::now();
         let mut started = false;

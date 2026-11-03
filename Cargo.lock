@@ -2203,6 +2203,7 @@ dependencies = [
  "unicode-normalization",
  "ureq",
  "windows",
+ "windows-core",
  "windows-registry",
  "winit",
  "winresource",

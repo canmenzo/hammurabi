@@ -43,7 +43,7 @@ Right-click the tray icon to start/stop captions, pick the source, toggle transl
 
 Change shortcuts in Settings > General. `hammurabi --start` starts captions on launch.
 
-**Read aloud** (tray menu or Settings) speaks each finished caption in its language with an installed system voice. Hammurabi stops listening while it speaks, so its own voice is never captioned again; whatever plays during that time is skipped. Add voices in **Windows Settings > Time & language > Speech** or **macOS System Settings > Accessibility > Spoken Content**. Linux needs `speech-dispatcher` or `espeak-ng`.
+**Read aloud** (tray menu or Settings) speaks each finished caption in its language with an installed system voice. Its own voice is never captioned again: on Windows 11, or when it reads on another device than the one captioned (**Read on** in Settings), system audio keeps being captioned while it speaks. Otherwise, and for the microphone, Hammurabi stops listening meanwhile and skips what plays. On Windows, **Other apps while reading** turns other apps down during speech. Add voices in **Windows Settings > Time & language > Speech** or **macOS System Settings > Accessibility > Spoken Content**. Linux needs `speech-dispatcher` or `espeak-ng`.
 
 For natural voices, set **Voice engine** in Settings > Read aloud to **Supertonic 3** and press **Download** (about 210 MB, once). Supertonic 3 by Supertone runs on the CPU, reads 22 languages (Turkish, English, Spanish, French, German, Italian, Portuguese, Russian, Arabic, Hindi, Japanese, Korean, Indonesian, Vietnamese, Dutch, Polish, Ukrainian, Greek, Swedish, Romanian, Czech, Hungarian) and needs no installed voices. Other languages, and the Custom persona, keep using system voices.
 

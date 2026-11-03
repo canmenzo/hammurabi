@@ -140,6 +140,9 @@ enum Cmd {
         /// Write the Supertonic or OmniVoice audio to this WAV file instead of playing it.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Playback device id to read on (see `devices`).
+        #[arg(long)]
+        device: Option<String>,
         /// OmniVoice: WAV of the voice to read in (3 to 10 s); its own voice when omitted.
         #[cfg(omnivoice)]
         #[arg(long, requires = "ref_text")]
@@ -322,6 +325,8 @@ fn main() -> anyhow::Result<()> {
                         engine: tts::Engine::System,
                         neural_voice: "F3".into(),
                         volume: 1.0,
+                        device: None,
+                        duck: 1.0,
                     };
                     let (voice, rate, pitch) =
                         style.resolve(&all, l).map_err(anyhow::Error::msg)?;
@@ -342,6 +347,7 @@ fn main() -> anyhow::Result<()> {
             rate,
             engine,
             out,
+            device,
             #[cfg(omnivoice)]
             r#ref,
             #[cfg(omnivoice)]
@@ -363,6 +369,8 @@ fn main() -> anyhow::Result<()> {
                 engine,
                 neural_voice: "F3".into(),
                 volume: 1.0,
+                device,
+                duck: 1.0,
             };
             match out {
                 Some(out) => speak_to_file(&text, &lang, &style, &out),
@@ -480,7 +488,7 @@ fn speak_omnivoice(
             wav.finalize()?;
             println!("Wrote {}", out.display());
         }
-        None => tts::supertonic::play(&pcm, omnivoice::SAMPLE_RATE, &AtomicBool::new(false))?,
+        None => tts::supertonic::play(&pcm, omnivoice::SAMPLE_RATE, None, &AtomicBool::new(false))?,
     }
     Ok(())
 }
@@ -570,7 +578,7 @@ fn record(
         Source::Both => AudioSource::Both,
     };
     let (tx, rx) = crossbeam_channel::bounded(64);
-    let capture = AudioCapture::start(source, input, output, tx)?;
+    let capture = AudioCapture::start(source, input, output, false, tx)?;
     for note in &capture.notes {
         eprintln!("note: {note}");
     }

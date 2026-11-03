@@ -12,13 +12,14 @@ pub mod omnivoice;
 pub mod supertonic;
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
+use crate::audio::duck::Ducker;
 use crate::models::{self, ModelId};
 use crate::settings::lang_name;
 use supertonic::Supertonic;
@@ -28,6 +29,8 @@ use supertonic::Supertonic;
 const MAX_QUEUED: usize = 6;
 /// Waiting captions are read as one utterance up to this many characters.
 const MERGE_CHARS: usize = 300;
+/// Other apps stay turned down this long after speech, so they do not pump between captions.
+const DUCK_HOLD: Duration = Duration::from_millis(800);
 /// Captured audio stays muted this long after speech ends (output latency, room echo).
 pub const TAIL: Duration = Duration::from_millis(600);
 const POLL: Duration = Duration::from_millis(50);
@@ -135,6 +138,17 @@ pub struct Style {
     pub neural_voice: String,
     /// 0.0..=1.0.
     pub volume: f32,
+    /// Playback device, a cpal device id; None = OS default.
+    pub device: Option<String>,
+    /// What other apps are turned down to while reading; 1.0 leaves them alone.
+    pub duck: f32,
+}
+
+/// Where and how loud speech plays.
+#[derive(Clone, Copy, Debug)]
+pub struct Output<'a> {
+    pub volume: f32,
+    pub device: Option<&'a str>,
 }
 
 /// What the read aloud thread is doing, for the UI.
@@ -176,6 +190,13 @@ pub fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, 
 }
 
 impl Style {
+    fn output(&self) -> Output<'_> {
+        Output {
+            volume: self.volume,
+            device: self.device.as_deref(),
+        }
+    }
+
     /// (voice, rate, pitch) for text in `lang`; the voice as in `resolve`.
     pub fn resolve<'a>(
         &self,
@@ -322,10 +343,48 @@ pub fn speak(
     voice: Option<&Voice>,
     rate: f32,
     pitch: f32,
-    volume: f32,
+    out: Output,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
-    imp::speak(text, lang, voice, rate, pitch, volume, cancel)
+    imp::speak(text, lang, voice, rate, pitch, out, cancel)
+}
+
+/// Mono samples and rate of a 16-bit or float WAV file. A length past the end of the data, as a
+/// stream written to a pipe has, is fine.
+fn decode_wav(wav: &[u8]) -> anyhow::Result<(Vec<f32>, u32)> {
+    let r = hound::WavReader::new(std::io::Cursor::new(wav))?;
+    let spec = r.spec();
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => {
+            anyhow::ensure!(
+                spec.bits_per_sample == 16,
+                "{}-bit audio",
+                spec.bits_per_sample
+            );
+            r.into_samples::<i16>()
+                .map_while(Result::ok)
+                .map(|s| f32::from(s) / 32768.0)
+                .collect()
+        }
+        hound::SampleFormat::Float => r.into_samples::<f32>().map_while(Result::ok).collect(),
+    };
+    let channels = usize::from(spec.channels.max(1));
+    let mono = samples
+        .chunks_exact(channels)
+        .map(|f| f.iter().sum::<f32>() / channels as f32)
+        .collect();
+    Ok((mono, spec.sample_rate))
+}
+
+/// Plays what a system voice rendered, for backends that do not play it themselves.
+fn play_rendered(
+    pcm: &mut [f32],
+    rate: u32,
+    out: Output,
+    cancel: &AtomicBool,
+) -> anyhow::Result<()> {
+    pcm.iter_mut().for_each(|s| *s *= out.volume);
+    supertonic::play(pcm, rate, out.device, cancel)
 }
 
 pub struct Utterance {
@@ -399,6 +458,17 @@ struct Shared {
     state: Mutex<State>,
     wake: Condvar,
     cancel: AtomicBool,
+    /// f32 bits: what captured system audio is raised by, while other apps are turned down.
+    capture_gain: AtomicU32,
+}
+
+/// Turns other apps down for speech about to play.
+fn duck(shared: &Shared, ducker: &mut Ducker, level: f32) {
+    if level < 1.0 {
+        ducker.duck(level);
+        let gain = ducker.gain().to_bits();
+        shared.capture_gain.store(gain, Ordering::Relaxed);
+    }
 }
 
 impl Shared {
@@ -413,8 +483,7 @@ pub struct Speaker {
     /// Problems for the user (missing voice, no speech program), each sent once.
     pub warnings: Receiver<String>,
     pub activity: Receiver<Activity>,
-    /// Disconnects when hm-tts has ended (and freed the GPU).
-    #[cfg(omnivoice)]
+    /// Disconnects when hm-tts has ended (freed the GPU, put other apps' volume back).
     done: Receiver<()>,
 }
 
@@ -431,6 +500,8 @@ impl Speaker {
                     engine: Engine::System,
                     neural_voice: String::new(),
                     volume: 1.0,
+                    device: None,
+                    duck: 1.0,
                 },
                 quit: false,
                 #[cfg(omnivoice)]
@@ -440,18 +511,17 @@ impl Speaker {
             }),
             wake: Condvar::new(),
             cancel: AtomicBool::new(false),
+            capture_gain: AtomicU32::new(1f32.to_bits()),
         });
         let (tx, warnings) = crossbeam_channel::unbounded();
         // Bounded: the CLI never reads it, and a lost update there does no harm.
         let (activity_tx, activity) = crossbeam_channel::bounded(32);
-        #[cfg(omnivoice)]
         let (done_tx, done) = crossbeam_channel::bounded::<()>(1);
         let s = shared.clone();
         std::thread::Builder::new()
             .name("hm-tts".into())
             .spawn(move || {
                 run(&s, &tx, &activity_tx);
-                #[cfg(omnivoice)]
                 drop(done_tx);
             })
             .expect("spawn hm-tts");
@@ -459,7 +529,6 @@ impl Speaker {
             shared,
             warnings,
             activity,
-            #[cfg(omnivoice)]
             done,
         }
     }
@@ -519,6 +588,11 @@ impl Speaker {
         self.shared.cancel.store(true, Ordering::Relaxed);
     }
 
+    /// What captured system audio should be raised by now.
+    pub fn capture_gain(&self) -> f32 {
+        f32::from_bits(self.shared.capture_gain.load(Ordering::Relaxed))
+    }
+
     /// True while captured audio would contain our own speech.
     pub fn muted(&self, now: Instant, tail: Duration) -> bool {
         self.shared.lock().gate.closed(now, tail)
@@ -530,20 +604,26 @@ impl Drop for Speaker {
         self.shared.lock().quit = true;
         self.shared.cancel.store(true, Ordering::Relaxed);
         self.shared.wake.notify_one();
-        // The GPU context must be freed before the process exits.
-        #[cfg(omnivoice)]
+        // The GPU context must be freed and volumes put back before the process exits.
         let _ = self.done.recv_timeout(Duration::from_secs(2));
     }
 }
 
 /// Plays synthesized `pcm` with captured audio muted, unless cancelled meanwhile.
-fn play(shared: &Shared, pcm: &[f32], rate: u32, volume: f32) -> anyhow::Result<()> {
+fn play(
+    shared: &Shared,
+    ducker: &mut Ducker,
+    pcm: &[f32],
+    rate: u32,
+    (out, level): (Output, f32),
+) -> anyhow::Result<()> {
     if shared.cancel.load(Ordering::Relaxed) || pcm.is_empty() {
         return Ok(());
     }
-    let scaled: Vec<f32> = pcm.iter().map(|x| x * volume).collect();
+    duck(shared, ducker, level);
+    let scaled: Vec<f32> = pcm.iter().map(|x| x * out.volume).collect();
     shared.lock().gate.speaking = true;
-    let r = supertonic::play(&scaled, rate, &shared.cancel);
+    let r = supertonic::play(&scaled, rate, out.device, &shared.cancel);
     shared.lock().gate = Gate {
         speaking: false,
         ended: Some(Instant::now()),
@@ -554,10 +634,11 @@ fn play(shared: &Shared, pcm: &[f32], rate: u32, volume: f32) -> anyhow::Result<
 /// Synthesizes `text` with Supertonic (loading it into `engine` first) and plays it.
 fn speak_neural(
     shared: &Shared,
+    ducker: &mut Ducker,
     engine: &mut Option<Supertonic>,
     text: &str,
     (lang, voice, speed): (&str, &str, f32),
-    volume: f32,
+    out: (Output, f32),
 ) -> anyhow::Result<()> {
     let st = match engine {
         Some(st) => st,
@@ -573,17 +654,18 @@ fn speak_neural(
         "supertonic {voice}: {secs:.2} s of audio in {ms} ms (RTF {:.2})",
         ms as f32 / 1000.0 / secs
     );
-    play(shared, &pcm, st.sample_rate, volume)
+    play(shared, ducker, &pcm, st.sample_rate, out)
 }
 
 /// Synthesizes `text` with OmniVoice in the learned voice and plays it.
 #[cfg(omnivoice)]
 fn speak_cloned(
     shared: &Shared,
+    ducker: &mut Ducker,
     ov: &mut omnivoice::OmniVoice,
     text: &str,
     lang: &str,
-    volume: f32,
+    out: (Output, f32),
 ) -> anyhow::Result<()> {
     let t = Instant::now();
     let pcm = ov.synthesize(text, lang, omnivoice::STEPS)?;
@@ -600,11 +682,14 @@ fn speak_cloned(
         "omnivoice ({voice}): {secs:.2} s of audio in {ms} ms (RTF {:.2})",
         ms as f32 / 1000.0 / secs
     );
-    play(shared, &pcm, omnivoice::SAMPLE_RATE, volume)
+    play(shared, ducker, &pcm, omnivoice::SAMPLE_RATE, out)
 }
 
+#[allow(clippy::large_enum_variant)] // One at a time, on the stack.
 enum Job {
     Speak(Utterance, Style, f32),
+    /// Nothing more to read: put other apps' volume back.
+    Release,
     /// Load or unload Speaker's voice to match the style.
     #[cfg(omnivoice)]
     Load,
@@ -618,6 +703,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
     };
     let mut busy = false;
     let mut neural_engine = None;
+    let mut ducker = Ducker::default();
     // Speaker's voice: the loaded context, and whether loading it failed.
     #[cfg(omnivoice)]
     let (mut ov, mut ov_failed) = (None::<omnivoice::OmniVoice>, false);
@@ -664,11 +750,28 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                 if std::mem::take(&mut busy) {
                     report(Activity::Idle);
                 }
+                if ducker.active() {
+                    let (guard, wait) = shared
+                        .wake
+                        .wait_timeout(st, DUCK_HOLD)
+                        .unwrap_or_else(|p| p.into_inner());
+                    st = guard;
+                    if wait.timed_out() && st.queue.is_empty() {
+                        break Job::Release;
+                    }
+                    continue;
+                }
                 st = shared.wake.wait(st).unwrap_or_else(|p| p.into_inner());
             }
         };
         let (u, style, pace) = match job {
             Job::Speak(u, style, pace) => (u, style, pace),
+            Job::Release => {
+                // Lowered audio that is raised late would be briefly too loud, so this goes first.
+                shared.capture_gain.store(1f32.to_bits(), Ordering::Relaxed);
+                ducker.release();
+                continue;
+            }
             #[cfg(omnivoice)]
             Job::Load => {
                 if ov.is_some() || ov_failed {
@@ -724,7 +827,14 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                         }
                         .into(),
                     ));
-                    match speak_cloned(shared, o, &u.text, &u.lang, style.volume) {
+                    match speak_cloned(
+                        shared,
+                        &mut ducker,
+                        o,
+                        &u.text,
+                        &u.lang,
+                        (style.output(), style.duck),
+                    ) {
                         Ok(()) => continue,
                         Err(e) => warn(format!(
                             "Speaker's voice could not read aloud, using other voices: {e:#}"
@@ -744,7 +854,14 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
             let loaded = neural_engine.is_some();
             report(Activity::Reading(format!("Supertonic 3 {voice}")));
             let n = (lang, voice, speed * pace);
-            match speak_neural(shared, &mut neural_engine, &u.text, n, style.volume) {
+            match speak_neural(
+                shared,
+                &mut ducker,
+                &mut neural_engine,
+                &u.text,
+                n,
+                (style.output(), style.duck),
+            ) {
                 Ok(()) => continue,
                 Err(e) => {
                     if !loaded {
@@ -767,6 +884,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
         report(Activity::Reading(
             voice.map_or_else(|| "a system voice".into(), |v| v.name.clone()),
         ));
+        duck(shared, &mut ducker, style.duck);
         shared.lock().gate.speaking = true;
         let r = speak(
             &u.text,
@@ -774,7 +892,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
             voice,
             rate * pace,
             pitch,
-            style.volume,
+            style.output(),
             &shared.cancel,
         );
         shared.lock().gate = Gate {
@@ -815,7 +933,31 @@ mod tests {
             engine: Engine::System,
             neural_voice: "F3".into(),
             volume: 1.0,
+            device: None,
+            duck: 1.0,
         }
+    }
+
+    #[test]
+    fn decodes_wav_to_mono() {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 22_050,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut wav = std::io::Cursor::new(Vec::new());
+        let mut w = hound::WavWriter::new(&mut wav, spec).unwrap();
+        for s in [16384i16, 0, -16384, -16384] {
+            w.write_sample(s).unwrap();
+        }
+        w.finalize().unwrap();
+        let mut wav = wav.into_inner();
+        assert_eq!(decode_wav(&wav).unwrap(), (vec![0.25, -0.5], 22_050));
+        // espeak-ng writing to a pipe does not know the length yet.
+        let n = wav.len();
+        wav[n - 12..n - 8].copy_from_slice(&0x7fff_f000u32.to_le_bytes());
+        assert_eq!(decode_wav(&wav).unwrap().0, [0.25, -0.5]);
     }
 
     #[test]

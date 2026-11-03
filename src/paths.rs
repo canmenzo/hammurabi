@@ -19,6 +19,11 @@ pub fn models_dir() -> anyhow::Result<PathBuf> {
     Ok(dirs()?.cache_dir().join("models"))
 }
 
+/// App volumes to put back if Hammurabi dies while it has them turned down.
+pub fn duck_journal() -> anyhow::Result<PathBuf> {
+    Ok(dirs()?.data_local_dir().join("ducked.json"))
+}
+
 pub fn log_dir() -> anyhow::Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("logs"))
 }

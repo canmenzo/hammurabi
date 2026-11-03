@@ -143,6 +143,10 @@ pub struct Settings {
     pub speak_neural_voice: String,
     /// 0.0..=1.0.
     pub speak_volume: f32,
+    /// Playback device to read on, a cpal device id; None = OS default.
+    pub speak_device: Option<String>,
+    /// What other apps are turned down to while a voice reads, 0.1..=1.0; 1.0 leaves them alone.
+    pub speak_duck: f32,
     /// Also read speech already in the target language, which is otherwise heard as it is.
     pub speak_same_lang: bool,
     /// The user agreed to use Speaker's voice (CC-BY-NC-4.0 weights) for personal, non-commercial
@@ -181,6 +185,8 @@ impl Default for Settings {
             speak_engine: tts::Engine::System,
             speak_neural_voice: "F3".into(),
             speak_volume: 1.0,
+            speak_device: None,
+            speak_duck: 1.0,
             speak_same_lang: false,
             omnivoice_accepted: false,
             caption: CaptionStyle::default(),
@@ -217,6 +223,8 @@ impl Settings {
             engine: self.speak_engine,
             neural_voice: self.speak_neural_voice.clone(),
             volume: self.speak_volume.clamp(0.0, 1.0),
+            device: self.speak_device.clone(),
+            duck: self.speak_duck.clamp(0.1, 1.0),
         }
     }
 
@@ -326,6 +334,8 @@ mod tests {
                 engine: tts::Engine::System,
                 neural_voice: "F3".into(),
                 volume: 1.0,
+                device: None,
+                duck: 1.0,
             }
         );
     }

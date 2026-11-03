@@ -1,9 +1,13 @@
 pub mod capture;
+pub mod duck;
 pub mod loopback;
+#[cfg(windows)]
+mod own_excluded;
 pub mod resample;
 
 pub use resample::Frames16k;
 
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
@@ -18,8 +22,10 @@ pub type Failure = Arc<Mutex<Option<String>>>;
 
 /// Owns the cpal streams; create and drop it on the engine thread (streams are not Send everywhere).
 pub struct AudioCapture {
-    _streams: Vec<cpal::Stream>,
+    _streams: Vec<Box<dyn Any>>,
     failure: Failure,
+    /// System audio is captured without this process's own sound.
+    pub own_excluded: bool,
     /// What was used instead of the requested source or device, for the user.
     pub notes: Vec<String>,
 }
@@ -27,22 +33,41 @@ pub struct AudioCapture {
 impl AudioCapture {
     /// `input`/`output` are cpal device ids; None = OS default. A device that is gone or fails
     /// is replaced by the default one; system audio that fails falls back to the microphone,
-    /// and `Both` keeps whichever source works.
+    /// and `Both` keeps whichever source works. `exclude_own`: leave our own sound out of system
+    /// audio from the default device, where the OS can.
     pub fn start(
         source: AudioSource,
         input: Option<&str>,
         output: Option<&str>,
+        exclude_own: bool,
         tx: Sender<AudioChunk>,
     ) -> anyhow::Result<AudioCapture> {
         let host = cpal::default_host();
         let failure = Failure::default();
         let mut notes = Vec::new();
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut own_excluded = false;
         let (streams, more) = open_sources(source, |kind| {
             let (id, what) = match kind {
                 SourceKind::System => (output, "audio output"),
                 SourceKind::Microphone => (input, "microphone"),
             };
-            let open = |id| open_stream(&host, kind, id, tx.clone(), failure.clone());
+            #[cfg(windows)]
+            if exclude_own && kind == SourceKind::System && id.is_none() {
+                match own_excluded::OwnExcluded::start(tx.clone(), failure.clone()) {
+                    Ok(c) => {
+                        own_excluded = true;
+                        return Ok(Box::new(c) as Box<dyn Any>);
+                    }
+                    Err(e) => log::info!("system audio with our own sound in it: {e:#}"),
+                }
+            }
+            #[cfg(not(windows))]
+            let _ = exclude_own;
+            let open = |id| {
+                open_stream(&host, kind, id, tx.clone(), failure.clone())
+                    .map(|s| Box::new(s) as Box<dyn Any>)
+            };
             let Some(id) = id else {
                 return open(None);
             };
@@ -69,6 +94,7 @@ impl AudioCapture {
         Ok(AudioCapture {
             _streams: streams,
             failure,
+            own_excluded,
             notes,
         })
     }
@@ -162,8 +188,15 @@ fn open_sources<T>(
     Ok((opened, notes))
 }
 
+/// Whether two playback device ids (None = OS default) are the same device.
+pub fn same_output(a: Option<&str>, b: Option<&str>) -> bool {
+    let host = cpal::default_host();
+    let id = |d| find_device(&host, d, true).ok().and_then(|d| d.id().ok());
+    id(a) == id(b)
+}
+
 /// Device by cpal id, falling back to the OS default when the id is gone (unplugged headset).
-fn find_device(host: &Host, id: Option<&str>, output: bool) -> anyhow::Result<Device> {
+pub(crate) fn find_device(host: &Host, id: Option<&str>, output: bool) -> anyhow::Result<Device> {
     if let Some(id) = id {
         match id
             .parse::<DeviceId>()

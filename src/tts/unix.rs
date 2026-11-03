@@ -5,7 +5,7 @@ use std::io::ErrorKind;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::{Gender, POLL, Voice};
+use super::{Gender, Output, POLL, Voice, decode_wav, play_rendered};
 
 pub const VOICE_HINT: &str = "Install a voice for it in speech-dispatcher or espeak-ng.";
 
@@ -61,6 +61,47 @@ pub fn default_voice(_lang: &str) -> Option<String> {
     None
 }
 
+fn espeak(text: &str, lang: &str, rate: f32, pitch: f32, volume: f32) -> Command {
+    let mut cmd = Command::new("espeak-ng");
+    cmd.args(["-s", &espeak_speed(rate), "-p", &espeak_pitch(pitch)]);
+    // 0..200, where 100 is the default.
+    cmd.args(["-a", &(volume * 100.0).round().to_string()]);
+    if let Some(l) = lang.split('-').next().filter(|l| !l.is_empty()) {
+        cmd.args(["-v", l]);
+    }
+    cmd
+}
+
+/// speech-dispatcher only plays on its own output, so another device takes espeak-ng's audio.
+fn speak_on_device(
+    text: &str,
+    lang: &str,
+    rate: f32,
+    pitch: f32,
+    out: Output,
+    cancel: &AtomicBool,
+) -> anyhow::Result<()> {
+    let rendered = espeak(text, lang, rate, pitch, 1.0)
+        .arg("--stdout")
+        .arg("--")
+        .arg(text)
+        .stderr(Stdio::null())
+        .output();
+    let rendered = match rendered {
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            anyhow::bail!("reading on another device needs espeak-ng")
+        }
+        r => r?,
+    };
+    anyhow::ensure!(
+        rendered.status.success(),
+        "espeak-ng exited with {}",
+        rendered.status
+    );
+    let (mut pcm, sample_rate) = decode_wav(&rendered.stdout)?;
+    play_rendered(&mut pcm, sample_rate, out, cancel)
+}
+
 fn spawn(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -74,9 +115,13 @@ pub fn speak(
     voice: Option<&Voice>,
     rate: f32,
     pitch: f32,
-    volume: f32,
+    out: Output,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
+    if out.device.is_some() {
+        return speak_on_device(text, lang, rate, pitch, out, cancel);
+    }
+    let volume = out.volume;
     let mut spd = Command::new("spd-say");
     // -w waits until the text is spoken.
     spd.args(["-w", "-r", &spd_value(rate), "-p", &spd_value(pitch)]);
@@ -92,15 +137,7 @@ pub fn speak(
     let (mut child, is_spd) = match spawn(&mut spd) {
         Ok(c) => (c, true),
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            let mut espeak = Command::new("espeak-ng");
-            espeak.args(["-s", &espeak_speed(rate), "-p", &espeak_pitch(pitch)]);
-            // 0..200, where 100 is the default.
-            espeak.args(["-a", &(volume * 100.0).round().to_string()]);
-            if let Some(l) = lang.split('-').next().filter(|l| !l.is_empty()) {
-                espeak.args(["-v", l]);
-            }
-            espeak.arg("--").arg(text);
-            match spawn(&mut espeak) {
+            match spawn(espeak(text, lang, rate, pitch, volume).arg("--").arg(text)) {
                 Ok(c) => (c, false),
                 Err(e) if e.kind() == ErrorKind::NotFound => {
                     anyhow::bail!("install speech-dispatcher (spd-say) or espeak-ng")

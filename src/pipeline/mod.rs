@@ -25,8 +25,8 @@ use crate::translate::TranslatorWorker;
 use crate::tts::{self, Speaker};
 use crate::types::{
     AsrEvent, AsrRequest, AsrResult, AudioChunk, CaptionUpdate, EngineCommand, EngineEvent,
-    EngineState, Notifier, Progress, ProgressPhase, Recognizer, Status, StatusLevel, Translate,
-    TranslateRequest, TranslatorEvent,
+    EngineState, Notifier, Progress, ProgressPhase, Recognizer, SourceKind, Status, StatusLevel,
+    Translate, TranslateRequest, TranslatorEvent,
 };
 use assembler::{Assembler, Out};
 use rolling::{RollingText, Step};
@@ -508,6 +508,8 @@ pub struct Engine {
     asr_device: String,
     tr: Option<(TranslatorChoice, TranslatorWorker)>,
     capture: Option<AudioCapture>,
+    /// Captured system audio does not hold our own speech.
+    system_clear: bool,
     #[cfg(all(windows, feature = "win-livecaptions"))]
     lc: Option<LiveCaptions>,
     speaker: Option<Speaker>,
@@ -552,6 +554,8 @@ impl Engine {
             .name("hm-engine".into())
             .spawn(move || {
                 let now = Instant::now();
+                // Windows keeps an app's lowered volume if we died with it turned down.
+                std::thread::spawn(crate::audio::duck::recover);
                 let mut engine = Engine {
                     core: Core::new(Settings::default(), events),
                     running: false,
@@ -559,6 +563,7 @@ impl Engine {
                     asr_device: String::new(),
                     tr: None,
                     capture: None,
+                    system_clear: false,
                     #[cfg(all(windows, feature = "win-livecaptions"))]
                     lc: None,
                     speaker: None,
@@ -690,9 +695,9 @@ impl Engine {
         }
     }
 
-    /// Captured audio holds our own speech (loopback, or the microphone hearing the speakers).
-    /// Muting it misses whatever else plays meanwhile, but a voice that is never captioned
-    /// cannot be read aloud again.
+    /// Our own speech is playing, where captured audio may hold it (loopback, or the microphone
+    /// hearing the speakers). Muting that misses whatever else plays meanwhile, but a voice that
+    /// is never captioned cannot be read aloud again.
     fn muted(&self, now: Instant) -> bool {
         let tail = if self.lc_active() { LC_TAIL } else { tts::TAIL };
         self.speaker.as_ref().is_some_and(|s| s.muted(now, tail))
@@ -703,8 +708,17 @@ impl Engine {
             return;
         }
         let now = Instant::now();
-        if self.muted(now) {
+        let clear = chunk.source == SourceKind::System && self.system_clear;
+        if !clear && self.muted(now) {
             chunk.samples.fill(0.0);
+        } else if chunk.source == SourceKind::System
+            && let Some(gain) = self.speaker.as_ref().map(Speaker::capture_gain)
+            && gain != 1.0
+        {
+            // Other apps are turned down for a voice; the captions should not notice.
+            for s in &mut chunk.samples {
+                *s = (*s * gain).clamp(-1.0, 1.0);
+            }
         }
         self.frames.push(chunk, &mut self.buf);
         self.last_audio = now;
@@ -770,9 +784,15 @@ impl Engine {
                 if self.lc_active() {
                     return;
                 }
+                self.check_system_clear();
                 let s = &self.core.settings;
-                if (s.source, &s.input_device, &s.output_device)
-                    != (prev.source, &prev.input_device, &prev.output_device)
+                if (s.source, &s.input_device, &s.output_device, s.speak)
+                    != (
+                        prev.source,
+                        &prev.input_device,
+                        &prev.output_device,
+                        prev.speak,
+                    )
                 {
                     self.stop_capture();
                     if !self.start_capture() {
@@ -817,6 +837,7 @@ impl Engine {
                 source,
                 s.input_device.as_deref(),
                 s.output_device.as_deref(),
+                s.speak,
                 self.audio_tx.clone(),
             )
         };
@@ -831,6 +852,7 @@ impl Engine {
                     );
                 }
                 self.capture = Some(c);
+                self.check_system_clear();
                 true
             }
             Err(e) => {
@@ -843,6 +865,14 @@ impl Engine {
                 false
             }
         }
+    }
+
+    fn check_system_clear(&mut self) {
+        let s = &self.core.settings;
+        self.system_clear = self.capture.as_ref().is_some_and(|c| {
+            c.own_excluded
+                || !crate::audio::same_output(s.speak_device.as_deref(), s.output_device.as_deref())
+        });
     }
 
     /// Reopens the capture when its device went away (unplugged headset, default device changed).

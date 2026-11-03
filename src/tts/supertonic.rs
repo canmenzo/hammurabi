@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Device, FromSample, SampleFormat, SizedSample, Stream, StreamConfig};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -341,12 +341,15 @@ where
     )?)
 }
 
-/// Plays mono `pcm` at `rate` on the default output device; returns when it has played or
-/// `cancel` is set.
-pub fn play(pcm: &[f32], rate: u32, cancel: &AtomicBool) -> anyhow::Result<()> {
-    let device = cpal::default_host()
-        .default_output_device()
-        .context("no audio output device")?;
+/// Plays mono `pcm` at `rate` on `device` (a cpal id; None or a missing one is the default);
+/// returns when it has played or `cancel` is set.
+pub fn play(
+    pcm: &[f32],
+    rate: u32,
+    device: Option<&str>,
+    cancel: &AtomicBool,
+) -> anyhow::Result<()> {
+    let device = crate::audio::find_device(&cpal::default_host(), device, true)?;
     let config = device.default_output_config()?;
     let out_rate = config.sample_rate();
     let pcm = if out_rate == rate {

@@ -489,6 +489,11 @@ fn download_note(pending: &[ModelId]) -> String {
     )
 }
 
+#[cfg(windows)]
+const LISTEN_NOTE: &str = "System audio keeps being captioned while a voice reads, on Windows 11 with the default device, or when the voice plays on another device than the one captioned. Otherwise, and for the microphone, listening pauses so the voice is not captioned again.";
+#[cfg(not(windows))]
+const LISTEN_NOTE: &str = "System audio keeps being captioned while a voice reads when it plays on another device than the one captioned. Otherwise, and for the microphone, listening pauses so the voice is not captioned again.";
+
 fn device_combo(
     ui: &mut Ui,
     id: &str,
@@ -981,6 +986,30 @@ fn read_aloud(
                 )
                 .changed();
             ui.end_row();
+            ui.label("Read on");
+            device_combo(
+                ui,
+                "speak_out",
+                &m.devices.outputs,
+                &mut s.speak_device,
+                changed,
+            );
+            ui.end_row();
+            if crate::audio::duck::SUPPORTED {
+                ui.label("Other apps while reading");
+                *changed |= ui
+                    .add(
+                        Slider::new(&mut s.speak_duck, 0.1..=1.0).custom_formatter(|v, _| {
+                            if v >= 1.0 {
+                                "Not turned down".into()
+                            } else {
+                                format!("{:.0}%", v * 100.0)
+                            }
+                        }),
+                    )
+                    .changed();
+                ui.end_row();
+            }
         });
         if s.translate {
             let label = format!("Also read speech already in {}", lang_name(&s.target_language));
@@ -989,7 +1018,8 @@ fn read_aloud(
                 .on_hover_text("Off: speech you can already understand is heard as it is, and not read over itself.")
                 .changed();
         }
-        ui.weak("Listening pauses while a caption is read, so the voice is not captioned again. When captions pile up, they are read together and a little faster.");
+        ui.weak(LISTEN_NOTE);
+        ui.weak("When captions pile up, they are read together and a little faster.");
     });
 }
 

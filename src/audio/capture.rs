@@ -84,7 +84,7 @@ where
     Ok(stream)
 }
 
-fn downmix<T>(data: &[T], channels: usize) -> Vec<f32>
+pub(super) fn downmix<T>(data: &[T], channels: usize) -> Vec<f32>
 where
     T: Sample,
     f32: FromSample<T>,

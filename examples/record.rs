@@ -54,7 +54,13 @@ fn main() -> anyhow::Result<()> {
         _ => AudioSource::Both,
     };
     let (tx, rx) = crossbeam_channel::bounded(64);
-    let capture = AudioCapture::start(source, args.input.as_deref(), args.output.as_deref(), tx)?;
+    let capture = AudioCapture::start(
+        source,
+        args.input.as_deref(),
+        args.output.as_deref(),
+        false,
+        tx,
+    )?;
 
     let spec = hound::WavSpec {
         channels: 1,

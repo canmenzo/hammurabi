@@ -7,6 +7,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 ### Changed
 
 - Settings is now split into pages (Listen, Translate, Read aloud, Captions, General) with the site's colors. A header shows whether captions are on, has a Start/Stop button, shows warnings, and says what the first start will download.
+- On Windows 11, system audio keeps being captioned while a voice reads: Hammurabi leaves its own sound out of what it captures. Everywhere, the same goes when the voice plays on another device than the one captioned. Otherwise, and for the microphone, listening still pauses.
 - Read aloud no longer drops captions as soon as it falls behind: waiting captions are read together and up to 30% faster.
 - Speech already in the target language is no longer read over itself. Turn this back on in Settings > Read aloud.
 - On Windows, left-clicking the tray icon opens Settings; the menu stays on the right button. Tray submenus show the current source, target language and voice, and are disabled when their feature is off.
@@ -14,6 +15,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 ### Added
 
 - Read aloud volume, and a stop button on voice samples.
+- Read aloud can play on its own speaker or headset (Settings > Read aloud > Read on). On macOS, system voices then keep their speed but lose their pitch; on Linux they need `espeak-ng`.
+- Windows: other apps can be turned down while a voice reads (Settings > Read aloud > Other apps while reading). They come back when it ends, unless you moved their volume meanwhile, and after a crash on the next start.
 - The Custom persona can use any of the 10 Supertonic 3 voices.
 - Voice samples in every supported language.
 - Shortcuts can be changed in Settings > General.

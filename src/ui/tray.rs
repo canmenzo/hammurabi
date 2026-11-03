@@ -52,7 +52,7 @@ impl Tray {
         let speak = CheckMenuItem::with_id("speak", "Read aloud", true, false, None);
         let personas: Vec<_> = PERSONAS
             .iter()
-            .map(|p| CheckMenuItem::with_id(format!("voice:{}", p.id), p.name, true, false, None))
+            .map(|p| CheckMenuItem::with_id(format!("voice:{}", p.id), p.name(), true, false, None))
             .collect();
         let move_item = CheckMenuItem::with_id("move", "Move captions", true, false, None);
         let autostart = CheckMenuItem::with_id("autostart", "Start at login", true, false, None);
@@ -216,7 +216,8 @@ impl Tray {
         for (item, p) in self.personas.iter().zip(PERSONAS.iter()) {
             item.set_checked(persona.id == p.id);
         }
-        self.voice_menu.set_text(format!("Voice: {}", persona.name));
+        self.voice_menu
+            .set_text(format!("Voice: {}", persona.name()));
         self.voice_menu.set_enabled(s.speak);
         #[cfg(omnivoice)]
         {

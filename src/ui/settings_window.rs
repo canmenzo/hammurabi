@@ -804,7 +804,7 @@ fn persona_card(
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.strong(p.name);
+                    ui.strong(p.name());
                     ui.label(p.description);
                 });
                 ui.label(RichText::new(voice).small().weak());

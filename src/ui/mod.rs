@@ -670,7 +670,7 @@ impl eframe::App for App {
                             persona: id.into(),
                             ..self.settings.speak_style()
                         };
-                        let text = tts::sample(&lang, tts::persona(id).name);
+                        let text = tts::sample(&lang, tts::persona(id).name());
                         self.models.previewing = Some(id);
                         self.engine()
                             .send(EngineCommand::Preview { text, lang, style });

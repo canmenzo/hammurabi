@@ -53,7 +53,7 @@ pub struct Voice {
 
 pub struct Persona {
     pub id: &'static str,
-    pub name: &'static str,
+    names: [&'static str; 3],
     pub description: &'static str,
     /// Preferred voice gender; None = any.
     pub gender: Option<Gender>,
@@ -66,7 +66,7 @@ pub const CUSTOM: &str = "custom";
 
 const fn def(
     id: &'static str,
-    name: &'static str,
+    names: [&'static str; 3],
     description: &'static str,
     gender: Option<Gender>,
     rate: f32,
@@ -74,7 +74,7 @@ const fn def(
 ) -> Persona {
     Persona {
         id,
-        name,
+        names,
         description,
         gender,
         rate,
@@ -85,15 +85,44 @@ const fn def(
 const F: Option<Gender> = Some(Gender::Female);
 const M: Option<Gender> = Some(Gender::Male);
 
-/// Shared with the Babil extension: keep ids, names and values identical there.
+/// Shared with the Babil extension: keep ids, names and values identical there. Names are English,
+/// Turkish, Spanish; Babil's Hindi and Chinese names need fonts this UI does not load.
 pub const PERSONAS: [Persona; 7] = [
-    def("lale", "Lale", "Clear and neutral", F, 1.0, 1.0),
-    def("ayla", "Ayla", "Bright and friendly", F, 1.05, 1.15),
-    def("deniz", "Deniz", "Calm and steady", M, 0.95, 0.95),
-    def("ates", "Ateş", "Warm and deep", M, 1.0, 0.8),
+    def(
+        "lale",
+        ["Iris", "Lale", "Alba"],
+        "Clear and natural",
+        F,
+        1.0,
+        1.0,
+    ),
+    def(
+        "ayla",
+        ["Ruby", "Ayla", "Carmen"],
+        "Cheerful and warm",
+        F,
+        1.05,
+        1.15,
+    ),
+    def(
+        "deniz",
+        ["Owen", "Deniz", "Bruno"],
+        "Calm and steady",
+        M,
+        0.95,
+        0.95,
+    ),
+    def(
+        "ates",
+        ["Miles", "Ateş", "Rodrigo"],
+        "Deep and reassuring",
+        M,
+        1.0,
+        0.8,
+    ),
     def(
         "bilge",
-        "Bilge",
+        ["Grace", "Bilge", "Inés"],
         "Slow and patient, easy to follow",
         F,
         0.8,
@@ -101,14 +130,37 @@ pub const PERSONAS: [Persona; 7] = [
     ),
     def(
         "ruzgar",
-        "Rüzgar",
-        "Quick, keeps up with fast talkers",
+        ["Skye", "Rüzgar", "Ariel"],
+        "Fast, keeps up with quick talkers",
         None,
         1.35,
         1.05,
     ),
-    def(CUSTOM, "Custom", "Your own voice and speed", None, 1.0, 1.0),
+    def(
+        CUSTOM,
+        ["Custom", "Özel", "Personalizada"],
+        "Your own voice and speed",
+        None,
+        1.0,
+        1.0,
+    ),
 ];
+
+impl Persona {
+    /// The name in the system's language, as Babil shows it in the browser's.
+    pub fn name(&self) -> &'static str {
+        let locale = sys_locale::get_locale().unwrap_or_default();
+        self.names[name_index(&locale)]
+    }
+}
+
+fn name_index(locale: &str) -> usize {
+    match locale.split(['-', '_']).next().unwrap_or("") {
+        "tr" => 1,
+        "es" => 2,
+        _ => 0,
+    }
+}
 
 /// The persona with `id`; unknown ids get the first one.
 pub fn persona(id: &str) -> &'static Persona {
@@ -1174,8 +1226,10 @@ mod tests {
             ids,
             ["lale", "ayla", "deniz", "ates", "bilge", "ruzgar", "custom"]
         );
-        assert_eq!(persona("ates").name, "Ateş");
-        assert_eq!(persona("ruzgar").name, "Rüzgar");
+        assert_eq!(persona("ates").names[name_index("tr-TR")], "Ateş");
+        assert_eq!(persona("ruzgar").names[name_index("en-US")], "Skye");
+        assert_eq!(persona("bilge").names[name_index("es_ES")], "Inés");
+        assert_eq!(persona("lale").names[name_index("hi-IN")], "Iris");
         assert_eq!(persona("nope").id, "lale");
     }
 

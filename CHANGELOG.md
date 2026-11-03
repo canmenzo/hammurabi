@@ -6,6 +6,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ### Changed
 
+- Voice personas now have the same names and descriptions as the Babil extension: English names by default, and Turkish or Spanish ones on those systems. Saved choices are kept.
 - Settings is now split into pages (Listen, Translate, Read aloud, Captions, General) with the site's colors. A header shows whether captions are on, has a Start/Stop button, shows warnings, and says what the first start will download.
 - On Windows 11, system audio keeps being captioned while a voice reads: Hammurabi leaves its own sound out of what it captures. Everywhere, the same goes when the voice plays on another device than the one captioned. Otherwise, and for the microphone, listening still pauses.
 - Read aloud no longer drops captions as soon as it falls behind: waiting captions are read together and up to 30% faster.

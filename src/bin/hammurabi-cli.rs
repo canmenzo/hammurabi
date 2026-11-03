@@ -421,7 +421,7 @@ fn speak_to_file(text: &str, lang: &str, style: &Style, out: &Path) -> anyhow::R
     wav.finalize()?;
     println!(
         "Persona: {}, Supertonic {voice} ({lang}), speed {speed:.2}: loaded in {} ms, {secs:.2} s of audio in {synth:.2} s (RTF {:.2}), wrote {}",
-        tts::persona(&style.persona).name,
+        tts::persona(&style.persona).name(),
         load.as_millis(),
         synth / secs,
         out.display()
@@ -498,14 +498,14 @@ fn speak(text: String, lang: String, style: Style) -> anyhow::Result<()> {
     if let Some((l, voice, speed)) = neural(&style, &lang) {
         println!(
             "Persona: {}, voice: Supertonic {voice} ({l}), speed {speed:.2}",
-            tts::persona(&style.persona).name
+            tts::persona(&style.persona).name()
         );
     } else {
         let all = tts::voices();
         let (voice, rate, pitch) = style.resolve(&all, &lang).map_err(anyhow::Error::msg)?;
         println!(
             "Persona: {}, voice: {}, rate {rate:.2}, pitch {pitch:.2}",
-            tts::persona(&style.persona).name,
+            tts::persona(&style.persona).name(),
             voice_label(voice, &lang)
         );
     }

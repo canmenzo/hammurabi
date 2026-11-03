@@ -14,6 +14,10 @@ pub fn paint_play(painter: &Painter, rect: Rect, color: Color32) {
     painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
 }
 
+pub fn paint_stop(painter: &Painter, rect: Rect, color: Color32) {
+    painter.rect_filled(rect.shrink(rect.width() * 0.16), 1, color);
+}
+
 const IDLE: [(u32, &[u8]); 3] = [
     (16, include_bytes!("../../assets/icons/idle-16.rgba")),
     (32, include_bytes!("../../assets/icons/idle-32.rgba")),

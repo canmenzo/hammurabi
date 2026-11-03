@@ -318,7 +318,10 @@ impl Core {
                     };
                     let before = self.next_tr;
                     if let Some(t) = self.request(&text, &lang, p) {
-                        self.speak(&t, &lang);
+                        // Already in the target language: it is heard as it is.
+                        if self.settings.speak_same_lang {
+                            self.speak(&t, &lang);
+                        }
                         self.caption(CaptionUpdate::Final {
                             id,
                             original: text,
@@ -607,6 +610,10 @@ impl Engine {
                 .speaker
                 .as_ref()
                 .map_or_else(never, |s| s.warnings.clone());
+            let activity_rx = self
+                .speaker
+                .as_ref()
+                .map_or_else(never, |s| s.activity.clone());
             let mut timeout = if self.running {
                 FRAME
             } else {
@@ -636,6 +643,9 @@ impl Engine {
                 recv(tts_rx) -> w => match w {
                     Ok(text) => self.events().status(StatusLevel::Warning, text, Some(Duration::from_secs(8))),
                     Err(_) => self.speaker = None,
+                },
+                recv(activity_rx) -> a => if let Ok(a) = a {
+                    self.events().send(EngineEvent::Speech(a));
                 },
                 default(timeout) => {}
             }
@@ -777,12 +787,19 @@ impl Engine {
                 .speaker
                 .get_or_insert_with(Speaker::spawn)
                 .preview(text, lang, style),
+            EngineCommand::StopSpeech => {
+                if let Some(s) = &self.speaker {
+                    s.clear();
+                }
+            }
             #[cfg(omnivoice)]
             EngineCommand::RelearnVoice => {
                 self.core.voice.relearn();
                 if let Some(s) = &self.speaker {
                     s.forget_voice();
                 }
+                self.events()
+                    .send(EngineEvent::Speech(tts::Activity::VoiceForgotten));
             }
             EngineCommand::Shutdown => {}
         }
@@ -897,7 +914,11 @@ impl Engine {
     fn sync_speaker(&mut self) {
         let s = &self.core.settings;
         if !s.speak {
-            self.speaker = None;
+            if self.speaker.take().is_some() {
+                for a in [tts::Activity::Idle, tts::Activity::VoiceForgotten] {
+                    self.events().send(EngineEvent::Speech(a));
+                }
+            }
             return;
         }
         self.speaker
@@ -1244,6 +1265,19 @@ mod tests {
         c.lc_text("Hello there. How are", t);
         let id = c.tr_out[0].id;
         c.translation(id, None);
+        assert_eq!(said(&c), [("Hello there.", "en")]);
+
+        // Speech already in the target language is only read when asked for.
+        let mut c = core(true, true, true);
+        c.settings.target_language = "en".into();
+        c.lc_text("", t);
+        c.lc_text("Hello there. How are", t);
+        assert!(said(&c).is_empty());
+        let mut c = core(true, true, true);
+        c.settings.target_language = "en".into();
+        c.settings.speak_same_lang = true;
+        c.lc_text("", t);
+        c.lc_text("Hello there. How are", t);
         assert_eq!(said(&c), [("Hello there.", "en")]);
 
         // No translation (off, or the translator not ready): the original right away.

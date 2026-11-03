@@ -26,10 +26,11 @@ use crate::types::{
     StatusLevel,
 };
 use overlay::OverlayState;
-use settings_window::{ModelsStatus, SettingsAction, SettingsWindow};
+use settings_window::{ModelsStatus, Page, SettingsAction, SettingsWindow};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 const WEBSITE: &str = "https://hammurabi.menzo.dev";
+const SETTINGS_ID: &str = "hammurabi-settings";
 
 /// Sent from tray/menu/hotkey handlers (any thread) to the UI loop.
 pub enum AppEvent {
@@ -77,6 +78,7 @@ pub struct App {
     passthrough: bool,
     layout: Option<(egui::Pos2, egui::Vec2)>,
     status: String,
+    alert: bool,
     dirty_since: Option<Instant>,
     tray_dirty: bool,
     update: Option<update::Release>,
@@ -87,6 +89,8 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
         let ctx = cc.egui_ctx.clone();
+        settings_window::apply_theme(&ctx);
+        let first_run = crate::paths::config_file().is_ok_and(|p| !p.exists());
         let (app_tx, app_rx) = crossbeam_channel::unbounded();
         install_handlers(&ctx, app_tx.clone());
 
@@ -115,6 +119,13 @@ impl App {
                 compute: crate::device::label(),
                 autostart: autostart::is_enabled(),
                 voices: Vec::new(),
+                running: false,
+                loading: false,
+                status: String::new(),
+                alert: false,
+                reading: None,
+                previewing: None,
+                voice_learned: false,
             },
             app_rx,
             running: false,
@@ -128,6 +139,7 @@ impl App {
             passthrough: true,
             layout: None,
             status: String::new(),
+            alert: false,
             dirty_since: None,
             tray_dirty: true,
             update: None,
@@ -140,6 +152,13 @@ impl App {
         if std::env::args().any(|a| a == "--start") {
             app.handle(UiAction::ToggleRunning, &ctx);
         }
+        if first_run {
+            app.settings_win.welcome = true;
+            app.handle(UiAction::OpenSettings, &ctx);
+            if let Err(e) = config::save(&app.settings) {
+                log::error!("config save failed: {e:#}");
+            }
+        }
         log::info!("hammurabi ready (tray: {})", app.tray.is_some());
         app
     }
@@ -151,6 +170,7 @@ impl App {
     fn warn(&mut self, text: String) {
         log::warn!("{text}");
         self.status = text.clone();
+        self.alert = true;
         self.overlay.set_status(
             Status {
                 level: StatusLevel::Warning,
@@ -176,6 +196,7 @@ impl App {
                 self.running = !self.running;
                 self.overlay.clear_status();
                 self.status.clear();
+                self.alert = false;
                 let cmd = if self.running {
                     EngineCommand::Start(self.settings.clone())
                 } else {
@@ -226,7 +247,10 @@ impl App {
                 }
             }
             #[cfg(omnivoice)]
-            UiAction::RelearnVoice => self.engine().send(EngineCommand::RelearnVoice),
+            UiAction::RelearnVoice => {
+                self.models.voice_learned = false;
+                self.engine().send(EngineCommand::RelearnVoice);
+            }
             UiAction::ToggleMove => self.set_move(!self.move_mode, ctx),
             UiAction::OpenSettings => {
                 if !self.settings_open {
@@ -236,6 +260,11 @@ impl App {
                     self.models.devices = audio::list_devices();
                     self.models.autostart = autostart::is_enabled();
                     self.models.voices = tts::voices();
+                } else {
+                    ctx.send_viewport_cmd_to(
+                        ViewportId::from_hash_of(SETTINGS_ID),
+                        ViewportCommand::Focus,
+                    );
                 }
             }
             UiAction::ToggleAutostart => {
@@ -306,6 +335,7 @@ impl App {
                 }
                 if s == EngineState::Running {
                     self.status.clear();
+                    self.alert = false;
                 }
                 self.tray_dirty = true;
             }
@@ -316,6 +346,7 @@ impl App {
                     self.models.downloading.clear();
                 }
                 self.status = s.text.clone();
+                self.alert = !matches!(s.level, StatusLevel::Info);
                 self.overlay.set_status(s, now);
                 self.tray_dirty = true;
             }
@@ -348,6 +379,7 @@ impl App {
                 };
                 if let Some(text) = text {
                     self.status = text.clone();
+                    self.alert = false;
                     let status = Status {
                         level: StatusLevel::Info,
                         text,
@@ -369,6 +401,15 @@ impl App {
                 }
                 self.overlay.apply(c, &self.settings, now)
             }
+            EngineEvent::Speech(a) => match a {
+                tts::Activity::Reading(voice) => self.models.reading = Some(voice),
+                tts::Activity::Idle => {
+                    self.models.reading = None;
+                    self.models.previewing = None;
+                }
+                tts::Activity::VoiceLearned => self.models.voice_learned = true,
+                tts::Activity::VoiceForgotten => self.models.voice_learned = false,
+            },
             EngineEvent::Stats { device, .. } => self.models.compute = device,
         }
     }
@@ -428,7 +469,24 @@ fn install_handlers(ctx: &Context, tx: Sender<AppEvent>) {
         c.request_repaint();
     }));
     // Unhandled tray clicks would pile up in tray-icon's channel.
+    #[cfg(not(windows))]
     tray_icon::TrayIconEvent::set_event_handler(Some(|_| {}));
+    #[cfg(windows)]
+    {
+        use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+        let (c, t) = (ctx.clone(), tx.clone());
+        TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = e
+            {
+                let _ = t.send(AppEvent::Menu(MenuId::new("settings")));
+                c.request_repaint();
+            }
+        }));
+    }
     let c = ctx.clone();
     GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
         if e.state() == HotKeyState::Pressed {
@@ -544,9 +602,15 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(self.passthrough));
         }
 
-        let resp = self
-            .overlay
-            .paint(ui, &self.settings.caption, self.move_mode);
+        // Styling captions shows them where they will appear.
+        let sample = (self.settings_open && self.settings_win.page == Page::Captions)
+            .then(|| tts::sample(&self.settings.target_language, "Hammurabi"));
+        let resp = self.overlay.paint(
+            ui,
+            &self.settings.caption,
+            self.move_mode,
+            sample.as_deref(),
+        );
         if resp.start_drag {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
         }
@@ -556,18 +620,28 @@ impl eframe::App for App {
 
         if self.settings_open {
             let mut close = false;
+            self.models.running = self.running;
+            self.models.loading = self.state == EngineState::Loading;
+            self.models.status.clone_from(&self.status);
+            self.models.alert = self.alert;
+            let page = self.settings_win.page;
             let actions = ctx.show_viewport_immediate(
-                ViewportId::from_hash_of("hammurabi-settings"),
+                ViewportId::from_hash_of(SETTINGS_ID),
                 ViewportBuilder::default()
                     .with_title("Hammurabi Settings")
                     .with_icon(icons::window_icon())
-                    .with_inner_size([520.0, 680.0]),
+                    .with_inner_size([740.0, 600.0])
+                    .with_min_inner_size([640.0, 420.0]),
                 |ui, _| {
                     close = ui.ctx().input(|i| i.viewport().close_requested());
                     self.settings_win
                         .show(ui.ctx(), &mut self.settings, &self.models)
                 },
             );
+            // The overlay was painted before this window, so it shows any change next frame.
+            if page != self.settings_win.page || !actions.is_empty() {
+                ctx.request_repaint();
+            }
             for a in actions {
                 match a {
                     SettingsAction::Changed => {
@@ -597,9 +671,20 @@ impl eframe::App for App {
                             ..self.settings.speak_style()
                         };
                         let text = tts::sample(&lang, tts::persona(id).name);
+                        self.models.previewing = Some(id);
                         self.engine()
                             .send(EngineCommand::Preview { text, lang, style });
                     }
+                    SettingsAction::StopPreview => self.engine().send(EngineCommand::StopSpeech),
+                    SettingsAction::ToggleRunning => self.handle(UiAction::ToggleRunning, &ctx),
+                    SettingsAction::MoveCaptions => self.handle(UiAction::ToggleMove, &ctx),
+                    SettingsAction::ResetPosition => {
+                        self.settings.overlay_pos = None;
+                        self.layout = None;
+                        self.changed();
+                    }
+                    #[cfg(omnivoice)]
+                    SettingsAction::RelearnVoice => self.handle(UiAction::RelearnVoice, &ctx),
                 }
             }
             if close {

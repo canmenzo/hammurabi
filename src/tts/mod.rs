@@ -23,8 +23,11 @@ use crate::models::{self, ModelId};
 use crate::settings::lang_name;
 use supertonic::Supertonic;
 
-/// Utterances waiting behind the one being spoken; older ones are dropped to stay near real time.
-const MAX_QUEUED: usize = 2;
+/// Utterances waiting behind the one being spoken; older ones are dropped only past this, since
+/// waiting ones are merged and read faster first.
+const MAX_QUEUED: usize = 6;
+/// Waiting captions are read as one utterance up to this many characters.
+const MERGE_CHARS: usize = 300;
 /// Captured audio stays muted this long after speech ends (output latency, room echo).
 pub const TAIL: Duration = Duration::from_millis(600);
 const POLL: Duration = Duration::from_millis(50);
@@ -128,10 +131,24 @@ pub struct Style {
     pub voice: Option<String>,
     pub rate: f32,
     pub engine: Engine,
+    /// Supertonic voice ("F1".."M5") of the Custom persona, unless `voice` picks a system voice.
+    pub neural_voice: String,
+    /// 0.0..=1.0.
+    pub volume: f32,
+}
+
+/// What the read aloud thread is doing, for the UI.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Activity {
+    /// Reading with this voice.
+    Reading(String),
+    Idle,
+    VoiceLearned,
+    VoiceForgotten,
 }
 
 /// Supertonic (language, voice style, speed) for text in `lang` read with `style`, from Babil's
-/// catalog; None when an OS voice reads it. Custom always uses an OS voice.
+/// catalog; None when an OS voice reads it, as it does for a system voice picked in Custom.
 pub fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, f32)> {
     if style.engine == Engine::System {
         return None;
@@ -145,7 +162,15 @@ pub fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, 
         "ates" => ("M2", 1.05),
         "bilge" => ("F5", 0.84),
         "ruzgar" => ("M1", 1.42),
-        _ => return None,
+        _ if style.voice.is_some() => return None,
+        _ => (
+            supertonic::STYLES
+                .iter()
+                .find(|&&v| v == style.neural_voice)
+                .copied()
+                .unwrap_or("F3"),
+            style.rate * 1.05,
+        ),
     };
     Some((lang, voice, speed))
 }
@@ -172,6 +197,9 @@ impl Style {
 
 /// A short sentence to preview a persona with in `lang`.
 pub fn sample(lang: &str, name: &str) -> String {
+    if lang_matches(lang, "zh-Hant") {
+        return "你好！我會用這個聲音朗讀字幕。".into();
+    }
     let text = match lang.split(['-', '_']).next().unwrap_or(lang) {
         "tr" => "Merhaba! Altyazıları bu sesle okuyacağım.",
         "en" => "Hi! This is how I will read your captions.",
@@ -180,6 +208,27 @@ pub fn sample(lang: &str, name: &str) -> String {
         "fr" => "Bonjour ! Voici comment je lirai vos sous-titres.",
         "ar" => "مرحبًا! بهذا الصوت سأقرأ لك الترجمة.",
         "ru" => "Привет! Вот так я буду читать ваши субтитры.",
+        "it" => "Ciao! Leggerò così i tuoi sottotitoli.",
+        "pt" => "Olá! É assim que vou ler as suas legendas.",
+        "nl" => "Hallo! Zo lees ik je ondertitels voor.",
+        "pl" => "Cześć! Tak będę czytać twoje napisy.",
+        "uk" => "Привіт! Ось так я читатиму ваші субтитри.",
+        "fa" => "سلام! زیرنویس‌ها را با این صدا می‌خوانم.",
+        "hi" => "नमस्ते! मैं आपके उपशीर्षक इसी तरह पढ़ूँगी।",
+        "bn" => "নমস্কার! আমি এভাবেই আপনার সাবটাইটেল পড়ব।",
+        "ur" => "سلام! میں آپ کے سب ٹائٹل اسی آواز میں پڑھوں گی۔",
+        "id" => "Halo! Beginilah saya akan membacakan teks Anda.",
+        "vi" => "Xin chào! Tôi sẽ đọc phụ đề của bạn như thế này.",
+        "th" => "สวัสดี! ฉันจะอ่านคำบรรยายด้วยเสียงนี้",
+        "ja" => "こんにちは。この声で字幕を読み上げます。",
+        "ko" => "안녕하세요! 이 목소리로 자막을 읽어 드릴게요.",
+        "zh" => "你好！我会用这个声音朗读字幕。",
+        "el" => "Γεια σας! Έτσι θα διαβάζω τους υπότιτλούς σας.",
+        "sv" => "Hej! Så här kommer jag att läsa dina undertexter.",
+        "ro" => "Bună! Așa îți voi citi subtitrările.",
+        "cs" => "Ahoj! Takto vám budu číst titulky.",
+        "hu" => "Szia! Így fogom felolvasni a feliratokat.",
+        "he" => "שלום! כך אקרא את הכתוביות שלך.",
         _ => return format!("Hi, I'm {name}. This is how I will read your captions."),
     };
     text.into()
@@ -273,9 +322,10 @@ pub fn speak(
     voice: Option<&Voice>,
     rate: f32,
     pitch: f32,
+    volume: f32,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
-    imp::speak(text, lang, voice, rate, pitch, cancel)
+    imp::speak(text, lang, voice, rate, pitch, volume, cancel)
 }
 
 pub struct Utterance {
@@ -291,6 +341,33 @@ fn enqueue(queue: &mut VecDeque<Utterance>, u: Utterance) -> usize {
     let dropped = queue.len().saturating_sub(MAX_QUEUED);
     queue.drain(..dropped);
     dropped
+}
+
+/// The next utterance to read and its pace. Captions that piled up are read as one, in order, and
+/// faster the more are behind, so falling behind costs speed before it costs words.
+fn take_next(queue: &mut VecDeque<Utterance>) -> Option<(Utterance, f32)> {
+    let mut u = queue.pop_front()?;
+    if u.style.is_some() {
+        return Some((u, 1.0));
+    }
+    let mut merged = 0;
+    while let Some(next) = queue.front() {
+        if next.style.is_some()
+            || next.lang != u.lang
+            || u.text.chars().count() + next.text.chars().count() >= MERGE_CHARS
+        {
+            break;
+        }
+        if u.text.ends_with(char::is_alphanumeric) {
+            u.text.push('.');
+        }
+        u.text.push(' ');
+        u.text.push_str(&next.text);
+        queue.pop_front();
+        merged += 1;
+    }
+    let behind = (merged + queue.len()).min(3);
+    Some((u, 1.0 + 0.1 * behind as f32))
 }
 
 /// When captured audio must be ignored: while speaking and for a tail after it.
@@ -335,6 +412,7 @@ pub struct Speaker {
     shared: Arc<Shared>,
     /// Problems for the user (missing voice, no speech program), each sent once.
     pub warnings: Receiver<String>,
+    pub activity: Receiver<Activity>,
     /// Disconnects when hm-tts has ended (and freed the GPU).
     #[cfg(omnivoice)]
     done: Receiver<()>,
@@ -351,6 +429,8 @@ impl Speaker {
                     voice: None,
                     rate: 1.0,
                     engine: Engine::System,
+                    neural_voice: String::new(),
+                    volume: 1.0,
                 },
                 quit: false,
                 #[cfg(omnivoice)]
@@ -362,13 +442,15 @@ impl Speaker {
             cancel: AtomicBool::new(false),
         });
         let (tx, warnings) = crossbeam_channel::unbounded();
+        // Bounded: the CLI never reads it, and a lost update there does no harm.
+        let (activity_tx, activity) = crossbeam_channel::bounded(32);
         #[cfg(omnivoice)]
         let (done_tx, done) = crossbeam_channel::bounded::<()>(1);
         let s = shared.clone();
         std::thread::Builder::new()
             .name("hm-tts".into())
             .spawn(move || {
-                run(&s, &tx);
+                run(&s, &tx, &activity_tx);
                 #[cfg(omnivoice)]
                 drop(done_tx);
             })
@@ -376,6 +458,7 @@ impl Speaker {
         Speaker {
             shared,
             warnings,
+            activity,
             #[cfg(omnivoice)]
             done,
         }
@@ -454,12 +537,13 @@ impl Drop for Speaker {
 }
 
 /// Plays synthesized `pcm` with captured audio muted, unless cancelled meanwhile.
-fn play(shared: &Shared, pcm: &[f32], rate: u32) -> anyhow::Result<()> {
+fn play(shared: &Shared, pcm: &[f32], rate: u32, volume: f32) -> anyhow::Result<()> {
     if shared.cancel.load(Ordering::Relaxed) || pcm.is_empty() {
         return Ok(());
     }
+    let scaled: Vec<f32> = pcm.iter().map(|x| x * volume).collect();
     shared.lock().gate.speaking = true;
-    let r = supertonic::play(pcm, rate, &shared.cancel);
+    let r = supertonic::play(&scaled, rate, &shared.cancel);
     shared.lock().gate = Gate {
         speaking: false,
         ended: Some(Instant::now()),
@@ -473,6 +557,7 @@ fn speak_neural(
     engine: &mut Option<Supertonic>,
     text: &str,
     (lang, voice, speed): (&str, &str, f32),
+    volume: f32,
 ) -> anyhow::Result<()> {
     let st = match engine {
         Some(st) => st,
@@ -488,7 +573,7 @@ fn speak_neural(
         "supertonic {voice}: {secs:.2} s of audio in {ms} ms (RTF {:.2})",
         ms as f32 / 1000.0 / secs
     );
-    play(shared, &pcm, st.sample_rate)
+    play(shared, &pcm, st.sample_rate, volume)
 }
 
 /// Synthesizes `text` with OmniVoice in the learned voice and plays it.
@@ -498,6 +583,7 @@ fn speak_cloned(
     ov: &mut omnivoice::OmniVoice,
     text: &str,
     lang: &str,
+    volume: f32,
 ) -> anyhow::Result<()> {
     let t = Instant::now();
     let pcm = ov.synthesize(text, lang, omnivoice::STEPS)?;
@@ -514,11 +600,11 @@ fn speak_cloned(
         "omnivoice ({voice}): {secs:.2} s of audio in {ms} ms (RTF {:.2})",
         ms as f32 / 1000.0 / secs
     );
-    play(shared, &pcm, omnivoice::SAMPLE_RATE)
+    play(shared, &pcm, omnivoice::SAMPLE_RATE, volume)
 }
 
 enum Job {
-    Speak(Utterance, Style),
+    Speak(Utterance, Style, f32),
     /// Load or unload Speaker's voice to match the style.
     #[cfg(omnivoice)]
     Load,
@@ -526,7 +612,11 @@ enum Job {
     Learn(Vec<f32>, String),
 }
 
-fn run(shared: &Shared, warnings: &Sender<String>) {
+fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) {
+    let report = |a: Activity| {
+        let _ = activity.try_send(a);
+    };
+    let mut busy = false;
     let mut neural_engine = None;
     // Speaker's voice: the loaded context, and whether loading it failed.
     #[cfg(omnivoice)]
@@ -565,17 +655,20 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
                         break Job::Learn(pcm, text);
                     }
                 }
-                if let Some(u) = st.queue.pop_front() {
+                if let Some((u, pace)) = take_next(&mut st.queue) {
                     // Under the lock, so a clear() after the pop still cancels this utterance.
                     shared.cancel.store(false, Ordering::Relaxed);
                     let style = u.style.clone().unwrap_or_else(|| st.style.clone());
-                    break Job::Speak(u, style);
+                    break Job::Speak(u, style, pace);
+                }
+                if std::mem::take(&mut busy) {
+                    report(Activity::Idle);
                 }
                 st = shared.wake.wait(st).unwrap_or_else(|p| p.into_inner());
             }
         };
-        let (u, style) = match job {
-            Job::Speak(u, style) => (u, style),
+        let (u, style, pace) = match job {
+            Job::Speak(u, style, pace) => (u, style, pace),
             #[cfg(omnivoice)]
             Job::Load => {
                 if ov.is_some() || ov_failed {
@@ -605,20 +698,34 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
                 if let Some(ov) = &mut ov {
                     let t = Instant::now();
                     match ov.learn(&pcm, crate::types::SAMPLE_RATE, &text) {
-                        Ok(()) => log::info!(
-                            "learned the speaker's voice in {} ms",
-                            t.elapsed().as_millis()
-                        ),
+                        Ok(()) => {
+                            log::info!(
+                                "learned the speaker's voice in {} ms",
+                                t.elapsed().as_millis()
+                            );
+                            report(Activity::VoiceLearned);
+                        }
                         Err(e) => log::warn!("Speaker's voice: {e:#}"),
                     }
                 }
                 continue;
             }
         };
+        busy = true;
         #[cfg(omnivoice)]
         if style.engine == Engine::Speaker {
             match &mut ov {
-                Some(o) => match speak_cloned(shared, o, &u.text, &u.lang) {
+                Some(o) => match {
+                    report(Activity::Reading(
+                        if o.has_voice() {
+                            "the speaker's voice"
+                        } else {
+                            "OmniVoice's own voice"
+                        }
+                        .into(),
+                    ));
+                    speak_cloned(shared, o, &u.text, &u.lang, style.volume)
+                } {
                     Ok(()) => continue,
                     Err(e) => warn(format!(
                         "Speaker's voice could not read aloud, using other voices: {e:#}"
@@ -631,11 +738,13 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
                 None => {}
             }
         }
-        if let Some(n) = neural(&style, &u.lang)
+        if let Some((lang, voice, speed)) = neural(&style, &u.lang)
             && models::is_cached(ModelId::Supertonic)
         {
             let loaded = neural_engine.is_some();
-            match speak_neural(shared, &mut neural_engine, &u.text, n) {
+            report(Activity::Reading(format!("Supertonic 3 {voice}")));
+            let n = (lang, voice, speed * pace);
+            match speak_neural(shared, &mut neural_engine, &u.text, n, style.volume) {
                 Ok(()) => continue,
                 Err(e) => {
                     if !loaded {
@@ -655,8 +764,19 @@ fn run(shared: &Shared, warnings: &Sender<String>) {
                 continue;
             }
         };
+        report(Activity::Reading(
+            voice.map_or_else(|| "a system voice".into(), |v| v.name.clone()),
+        ));
         shared.lock().gate.speaking = true;
-        let r = speak(&u.text, &u.lang, voice, rate, pitch, &shared.cancel);
+        let r = speak(
+            &u.text,
+            &u.lang,
+            voice,
+            rate * pace,
+            pitch,
+            style.volume,
+            &shared.cancel,
+        );
         shared.lock().gate = Gate {
             speaking: false,
             ended: Some(Instant::now()),
@@ -693,6 +813,8 @@ mod tests {
             voice: None,
             rate: 1.0,
             engine: Engine::System,
+            neural_voice: "F3".into(),
+            volume: 1.0,
         }
     }
 
@@ -844,7 +966,7 @@ mod tests {
             persona: CUSTOM.into(),
             voice: Some("mark".into()),
             rate: 1.4,
-            engine: Engine::System,
+            ..style(CUSTOM)
         };
         assert_eq!(r(&custom, "en"), Ok((Some("mark".into()), 1.4, 1.0)));
         // The manual voice only reads its own language.
@@ -873,7 +995,22 @@ mod tests {
         assert_eq!(neural(&st("ruzgar"), "en"), Some(("en", "M1", 1.42)));
         assert_eq!(neural(&st("bilge"), "pt-BR"), Some(("pt", "F5", 0.84)));
         assert_eq!(neural(&st("nope"), "de"), neural(&st("lale"), "de"));
-        assert_eq!(neural(&st(CUSTOM), "tr"), None);
+        // Custom: any Supertonic voice at its own speed, unless a system voice was picked.
+        let custom = |voice: Option<&str>, neural_voice: &str| Style {
+            voice: voice.map(Into::into),
+            neural_voice: neural_voice.into(),
+            rate: 1.2,
+            ..st(CUSTOM)
+        };
+        assert_eq!(
+            neural(&custom(None, "M3"), "tr"),
+            Some(("tr", "M3", 1.2 * 1.05))
+        );
+        assert_eq!(
+            neural(&custom(None, "nope"), "tr"),
+            Some(("tr", "F3", 1.2 * 1.05))
+        );
+        assert_eq!(neural(&custom(Some("tr-1"), "M3"), "tr"), None);
         assert_eq!(neural(&st("ayla"), "zh"), None);
         assert_eq!(neural(&st("ayla"), "th"), None);
         assert_eq!(neural(&style("ayla"), "tr"), None);
@@ -904,8 +1041,11 @@ mod tests {
     fn samples() {
         assert!(sample("tr", "Ayla").starts_with("Merhaba"));
         assert!(sample("en", "Ayla").starts_with("Hi!"));
-        assert!(sample("zh-Hant", "Ayla").contains("Ayla"));
-        for l in ["tr", "en", "de", "es", "fr", "ar", "ru"] {
+        assert!(sample("xx", "Ayla").contains("Ayla"));
+        assert_ne!(sample("zh", "Ayla"), sample("zh-Hant", "Ayla"));
+        // Every language is previewed in that language, so its voice is not reading English.
+        use crate::settings::{SOURCE_LANGS, TARGET_LANGS};
+        for l in SOURCE_LANGS.iter().chain(TARGET_LANGS.iter()) {
             assert!(!sample(l, "Ayla").contains("Ayla"), "{l}");
         }
     }
@@ -918,12 +1058,67 @@ mod tests {
             lang: "tr".into(),
             style: None,
         };
-        assert_eq!(enqueue(&mut q, u("a")), 0);
-        assert_eq!(enqueue(&mut q, u("b")), 0);
-        assert_eq!(enqueue(&mut q, u("c")), 1);
-        assert_eq!(enqueue(&mut q, u("d")), 1);
-        let left: Vec<&str> = q.iter().map(|u| u.text.as_str()).collect();
-        assert_eq!(left, ["c", "d"]);
+        for t in ["a", "b", "c", "d", "e", "f"] {
+            assert_eq!(enqueue(&mut q, u(t)), 0);
+        }
+        assert_eq!(enqueue(&mut q, u("g")), 1);
+        assert_eq!(q.front().unwrap().text, "b");
+        assert_eq!(q.len(), MAX_QUEUED);
+    }
+
+    #[test]
+    fn merges_waiting_captions_and_speeds_up() {
+        let u = |t: &str, lang: &str| Utterance {
+            text: t.into(),
+            lang: lang.into(),
+            style: None,
+        };
+        let close = |a: f32, b: f32| assert!((a - b).abs() < 1e-6, "{a} != {b}");
+
+        let mut q = VecDeque::from([u("One.", "tr")]);
+        let (next, pace) = take_next(&mut q).unwrap();
+        assert_eq!(next.text, "One.");
+        close(pace, 1.0);
+        assert!(take_next(&mut q).is_none());
+
+        // Whole sentences join in order; a missing full stop is added between them.
+        let mut q = VecDeque::from([u("One", "tr"), u("Two.", "tr"), u("Three.", "tr")]);
+        let (next, pace) = take_next(&mut q).unwrap();
+        assert_eq!(next.text, "One. Two. Three.");
+        close(pace, 1.2);
+        assert!(q.is_empty());
+
+        // Another language waits its turn, and still counts as being behind.
+        let mut q = VecDeque::from([u("One.", "tr"), u("Two.", "en")]);
+        let (next, pace) = take_next(&mut q).unwrap();
+        assert_eq!(next.text, "One.");
+        close(pace, 1.1);
+        assert_eq!(q.len(), 1);
+
+        // So does what is too long to join; the pace tops out.
+        let long = "x".repeat(MERGE_CHARS);
+        let mut q = VecDeque::from([
+            u("One.", "tr"),
+            u(&long, "tr"),
+            u(&long, "tr"),
+            u(&long, "tr"),
+            u(&long, "tr"),
+        ]);
+        let (next, pace) = take_next(&mut q).unwrap();
+        assert_eq!(next.text, "One.");
+        close(pace, 1.3);
+
+        // A preview is never merged or sped up.
+        let mut q = VecDeque::from([
+            Utterance {
+                style: Some(style("lale")),
+                ..u("Sample.", "tr")
+            },
+            u("One.", "tr"),
+        ]);
+        let (next, pace) = take_next(&mut q).unwrap();
+        assert_eq!(next.text, "Sample.");
+        close(pace, 1.0);
     }
 
     #[test]

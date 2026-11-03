@@ -34,14 +34,14 @@ The builds are not code signed yet:
 
 ## Usage
 
-Right-click the tray icon to start/stop captions, pick the source, toggle translation, move the caption box, or open Settings.
+Right-click the tray icon to start/stop captions, pick the source, toggle translation, move the caption box, or open Settings. On Windows, left-click opens Settings.
 
 | Shortcut | Action |
 |---|---|
 | `Alt+Shift+T` | Start / stop captions |
 | `Alt+Shift+M` | Move captions (double-click to finish) |
 
-Shortcuts are `hotkey_toggle` and `hotkey_move` in `config.toml`. `hammurabi --start` starts captions on launch.
+Change shortcuts in Settings > General. `hammurabi --start` starts captions on launch.
 
 **Read aloud** (tray menu or Settings) speaks each finished caption in its language with an installed system voice. Hammurabi stops listening while it speaks, so its own voice is never captioned again; whatever plays during that time is skipped. Add voices in **Windows Settings > Time & language > Speech** or **macOS System Settings > Accessibility > Spoken Content**. Linux needs `speech-dispatcher` or `espeak-ng`.
 

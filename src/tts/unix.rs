@@ -74,11 +74,14 @@ pub fn speak(
     voice: Option<&Voice>,
     rate: f32,
     pitch: f32,
+    volume: f32,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
     let mut spd = Command::new("spd-say");
     // -w waits until the text is spoken.
     spd.args(["-w", "-r", &spd_value(rate), "-p", &spd_value(pitch)]);
+    // -100..100, where 0 is the default.
+    spd.args(["-i", &((volume - 1.0) * 100.0).round().to_string()]);
     if !lang.is_empty() {
         spd.args(["-l", lang]);
     }
@@ -91,6 +94,8 @@ pub fn speak(
         Err(e) if e.kind() == ErrorKind::NotFound => {
             let mut espeak = Command::new("espeak-ng");
             espeak.args(["-s", &espeak_speed(rate), "-p", &espeak_pitch(pitch)]);
+            // 0..200, where 100 is the default.
+            espeak.args(["-a", &(volume * 100.0).round().to_string()]);
             if let Some(l) = lang.split('-').next().filter(|l| !l.is_empty()) {
                 espeak.args(["-v", l]);
             }

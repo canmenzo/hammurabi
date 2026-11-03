@@ -3,7 +3,7 @@ use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
 use hammurabi::settings::Settings;
 use hammurabi::tts::{Gender, Voice};
-use hammurabi::ui::settings_window::{ModelsStatus, SettingsAction, SettingsWindow};
+use hammurabi::ui::settings_window::{ModelsStatus, Page, SettingsAction, SettingsWindow, apply_theme};
 
 struct Demo {
     win: SettingsWindow,
@@ -23,6 +23,7 @@ impl eframe::App for Demo {
                 SettingsAction::ToggleAutostart => println!("toggle autostart"),
                 SettingsAction::OpenLogs => println!("open logs"),
                 SettingsAction::Preview(id) => println!("preview {id}"),
+                _ => println!("other action"),
             }
         }
     }
@@ -40,16 +41,27 @@ fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hammurabi Settings")
-            .with_inner_size([520.0, 960.0])
+            .with_inner_size([740.0, 600.0])
             .with_position([40.0, 20.0]),
         ..Default::default()
     };
     eframe::run_native(
         "Settings demo",
         opts,
-        Box::new(|_| {
+        Box::new(|cc| {
+            apply_theme(&cc.egui_ctx);
+            // The page to open, for screenshots: listen, translate, voice, captions or general.
+            let page = match std::env::args().nth(1).as_deref() {
+                Some("translate") => Page::Translate,
+                Some("voice") => Page::ReadAloud,
+                Some("captions") => Page::Captions,
+                Some("general") => Page::General,
+                _ => Page::Listen,
+            };
+            let mut win = SettingsWindow::default();
+            win.page = page;
             Ok(Box::new(Demo {
-                win: SettingsWindow::default(),
+                win,
                 settings: Settings {
                     translate: true,
                     target_language: "tr".into(),
@@ -86,6 +98,13 @@ fn main() -> eframe::Result {
                             gender: Some(Gender::Female),
                         },
                     ],
+                    running: false,
+                    loading: false,
+                    status: String::new(),
+                    alert: false,
+                    reading: None,
+                    previewing: None,
+                    voice_learned: false,
                 },
             }))
         }),

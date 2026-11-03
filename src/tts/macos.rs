@@ -69,6 +69,7 @@ pub fn speak(
     voice: Option<&Voice>,
     rate: f32,
     pitch: f32,
+    volume: f32,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
     // SAFETY: the synthesizer is created, used and dropped on this thread; it speaks without a
@@ -83,6 +84,7 @@ pub fn speak(
         }
         utterance.setRate(av_rate(rate));
         utterance.setPitchMultiplier(pitch_multiplier(pitch));
+        utterance.setVolume(volume);
         synth.speakUtterance(&utterance);
         let start = Instant::now();
         let mut started = false;

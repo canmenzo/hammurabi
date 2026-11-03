@@ -320,6 +320,8 @@ fn main() -> anyhow::Result<()> {
                         voice: None,
                         rate: 1.0,
                         engine: tts::Engine::System,
+                        neural_voice: "F3".into(),
+                        volume: 1.0,
                     };
                     let (voice, rate, pitch) =
                         style.resolve(&all, l).map_err(anyhow::Error::msg)?;
@@ -359,6 +361,8 @@ fn main() -> anyhow::Result<()> {
                 voice,
                 rate,
                 engine,
+                neural_voice: "F3".into(),
+                volume: 1.0,
             };
             match out {
                 Some(out) => speak_to_file(&text, &lang, &style, &out),
@@ -886,6 +890,7 @@ fn transcribe_realtime(
             EngineEvent::Caption(c) => print_caption(&c, Some(at), live),
             EngineEvent::Status(s) => eprintln!("[{at:6.1}s] status: {}", s.text),
             EngineEvent::State(s) => eprintln!("[{at:6.1}s] state: {s:?}"),
+            EngineEvent::Speech(_) => {}
             EngineEvent::Stats { asr_ms: ms, .. } => asr_ms.add(Duration::from_millis(ms as u64)),
             EngineEvent::Progress(p) => {
                 // One line per 10% of each download.

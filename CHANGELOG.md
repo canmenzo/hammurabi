@@ -2,6 +2,28 @@
 
 All notable changes to Hammurabi are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Settings is now split into pages (Listen, Translate, Read aloud, Captions, General) with the site's colors. A header shows whether captions are on, has a Start/Stop button, shows warnings, and says what the first start will download.
+- Read aloud no longer drops captions as soon as it falls behind: waiting captions are read together and up to 30% faster.
+- Speech already in the target language is no longer read over itself. Turn this back on in Settings > Read aloud.
+- On Windows, left-clicking the tray icon opens Settings; the menu stays on the right button. Tray submenus show the current source, target language and voice, and are disabled when their feature is off.
+
+### Added
+
+- Read aloud volume, and a stop button on voice samples.
+- The Custom persona can use any of the 10 Supertonic 3 voices.
+- Voice samples in every supported language.
+- Shortcuts can be changed in Settings > General.
+- A sample caption on screen while Settings > Captions is open, plus Move captions, Reset position and Reset look buttons.
+- Settings opens with a short welcome on first launch.
+
+### Fixed
+
+- Supertonic 3 audio fades at each end, to avoid clicks.
+
 ## [0.4.0] - 2026-10-23
 
 ### Added

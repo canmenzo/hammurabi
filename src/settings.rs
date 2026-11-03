@@ -139,6 +139,12 @@ pub struct Settings {
     /// 1.0 = normal speed. Custom persona only.
     pub speak_rate: f32,
     pub speak_engine: tts::Engine,
+    /// Supertonic voice ("F1".."M5") of the Custom persona.
+    pub speak_neural_voice: String,
+    /// 0.0..=1.0.
+    pub speak_volume: f32,
+    /// Also read speech already in the target language, which is otherwise heard as it is.
+    pub speak_same_lang: bool,
     /// The user agreed to use Speaker's voice (CC-BY-NC-4.0 weights) for personal, non-commercial
     /// use only; its download waits for this.
     pub omnivoice_accepted: bool,
@@ -173,6 +179,9 @@ impl Default for Settings {
             speak_voice: None,
             speak_rate: 1.0,
             speak_engine: tts::Engine::System,
+            speak_neural_voice: "F3".into(),
+            speak_volume: 1.0,
+            speak_same_lang: false,
             omnivoice_accepted: false,
             caption: CaptionStyle::default(),
             overlay_pos: None,
@@ -206,6 +215,8 @@ impl Settings {
             voice: self.speak_voice.clone(),
             rate: self.speak_rate,
             engine: self.speak_engine,
+            neural_voice: self.speak_neural_voice.clone(),
+            volume: self.speak_volume.clamp(0.0, 1.0),
         }
     }
 
@@ -313,6 +324,8 @@ mod tests {
                 voice: Some("tr-1".into()),
                 rate: 1.3,
                 engine: tts::Engine::System,
+                neural_voice: "F3".into(),
+                volume: 1.0,
             }
         );
     }

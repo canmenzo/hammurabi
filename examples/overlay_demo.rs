@@ -141,7 +141,7 @@ impl eframe::App for Demo {
             self.placed = true;
         }
         let style = self.settings.caption.clone();
-        let r = self.overlay.paint(ui, &style, self.move_mode);
+        let r = self.overlay.paint(ui, &style, self.move_mode, None);
         if r.start_drag {
             ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
         }

@@ -1,6 +1,7 @@
 use eframe::egui::{
-    self, Color32, ComboBox, Context, CursorIcon, DragValue, ProgressBar, Rect, RichText,
-    ScrollArea, Sense, Slider, TextStyle, Ui, UiBuilder, pos2, vec2,
+    self, Align, Color32, ComboBox, Context, CursorIcon, Event, FontId, Key, Layout, Modifiers,
+    ProgressBar, Rect, RichText, ScrollArea, Sense, Slider, Stroke, TextStyle, Theme, Ui,
+    UiBuilder, Visuals, WidgetInfo, pos2, vec2,
 };
 
 use super::icons;
@@ -8,14 +9,16 @@ use super::icons;
 use crate::audio::{DeviceInfo, DeviceList};
 use crate::models::{ModelId, spec};
 use crate::settings::{
-    AsrBackend, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, TranslatorChoice,
-    lang_name,
+    AsrBackend, CaptionStyle, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS,
+    TranslatorChoice, lang_name,
 };
-use crate::tts::{self, Persona, Style, Voice};
+use crate::tts::{self, Persona, Style, Voice, supertonic};
 use crate::types::AudioSource;
 
 const OLLAMA_URL: &str = "http://localhost:11434/v1";
 const OLLAMA_MODEL: &str = "qwen2.5:3b";
+const SIDEBAR: f32 = 150.0;
+const WARN: Color32 = Color32::from_rgb(230, 160, 60);
 
 /// Read-only data the settings window displays.
 pub struct ModelsStatus {
@@ -28,6 +31,17 @@ pub struct ModelsStatus {
     /// Real OS state, not a setting.
     pub autostart: bool,
     pub voices: Vec<Voice>,
+    pub running: bool,
+    pub loading: bool,
+    /// Latest status line, and whether it is a warning or an error.
+    pub status: String,
+    pub alert: bool,
+    /// The voice reading right now.
+    pub reading: Option<String>,
+    /// The persona whose sample is playing.
+    pub previewing: Option<&'static str>,
+    /// Speaker's voice has learned a voice to read in.
+    pub voice_learned: bool,
 }
 
 pub enum SettingsAction {
@@ -39,10 +53,107 @@ pub enum SettingsAction {
     OpenLogs,
     /// Read the persona's sample aloud.
     Preview(&'static str),
+    StopPreview,
+    ToggleRunning,
+    MoveCaptions,
+    ResetPosition,
+    #[cfg(omnivoice)]
+    RelearnVoice,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Page {
+    #[default]
+    Listen,
+    Translate,
+    ReadAloud,
+    Captions,
+    General,
+}
+
+const PAGES: [(Page, &str); 5] = [
+    (Page::Listen, "Listen"),
+    (Page::Translate, "Translate"),
+    (Page::ReadAloud, "Read aloud"),
+    (Page::Captions, "Captions"),
+    (Page::General, "General"),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hotkey {
+    Toggle,
+    Move,
 }
 
 #[derive(Default)]
-pub struct SettingsWindow {}
+pub struct SettingsWindow {
+    pub page: Page,
+    /// First launch: explain where the app lives.
+    pub welcome: bool,
+    /// The hotkey waiting for its new key press.
+    recording: Option<Hotkey>,
+}
+
+/// The website's colors and a little more room, for both OS themes.
+pub fn apply_theme(ctx: &Context) {
+    let rgb = Color32::from_rgb;
+    let palettes = [
+        (
+            Theme::Dark,
+            Visuals::dark(),
+            rgb(24, 24, 24),
+            rgb(31, 31, 31),
+            rgb(49, 49, 49),
+            rgb(94, 234, 212),
+            rgb(19, 18, 9),
+        ),
+        (
+            Theme::Light,
+            Visuals::light(),
+            rgb(255, 255, 255),
+            rgb(244, 244, 242),
+            rgb(226, 224, 216),
+            rgb(15, 118, 110),
+            rgb(255, 255, 255),
+        ),
+    ];
+    for (theme, mut v, bg, surface, border, accent, on_accent) in palettes {
+        v.panel_fill = bg;
+        v.window_fill = surface;
+        v.faint_bg_color = surface;
+        v.hyperlink_color = accent;
+        v.selection.bg_fill = accent;
+        v.selection.stroke = Stroke::new(1.0, on_accent);
+        v.slider_trailing_fill = true;
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+        v.window_stroke = Stroke::new(1.0, border);
+        for w in [
+            &mut v.widgets.noninteractive,
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+            &mut v.widgets.open,
+        ] {
+            w.corner_radius = 6.into();
+        }
+        ctx.set_visuals_of(theme, v);
+    }
+    ctx.all_styles_mut(|s| {
+        s.spacing.item_spacing = vec2(8.0, 6.0);
+        s.spacing.button_padding = vec2(10.0, 4.0);
+        s.spacing.interact_size.y = 24.0;
+        for (style, size) in [
+            (TextStyle::Body, 14.0),
+            (TextStyle::Button, 14.0),
+            (TextStyle::Small, 12.0),
+            (TextStyle::Heading, 16.0),
+        ] {
+            if let Some(font) = s.text_styles.get_mut(&style) {
+                font.size = size;
+            }
+        }
+    });
+}
 
 impl SettingsWindow {
     /// Draws the settings page into the whole of `ctx`; edits `settings` in place.
@@ -54,6 +165,7 @@ impl SettingsWindow {
     ) -> Vec<SettingsAction> {
         let mut actions = Vec::new();
         let mut changed = false;
+        self.record_hotkey(ctx, settings, &mut changed);
         let rect = ctx.content_rect();
         egui::Area::new(egui::Id::unique("settings_root"))
             .fixed_pos(rect.min)
@@ -64,34 +176,40 @@ impl SettingsWindow {
                 frame.show(ui, |ui| {
                     ui.set_min_size(inner);
                     ui.set_max_size(inner);
-                    ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            general(ui, settings, models, &mut changed, &mut actions);
-                            audio(ui, settings, models, &mut changed, &mut actions);
-                            speech(ui, settings, models, &mut changed, &mut actions);
-                            translation(ui, settings, models, &mut changed, &mut actions);
-                            read_aloud(ui, settings, models, &mut changed, &mut actions);
-                            captions(ui, settings, &mut changed);
-                            section(ui, "Hotkeys");
-                            ui.label(format!(
-                                "Start / stop captions: {}",
-                                hotkey_label(&settings.hotkey_toggle)
-                            ));
-                            ui.label(format!(
-                                "Move captions: {}",
-                                hotkey_label(&settings.hotkey_move)
-                            ));
-                            ui.add_space(12.0);
-                            ui.horizontal(|ui| {
-                                if ui.button("Open models folder").clicked() {
-                                    actions.push(SettingsAction::OpenModelsFolder);
+                    let area = ui.max_rect();
+                    let (nav, body) = area.split_left_right_at_x(area.left() + SIDEBAR);
+                    ui.scope_builder(UiBuilder::new().max_rect(nav.shrink(4.0)), |ui| {
+                        self.sidebar(ui);
+                    });
+                    let x = body.left() - 1.0;
+                    ui.painter().vline(
+                        x,
+                        area.y_range(),
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                    );
+                    let body = body.with_min_x(body.left() + 8.0);
+                    ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
+                        self.header(ui, settings, models, &mut actions);
+                        ui.separator();
+                        ScrollArea::vertical()
+                            .id_salt(self.page as u8)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_max_width(ui.available_width() - 12.0);
+                                let (s, m, c, a) = (settings, models, &mut changed, &mut actions);
+                                match self.page {
+                                    Page::Listen => {
+                                        audio(ui, s, m, c, a);
+                                        speech(ui, s, m, c, a);
+                                    }
+                                    Page::Translate => translation(ui, s, m, c, a),
+                                    Page::ReadAloud => read_aloud(ui, s, m, c, a),
+                                    Page::Captions => captions(ui, s, c, a),
+                                    Page::General => self.general(ui, s, m, c, a),
                                 }
-                                if ui.button("Open logs").clicked() {
-                                    actions.push(SettingsAction::OpenLogs);
-                                }
+                                ui.add_space(8.0);
                             });
-                        });
+                    });
                 });
             });
         if changed {
@@ -99,12 +217,228 @@ impl SettingsWindow {
         }
         actions
     }
+
+    fn sidebar(&mut self, ui: &mut Ui) {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(RichText::new("Hammurabi").strong().size(16.0));
+        });
+        ui.add_space(10.0);
+        for (page, label) in PAGES {
+            if nav_item(ui, label, self.page == page) {
+                self.page = page;
+            }
+        }
+        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.weak(concat!("v", env!("CARGO_PKG_VERSION")));
+            });
+        });
+    }
+
+    /// Captions on or off, the button for it, and what is going on now.
+    fn header(
+        &mut self,
+        ui: &mut Ui,
+        s: &Settings,
+        m: &ModelsStatus,
+        actions: &mut Vec<SettingsAction>,
+    ) {
+        ui.add_space(2.0);
+        let accent = ui.visuals().selection.bg_fill;
+        let (dot, state) = match (m.running, m.loading) {
+            (false, _) => (ui.visuals().weak_text_color(), "Captions are off"),
+            (true, true) => (WARN, "Getting ready\u{2026}"),
+            (true, false) => (accent, "Captions are on"),
+        };
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+            ui.painter().circle_filled(r.center(), 5.0, dot);
+            ui.label(RichText::new(state).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(8.0);
+                let button = if m.running {
+                    egui::Button::new("Stop captions")
+                } else {
+                    let text = ui.visuals().selection.stroke.color;
+                    egui::Button::new(RichText::new("Start captions").strong().color(text))
+                        .fill(accent)
+                };
+                if ui
+                    .add(button)
+                    .on_hover_text(hotkey_label(&s.hotkey_toggle))
+                    .clicked()
+                {
+                    actions.push(SettingsAction::ToggleRunning);
+                    self.welcome = false;
+                }
+            });
+        });
+        if self.welcome {
+            ui.add_space(4.0);
+            egui::Frame::new()
+                .fill(ui.visuals().faint_bg_color)
+                .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+                .corner_radius(6)
+                .inner_margin(10)
+                .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width() - 8.0);
+                    ui.label("Hammurabi runs from the tray icon. Closing this window keeps it there. Pick what to listen to, then press Start captions.");
+                    if ui.button("Got it").clicked() {
+                        self.welcome = false;
+                    }
+                });
+        }
+        if !m.status.is_empty() {
+            let text = RichText::new(&m.status);
+            ui.label(if m.alert { text.color(WARN) } else { text.weak() });
+        }
+        if !m.running {
+            let pending = pending_downloads(s, m);
+            if !pending.is_empty() {
+                ui.weak(download_note(&pending));
+            }
+        }
+    }
+
+    /// While a hotkey is recording, the next key press with a modifier becomes that hotkey.
+    fn record_hotkey(&mut self, ctx: &Context, s: &mut Settings, changed: &mut bool) {
+        let Some(which) = self.recording else {
+            return;
+        };
+        let pressed = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers)),
+                _ => None,
+            })
+        });
+        let Some((key, mods)) = pressed else {
+            return;
+        };
+        if key == Key::Escape {
+            self.recording = None;
+            return;
+        }
+        let Some(text) = hotkey_text(mods, key) else {
+            return;
+        };
+        let (value, other) = match which {
+            Hotkey::Toggle => (&mut s.hotkey_toggle, &s.hotkey_move),
+            Hotkey::Move => (&mut s.hotkey_move, &s.hotkey_toggle),
+        };
+        if text != *other {
+            *value = text;
+            *changed = true;
+            self.recording = None;
+        }
+    }
+
+    fn hotkey_row(&mut self, ui: &mut Ui, which: Hotkey, label: &str, value: &str) {
+        ui.label(label);
+        let recording = self.recording == Some(which);
+        let text = if recording {
+            "Press the keys\u{2026}".to_string()
+        } else {
+            hotkey_label(value)
+        };
+        let hint = if recording {
+            "Esc cancels"
+        } else {
+            "Click, then press the new shortcut"
+        };
+        if ui
+            .add(egui::Button::new(text).selected(recording))
+            .on_hover_text(hint)
+            .clicked()
+        {
+            self.recording = (!recording).then_some(which);
+        }
+        ui.end_row();
+    }
+
+    fn general(
+        &mut self,
+        ui: &mut Ui,
+        s: &mut Settings,
+        m: &ModelsStatus,
+        changed: &mut bool,
+        actions: &mut Vec<SettingsAction>,
+    ) {
+        section(ui, "App");
+        let mut autostart = m.autostart;
+        if ui
+            .checkbox(&mut autostart, "Start Hammurabi at login")
+            .changed()
+        {
+            actions.push(SettingsAction::ToggleAutostart);
+        }
+        *changed |= ui
+            .checkbox(&mut s.check_updates, "Check for updates")
+            .on_hover_text(
+                "Asks GitHub once a day whether a newer version is out. Nothing else is sent.",
+            )
+            .changed();
+
+        section(ui, "Shortcuts");
+        let (toggle, move_) = (s.hotkey_toggle.clone(), s.hotkey_move.clone());
+        grid(ui, "hotkeys", |ui| {
+            self.hotkey_row(ui, Hotkey::Toggle, "Start / stop captions", &toggle);
+            self.hotkey_row(ui, Hotkey::Move, "Move captions", &move_);
+        });
+
+        section(ui, "Files");
+        ui.horizontal(|ui| {
+            if ui.button("Open models folder").clicked() {
+                actions.push(SettingsAction::OpenModelsFolder);
+            }
+            if ui.button("Open logs").clicked() {
+                actions.push(SettingsAction::OpenLogs);
+            }
+        });
+    }
+}
+
+fn nav_item(ui: &mut Ui, label: &str, selected: bool) -> bool {
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+    resp.widget_info(|| WidgetInfo::selected(egui::Role::Tab, true, selected, label));
+    let v = ui.visuals();
+    let (accent, text) = (v.selection.bg_fill, v.text_color());
+    let weak = v.weak_text_color();
+    if selected {
+        ui.painter()
+            .rect_filled(rect, 6, accent.gamma_multiply(0.14));
+        let bar = Rect::from_min_size(rect.min + vec2(0.0, 7.0), vec2(3.0, 16.0));
+        ui.painter().rect_filled(bar, 2, accent);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, 6, v.faint_bg_color);
+    }
+    ui.painter().text(
+        pos2(rect.left() + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(14.0),
+        if selected || resp.hovered() {
+            text
+        } else {
+            weak
+        },
+    );
+    resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
 }
 
 fn section(ui: &mut Ui, title: &str) {
-    ui.add_space(14.0);
-    ui.label(RichText::new(title).heading());
-    ui.separator();
+    ui.add_space(10.0);
+    ui.label(RichText::new(title).heading().strong());
+    ui.add_space(2.0);
 }
 
 fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
@@ -112,6 +446,38 @@ fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
         .num_columns(2)
         .spacing([12.0, 8.0])
         .show(ui, add);
+}
+
+/// The models the first start of captions has to download.
+pub fn pending_downloads(s: &Settings, m: &ModelsStatus) -> Vec<ModelId> {
+    let lc = cfg!(all(windows, feature = "win-livecaptions"))
+        && s.asr_backend == AsrBackend::WindowsLiveCaptions;
+    let mut out = Vec::new();
+    if !lc {
+        out.push(ModelId::whisper(s.model, m.compute != "CPU"));
+    }
+    if s.translate && s.translator == TranslatorChoice::Builtin {
+        out.push(ModelId::Madlad3bQ4k);
+    }
+    out.retain(|id| !m.cached.contains(id) && !m.downloading.iter().any(|d| d.0 == *id));
+    out
+}
+
+fn download_note(pending: &[ModelId]) -> String {
+    let names: Vec<&str> = pending
+        .iter()
+        .map(|id| match id {
+            ModelId::Madlad3bQ4k => "translation",
+            _ => "speech",
+        })
+        .collect();
+    let bytes: u64 = pending.iter().map(|&id| spec(id).approx_bytes).sum();
+    format!(
+        "Starting downloads the {} model{} first, {}, once.",
+        names.join(" and "),
+        if pending.len() > 1 { "s" } else { "" },
+        size_label(bytes)
+    )
 }
 
 fn device_combo(
@@ -130,7 +496,7 @@ fn device_combo(
     };
     ComboBox::from_id_salt(id)
         .selected_text(current)
-        .width(260.0)
+        .width(240.0)
         .show_ui(ui, |ui| {
             *changed |= ui.selectable_value(value, None, "Default").changed();
             for d in list {
@@ -141,29 +507,6 @@ fn device_combo(
         });
 }
 
-fn general(
-    ui: &mut Ui,
-    s: &mut Settings,
-    m: &ModelsStatus,
-    changed: &mut bool,
-    actions: &mut Vec<SettingsAction>,
-) {
-    section(ui, "General");
-    let mut autostart = m.autostart;
-    if ui
-        .checkbox(&mut autostart, "Start Hammurabi at login")
-        .changed()
-    {
-        actions.push(SettingsAction::ToggleAutostart);
-    }
-    *changed |= ui
-        .checkbox(&mut s.check_updates, "Check for updates")
-        .on_hover_text(
-            "Asks GitHub once a day whether a newer version is out. Nothing else is sent.",
-        )
-        .changed();
-}
-
 fn audio(
     ui: &mut Ui,
     s: &mut Settings,
@@ -171,7 +514,7 @@ fn audio(
     changed: &mut bool,
     actions: &mut Vec<SettingsAction>,
 ) {
-    section(ui, "Audio");
+    section(ui, "What to caption");
     ui.horizontal(|ui| {
         for (v, label) in [
             (AudioSource::System, "System audio"),
@@ -182,25 +525,36 @@ fn audio(
         }
     });
     if let Err(e) = &m.devices.system_audio {
-        ui.colored_label(
-            Color32::from_rgb(230, 160, 60),
-            format!("System audio unavailable: {e}"),
-        );
+        ui.colored_label(WARN, format!("System audio unavailable: {e}"));
     }
     ui.add_space(4.0);
     grid(ui, "audio", |ui| {
-        ui.label("Microphone");
-        device_combo(ui, "mic", &m.devices.inputs, &mut s.input_device, changed);
-        ui.end_row();
-        ui.label("Output device");
+        ui.add_enabled_ui(s.source != AudioSource::Microphone, |ui| {
+            ui.label("System audio from")
+        });
         ui.horizontal(|ui| {
-            device_combo(ui, "out", &m.devices.outputs, &mut s.output_device, changed);
+            ui.add_enabled_ui(s.source != AudioSource::Microphone, |ui| {
+                device_combo(ui, "out", &m.devices.outputs, &mut s.output_device, changed);
+            });
             if ui.button("Refresh").clicked() {
                 actions.push(SettingsAction::RefreshDevices);
             }
         });
         ui.end_row();
+        ui.add_enabled_ui(s.source != AudioSource::System, |ui| ui.label("Microphone"));
+        ui.add_enabled_ui(s.source != AudioSource::System, |ui| {
+            device_combo(ui, "mic", &m.devices.inputs, &mut s.input_device, changed);
+        });
+        ui.end_row();
     });
+}
+
+fn size_label(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("about {:.1} GB", bytes as f64 / 1e9)
+    } else {
+        format!("about {} MB", bytes / 1_000_000)
+    }
 }
 
 fn size_text(id: ModelId) -> String {
@@ -240,7 +594,7 @@ fn speech(
     changed: &mut bool,
     actions: &mut Vec<SettingsAction>,
 ) {
-    section(ui, "Speech");
+    section(ui, "Speech recognition");
     let gpu = m.compute != "CPU";
     let lc = cfg!(all(windows, feature = "win-livecaptions"))
         && s.asr_backend == AsrBackend::WindowsLiveCaptions;
@@ -332,7 +686,7 @@ fn speech(
             .changed();
         ui.end_row();
 
-        ui.label("Compute");
+        ui.label("Runs on");
         ui.label(&m.compute);
         ui.end_row();
     });
@@ -349,6 +703,7 @@ fn translation(
     *changed |= ui
         .checkbox(&mut s.translate, "Translate captions")
         .changed();
+    ui.add_space(4.0);
     ui.add_enabled_ui(s.translate, |ui| {
         grid(ui, "translation", |ui| {
             ui.label("Translate to");
@@ -409,8 +764,14 @@ fn translation(
     });
 }
 
-/// A selectable persona row with a play button; returns (row clicked, play clicked).
-fn persona_card(ui: &mut Ui, p: &Persona, voice: &str, selected: bool) -> (bool, bool) {
+/// A selectable persona row with a play or stop button; returns (row clicked, button clicked).
+fn persona_card(
+    ui: &mut Ui,
+    p: &Persona,
+    voice: &str,
+    selected: bool,
+    playing: bool,
+) -> (bool, bool) {
     let mut play = false;
     let card = ui.scope_builder(UiBuilder::new().id_salt(p.id).sense(Sense::click()), |ui| {
         let hovered = ui.response().hovered();
@@ -446,7 +807,7 @@ fn persona_card(ui: &mut Ui, p: &Persona, voice: &str, selected: bool) -> (bool,
                 );
                 let button = ui
                     .interact(rect, ui.scope_id().with("play"), Sense::click())
-                    .on_hover_text("Play sample")
+                    .on_hover_text(if playing { "Stop" } else { "Play sample" })
                     .on_hover_cursor(CursorIcon::PointingHand);
                 let v = ui.visuals();
                 if button.hovered() {
@@ -458,7 +819,11 @@ fn persona_card(ui: &mut Ui, p: &Persona, voice: &str, selected: bool) -> (bool,
                 } else {
                     ui.style().interact(&button).fg_stroke.color
                 };
-                icons::paint_play(ui.painter(), rect.shrink(4.0), color);
+                if playing {
+                    icons::paint_stop(ui.painter(), rect.shrink(4.0), color);
+                } else {
+                    icons::paint_play(ui.painter(), rect.shrink(4.0), color);
+                }
                 play = button.clicked();
             });
     });
@@ -467,6 +832,16 @@ fn persona_card(ui: &mut Ui, p: &Persona, voice: &str, selected: bool) -> (bool,
         .on_hover_cursor(CursorIcon::PointingHand)
         .clicked();
     (clicked, play)
+}
+
+/// A radio button with its explanation under it.
+fn engine_row(ui: &mut Ui, s: &mut Settings, v: tts::Engine, title: &str, about: &str) -> bool {
+    let changed = ui.radio_value(&mut s.speak_engine, v, title).changed();
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(24.0);
+        ui.weak(about);
+    });
+    changed
 }
 
 fn read_aloud(
@@ -479,8 +854,11 @@ fn read_aloud(
     section(ui, "Read aloud");
     *changed |= ui
         .checkbox(&mut s.speak, "Read captions aloud")
-        .on_hover_text("Speaks each finished caption, the translation when there is one, with a voice installed on this computer.")
+        .on_hover_text("Speaks each finished caption, the translation when there is one.")
         .changed();
+    if let Some(voice) = &m.reading {
+        ui.weak(format!("Reading with {voice}"));
+    }
     let lang = s.speak_lang().map(str::to_string);
     // Previews are in English while the spoken language is auto-detected.
     let sample_lang = lang.clone().unwrap_or_else(|| "en".into());
@@ -493,64 +871,62 @@ fn read_aloud(
         })
         .collect();
     ui.add_enabled_ui(s.speak, |ui| {
-        grid(ui, "voice_engine", |ui| {
-            ui.label("Voice engine");
-            ui.horizontal_wrapped(|ui| {
-                for (v, label) in [
-                    (tts::Engine::System, "System voices"),
-                    (tts::Engine::Supertonic, "Supertonic 3 (about 210 MB)"),
-                ] {
-                    *changed |= ui.radio_value(&mut s.speak_engine, v, label).changed();
-                }
-                let speaker = "Speaker's voice (GPU, about 945 MB)";
-                #[cfg(omnivoice)]
-                {
-                    *changed |= ui
-                        .radio_value(&mut s.speak_engine, tts::Engine::Speaker, speaker)
-                        .changed();
-                }
-                #[cfg(not(omnivoice))]
-                ui.add_enabled(false, egui::RadioButton::new(false, speaker))
-                    .on_disabled_hover_text("Comes with the Windows GPU build, hammurabi-windows-gpu.zip");
-            });
-            ui.end_row();
-            if s.speak_engine == tts::Engine::Supertonic {
-                ui.label("Voices");
-                model_status(ui, ModelId::Supertonic, m, actions);
-                ui.end_row();
-            }
-            #[cfg(omnivoice)]
-            if s.speak_engine == tts::Engine::Speaker {
-                ui.label("Voice model");
-                if s.omnivoice_accepted {
-                    model_status(ui, ModelId::OmniVoice, m, actions);
-                } else {
-                    *changed |= ui
-                        .checkbox(
-                            &mut s.omnivoice_accepted,
-                            "I will use it for personal, non-commercial use only",
-                        )
-                        .changed();
-                }
-                ui.end_row();
-            }
-        });
+        section(ui, "Voice engine");
+        *changed |= engine_row(
+            ui,
+            s,
+            tts::Engine::System,
+            "System voices",
+            "The voices installed on this computer.",
+        );
+        *changed |= engine_row(
+            ui,
+            s,
+            tts::Engine::Supertonic,
+            "Supertonic 3",
+            "Natural voices that run on this computer, for 22 languages. Others use system voices.",
+        );
         if s.speak_engine == tts::Engine::Supertonic {
-            ui.weak("Natural voices that run on this computer, for 22 languages. Other languages and Custom use system voices.");
+            ui.horizontal(|ui| {
+                ui.add_space(24.0);
+                model_status(ui, ModelId::Supertonic, m, actions);
+            });
+            if !m.cached.contains(&ModelId::Supertonic) {
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    ui.colored_label(WARN, "System voices read until it is downloaded.");
+                });
+            }
         }
         #[cfg(not(omnivoice))]
-        ui.weak("Speaker's voice reads captions in the voice of whoever is speaking. It comes with the Windows GPU build, hammurabi-windows-gpu.zip.");
-        #[cfg(omnivoice)]
-        if s.speak_engine == tts::Engine::Speaker {
-            ui.weak("Reads each caption in the voice of whoever is speaking, learned on this computer from a few seconds of their speech and again every minute. Until then it reads in a voice of its own. Needs a GPU with Vulkan; without one, Supertonic 3 or system voices read.");
+        {
+            ui.add_enabled(false, egui::RadioButton::new(false, "Speaker's voice"))
+                .on_disabled_hover_text("Comes with the Windows GPU build");
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.weak("OmniVoice by k2-fsa, CC-BY-NC-4.0: for personal, non-commercial use only (");
-                ui.hyperlink_to("license", "https://huggingface.co/k2-fsa/OmniVoice#license");
-                ui.weak("). Do not use it to pass yourself off as someone.");
+                ui.add_space(24.0);
+                ui.weak("Reads in the voice of whoever is speaking. Comes with the Windows GPU build, hammurabi-windows-gpu.zip.");
             });
         }
-        ui.add_space(4.0);
+        #[cfg(omnivoice)]
+        {
+            *changed |= engine_row(
+                ui,
+                s,
+                tts::Engine::Speaker,
+                "Speaker's voice",
+                "Reads in the voice of whoever is speaking, learned on this computer from a few seconds of their speech. Needs a GPU with Vulkan.",
+            );
+            if s.speak_engine == tts::Engine::Speaker {
+                speaker_voice(ui, s, m, changed, actions);
+            }
+        }
+
+        let cloning = s.speak_engine == tts::Engine::Speaker;
+        section(ui, if cloning { "Backup voice" } else { "Voice" });
+        if cloning {
+            ui.weak("Reads until the speaker's voice is learned, and if it cannot run.");
+            ui.add_space(2.0);
+        }
         let neural = m.cached.contains(&ModelId::Supertonic);
         let current = tts::persona(&s.speak_persona).id;
         for p in &tts::PERSONAS {
@@ -564,27 +940,99 @@ fn read_aloud(
                 (_, Ok((None, ..))) => "System voice".into(),
                 (_, Err(_)) => format!("No {} voice", lang_name(&sample_lang)),
             };
-            let (select, play) = persona_card(ui, p, &voice, p.id == current);
+            let playing = m.previewing == Some(p.id);
+            let (select, play) = persona_card(ui, p, &voice, p.id == current, playing);
             if select && s.speak_persona != p.id {
                 s.speak_persona = p.id.into();
                 *changed = true;
             }
             if play {
-                actions.push(SettingsAction::Preview(p.id));
+                actions.push(if playing {
+                    SettingsAction::StopPreview
+                } else {
+                    SettingsAction::Preview(p.id)
+                });
             }
         }
         if current == tts::CUSTOM {
             ui.add_space(4.0);
-            custom_voice(ui, s, m, &voices, changed);
+            custom_voice(ui, s, m, &voices, &sample_lang, changed);
         }
         if let Some(l) = &lang
             && s.speak
             && !m.voices.is_empty()
             && voices.is_empty()
         {
-            ui.colored_label(Color32::from_rgb(230, 160, 60), tts::missing_voice(l));
+            ui.colored_label(WARN, tts::missing_voice(l));
         }
-        ui.weak("Listening pauses while a caption is read, so the voice is not captioned again.");
+
+        section(ui, "Playback");
+        grid(ui, "playback", |ui| {
+            ui.label("Volume");
+            *changed |= ui
+                .add(
+                    Slider::new(&mut s.speak_volume, 0.0..=1.0)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                )
+                .changed();
+            ui.end_row();
+        });
+        if s.translate {
+            let label = format!("Also read speech already in {}", lang_name(&s.target_language));
+            *changed |= ui
+                .checkbox(&mut s.speak_same_lang, label)
+                .on_hover_text("Off: speech you can already understand is heard as it is, and not read over itself.")
+                .changed();
+        }
+        ui.weak("Listening pauses while a caption is read, so the voice is not captioned again. When captions pile up, they are read together and a little faster.");
+    });
+}
+
+#[cfg(omnivoice)]
+fn speaker_voice(
+    ui: &mut Ui,
+    s: &mut Settings,
+    m: &ModelsStatus,
+    changed: &mut bool,
+    actions: &mut Vec<SettingsAction>,
+) {
+    let indent = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(24.0);
+            add(ui);
+        });
+    };
+    if !s.omnivoice_accepted {
+        indent(ui, &mut |ui| {
+            *changed |= ui
+                .checkbox(
+                    &mut s.omnivoice_accepted,
+                    "I will use it for personal, non-commercial use only",
+                )
+                .changed();
+        });
+    } else {
+        indent(ui, &mut |ui| {
+            model_status(ui, ModelId::OmniVoice, m, actions);
+        });
+        if m.cached.contains(&ModelId::OmniVoice) {
+            indent(ui, &mut |ui| {
+                ui.label(if m.voice_learned {
+                    "Reading in the speaker's voice."
+                } else {
+                    "Listening for a few seconds of speech to learn the voice."
+                });
+                if m.voice_learned && ui.button("Learn again").clicked() {
+                    actions.push(SettingsAction::RelearnVoice);
+                }
+            });
+        }
+    }
+    indent(ui, &mut |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.weak("OmniVoice by k2-fsa, CC-BY-NC-4.0: for personal, non-commercial use only (");
+        ui.hyperlink_to("license", "https://huggingface.co/k2-fsa/OmniVoice#license");
+        ui.weak("). Do not use it to pass yourself off as someone.");
     });
 }
 
@@ -593,12 +1041,23 @@ fn custom_voice(
     s: &mut Settings,
     m: &ModelsStatus,
     voices: &[&Voice],
+    sample_lang: &str,
     changed: &mut bool,
 ) {
+    // Supertonic reads this language with this engine.
+    let neural = tts::neural(
+        &Style {
+            voice: None,
+            ..s.speak_style()
+        },
+        sample_lang,
+    )
+    .is_some();
     grid(ui, "read_aloud", |ui| {
         ui.label("Voice");
         let label = |v: &Voice| format!("{} ({})", v.name, v.lang);
         let current = match &s.speak_voice {
+            None if neural => format!("Supertonic 3 {}", s.speak_neural_voice),
             None => "Automatic".to_string(),
             Some(id) => m
                 .voices
@@ -610,10 +1069,25 @@ fn custom_voice(
             .selected_text(current)
             .width(260.0)
             .show_ui(ui, |ui| {
-                *changed |= ui
-                    .selectable_value(&mut s.speak_voice, None, "Automatic")
-                    .on_hover_text("The system voice for each caption's language.")
-                    .changed();
+                if neural {
+                    for v in supertonic::STYLES {
+                        let on = s.speak_voice.is_none() && s.speak_neural_voice == v;
+                        if ui
+                            .selectable_label(on, format!("Supertonic 3 {v}"))
+                            .clicked()
+                        {
+                            s.speak_voice = None;
+                            s.speak_neural_voice = v.into();
+                            *changed = true;
+                        }
+                    }
+                    ui.separator();
+                } else {
+                    *changed |= ui
+                        .selectable_value(&mut s.speak_voice, None, "Automatic")
+                        .on_hover_text("The system voice for each caption's language.")
+                        .changed();
+                }
                 for v in voices {
                     *changed |= ui
                         .selectable_value(&mut s.speak_voice, Some(v.id.clone()), label(v))
@@ -650,8 +1124,31 @@ fn color_row(ui: &mut Ui, hex: &mut String, changed: &mut bool) {
     }
 }
 
-fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
-    section(ui, "Captions");
+fn captions(
+    ui: &mut Ui,
+    s: &mut Settings,
+    changed: &mut bool,
+    actions: &mut Vec<SettingsAction>,
+) {
+    section(ui, "Position");
+    ui.weak("A sample caption is on screen while this page is open.");
+    ui.horizontal(|ui| {
+        if ui
+            .button("Move captions")
+            .on_hover_text("Drag the caption area, then double-click it to finish.")
+            .clicked()
+        {
+            actions.push(SettingsAction::MoveCaptions);
+        }
+        if ui
+            .add_enabled(s.overlay_pos.is_some(), egui::Button::new("Reset position"))
+            .clicked()
+        {
+            actions.push(SettingsAction::ResetPosition);
+        }
+    });
+
+    section(ui, "Look");
     let c = &mut s.caption;
     grid(ui, "captions", |ui| {
         ui.label("Translated text");
@@ -681,22 +1178,21 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             .changed();
         ui.end_row();
 
-        ui.label("Lines");
+        ui.label("Captions on screen");
         *changed |= ui.add(Slider::new(&mut c.cues, 1..=3)).changed();
         ui.end_row();
 
-        ui.label("Hold time");
+        ui.label("Keep on screen");
         *changed |= ui
             .add(
-                DragValue::new(&mut c.hold_secs)
-                    .range(1.0..=15.0)
-                    .speed(0.1)
+                Slider::new(&mut c.hold_secs, 1.0..=15.0)
+                    .step_by(0.5)
                     .suffix(" s"),
             )
             .changed();
         ui.end_row();
 
-        ui.label("Edge");
+        ui.label("Text edge");
         ui.horizontal(|ui| {
             for (v, label) in [
                 (Edge::None, "None"),
@@ -716,6 +1212,48 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             .checkbox(&mut c.original_first, "Original first")
             .changed();
     });
+    ui.add_space(4.0);
+    if ui
+        .add_enabled(
+            *c != CaptionStyle::default(),
+            egui::Button::new("Reset look"),
+        )
+        .clicked()
+    {
+        *c = CaptionStyle::default();
+        *changed = true;
+    }
+}
+
+/// A key press as a `global_hotkey` string, e.g. "alt+shift+KeyT". None without a modifier a
+/// shortcut can hang on, or for a key that makes a poor shortcut.
+fn hotkey_text(mods: Modifiers, key: Key) -> Option<String> {
+    if !(mods.ctrl || mods.alt || mods.mac_cmd) {
+        return None;
+    }
+    let name = key.name();
+    let code = match name.as_bytes() {
+        [c] if c.is_ascii_uppercase() => format!("Key{name}"),
+        [c] if c.is_ascii_digit() => format!("Digit{name}"),
+        [b'F', rest @ ..] if !rest.is_empty() && rest.iter().all(u8::is_ascii_digit) => {
+            name.to_string()
+        }
+        _ if key == Key::Space => "Space".into(),
+        _ => return None,
+    };
+    let mut parts = Vec::new();
+    for (on, part) in [
+        (mods.ctrl, "ctrl"),
+        (mods.alt, "alt"),
+        (mods.shift, "shift"),
+        (mods.mac_cmd, "cmd"),
+    ] {
+        if on {
+            parts.push(part);
+        }
+    }
+    parts.push(&code);
+    Some(parts.join("+"))
 }
 
 /// "alt+shift+KeyT" -> "Alt+Shift+T".
@@ -738,9 +1276,88 @@ fn hotkey_label(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn status(cached: Vec<ModelId>, compute: &str) -> ModelsStatus {
+        ModelsStatus {
+            cached,
+            downloading: Vec::new(),
+            devices: DeviceList {
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                system_audio: Ok(()),
+            },
+            compute: compute.into(),
+            autostart: false,
+            voices: Vec::new(),
+            running: false,
+            loading: false,
+            status: String::new(),
+            alert: false,
+            reading: None,
+            previewing: None,
+            voice_learned: false,
+        }
+    }
+
     #[test]
     fn hotkey_label() {
         assert_eq!(super::hotkey_label("alt+shift+KeyT"), "Alt+Shift+T");
         assert_eq!(super::hotkey_label("ctrl+Digit1"), "Ctrl+1");
+    }
+
+    #[test]
+    fn records_hotkeys_the_hotkey_parser_accepts() {
+        let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
+        let text = |m, k| hotkey_text(m, k);
+        assert_eq!(text(alt_shift, Key::T).unwrap(), "alt+shift+KeyT");
+        assert_eq!(text(Modifiers::CTRL, Key::Num1).unwrap(), "ctrl+Digit1");
+        assert_eq!(text(Modifiers::ALT, Key::F5).unwrap(), "alt+F5");
+        assert_eq!(text(Modifiers::CTRL, Key::Space).unwrap(), "ctrl+Space");
+        assert_eq!(text(Modifiers::NONE, Key::T), None);
+        assert_eq!(text(Modifiers::SHIFT, Key::T), None);
+        assert_eq!(text(Modifiers::ALT, Key::Enter), None);
+        for k in [Key::T, Key::Num1, Key::F5, Key::Space] {
+            let s = text(alt_shift, k).unwrap();
+            assert!(s.parse::<global_hotkey::hotkey::HotKey>().is_ok(), "{s}");
+        }
+    }
+
+    #[test]
+    fn says_what_the_first_start_downloads() {
+        let base = ModelId::WhisperBase;
+        let s = Settings {
+            translate: true,
+            translator: TranslatorChoice::Builtin,
+            model: ModelChoice::Auto,
+            ..Settings::default()
+        };
+        let m = status(Vec::new(), "CPU");
+        assert_eq!(pending_downloads(&s, &m), [base, ModelId::Madlad3bQ4k]);
+        assert_eq!(
+            download_note(&pending_downloads(&s, &m)),
+            "Starting downloads the speech and translation models first, about 2.0 GB, once."
+        );
+        assert_eq!(
+            pending_downloads(&s, &status(Vec::new(), "CUDA 0"))[0],
+            ModelId::WhisperTurbo
+        );
+        let m = status(vec![ModelId::Madlad3bQ4k], "CPU");
+        assert_eq!(
+            download_note(&pending_downloads(&s, &m)),
+            "Starting downloads the speech model first, about 290 MB, once."
+        );
+        assert!(pending_downloads(&s, &status(vec![base, ModelId::Madlad3bQ4k], "CPU")).is_empty());
+        let off = Settings {
+            translate: false,
+            ..s.clone()
+        };
+        assert_eq!(pending_downloads(&off, &status(Vec::new(), "CPU")), [base]);
+        let mut downloading = status(Vec::new(), "CPU");
+        downloading.downloading.push((base, 1, None));
+        assert_eq!(
+            pending_downloads(&off, &downloading),
+            Vec::<ModelId>::new()
+        );
     }
 }

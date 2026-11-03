@@ -10,6 +10,8 @@ use crate::settings::{CaptionStyle, Edge, Settings};
 use crate::types::{CaptionUpdate, Status, StatusLevel};
 
 const FADE: Duration = Duration::from_millis(250);
+const FADE_IN: Duration = Duration::from_millis(120);
+const SAMPLE_ORIGINAL: &str = "This is how captions will look.";
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 8.0;
@@ -175,7 +177,14 @@ impl OverlayState {
         cues.chain(status).min()
     }
 
-    pub fn paint(&mut self, ui: &mut Ui, style: &CaptionStyle, move_mode: bool) -> OverlayResponse {
+    /// `sample`: a translation to show as a sample caption while nothing else is on screen.
+    pub fn paint(
+        &mut self,
+        ui: &mut Ui,
+        style: &CaptionStyle,
+        move_mode: bool,
+        sample: Option<&str>,
+    ) -> OverlayResponse {
         let now = Instant::now();
         self.cues.retain(|c| now < c.hold_end() + FADE);
         if self
@@ -192,19 +201,30 @@ impl OverlayState {
         let mut y = rect.bottom() - 4.0;
         let mut fading = false;
 
+        let sample = sample
+            .filter(|_| self.cues.is_empty() && self.live.is_none())
+            .map(|t| Line {
+                original: SAMPLE_ORIGINAL.into(),
+                translated: Some(t.into()),
+                same_lang: false,
+            });
         let mut blocks: Vec<(&Line, f32)> = Vec::new();
         let skip = self.cues.len().saturating_sub(style.cues.max(1) as usize);
         for c in &self.cues[skip..] {
             let left = (c.hold_end() + FADE).saturating_duration_since(now);
-            let alpha = if left < FADE {
+            let age = now.saturating_duration_since(c.shown);
+            let mut alpha = 1.0;
+            if left < FADE {
                 fading = true;
-                left.as_secs_f32() / FADE.as_secs_f32()
-            } else {
-                1.0
-            };
+                alpha = left.as_secs_f32() / FADE.as_secs_f32();
+            }
+            if age < FADE_IN {
+                fading = true;
+                alpha = f32::min(alpha, age.as_secs_f32() / FADE_IN.as_secs_f32());
+            }
             blocks.push((&c.line, alpha));
         }
-        if let Some(l) = &self.live {
+        if let Some(l) = self.live.as_ref().or(sample.as_ref()) {
             blocks.push((l, 1.0));
         }
 

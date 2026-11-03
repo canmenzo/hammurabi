@@ -16,10 +16,13 @@ pub struct Tray {
     icon: TrayIcon,
     menu: Menu,
     start: MenuItem,
+    source_menu: Submenu,
     sources: Vec<CheckMenuItem>,
     translate: CheckMenuItem,
+    target_menu: Submenu,
     targets: Vec<CheckMenuItem>,
     speak: CheckMenuItem,
+    voice_menu: Submenu,
     personas: Vec<CheckMenuItem>,
     #[cfg(omnivoice)]
     speaker_voice: (CheckMenuItem, MenuItem),
@@ -108,14 +111,22 @@ impl Tray {
         if let Some(i) = icon(false) {
             builder = builder.with_icon(i);
         }
+        // Left click opens Settings there; the menu stays on the right button.
+        #[cfg(windows)]
+        {
+            builder = builder.with_menu_on_left_click(false);
+        }
         Ok(Self {
             icon: builder.build()?,
             menu,
             start,
+            source_menu,
             sources,
             translate,
+            target_menu,
             targets,
             speak,
+            voice_menu,
             personas,
             #[cfg(omnivoice)]
             speaker_voice,
@@ -187,18 +198,26 @@ impl Tray {
         } else {
             "Start captions"
         });
-        for (item, (src, _, _)) in self.sources.iter().zip(SOURCES.iter()) {
+        for (item, (src, _, label)) in self.sources.iter().zip(SOURCES.iter()) {
             item.set_checked(s.source == *src);
+            if s.source == *src {
+                self.source_menu.set_text(format!("Source: {label}"));
+            }
         }
         self.translate.set_checked(s.translate);
+        self.target_menu
+            .set_text(format!("Translate to: {}", lang_name(&s.target_language)));
+        self.target_menu.set_enabled(s.translate);
         for (item, code) in self.targets.iter().zip(TARGET_LANGS.iter()) {
             item.set_checked(s.target_language == *code);
         }
         self.speak.set_checked(s.speak);
-        let persona = tts::persona(&s.speak_persona).id;
+        let persona = tts::persona(&s.speak_persona);
         for (item, p) in self.personas.iter().zip(PERSONAS.iter()) {
-            item.set_checked(persona == p.id);
+            item.set_checked(persona.id == p.id);
         }
+        self.voice_menu.set_text(format!("Voice: {}", persona.name));
+        self.voice_menu.set_enabled(s.speak);
         #[cfg(omnivoice)]
         {
             let on = s.speak_engine == tts::Engine::Speaker;

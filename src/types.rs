@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::ModelId;
 use crate::settings::Settings;
-use crate::tts::Style;
+use crate::tts::{Activity, Style};
 
 pub const SAMPLE_RATE: u32 = 16_000;
 pub const FRAME_SAMPLES: usize = 1_600; // 100 ms
@@ -43,6 +43,8 @@ pub enum EngineCommand {
         lang: String,
         style: Style,
     },
+    /// Stop reading aloud, and drop what is waiting to be read.
+    StopSpeech,
     /// Speaker's voice learns the voice again from the next speech that qualifies.
     #[cfg(omnivoice)]
     RelearnVoice,
@@ -105,6 +107,7 @@ pub enum EngineEvent {
     Status(Status),
     Progress(Progress),
     Caption(CaptionUpdate),
+    Speech(Activity),
     Stats { asr_ms: u32, device: String },
 }
 

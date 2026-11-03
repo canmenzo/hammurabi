@@ -25,9 +25,11 @@ pub const LANGS: [&str; 22] = [
     "tr", "en", "es", "fr", "de", "it", "pt", "ru", "ar", "hi", "ja", "ko", "id", "vi", "nl", "pl",
     "uk", "el", "sv", "ro", "cs", "hu",
 ];
-const STYLES: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"];
+pub const STYLES: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"];
 /// Flow-matching steps of the vector estimator.
 const STEPS: usize = 4;
+/// Fade at both ends of each chunk: its audio can start and stop off zero, which clicks.
+const FADE_MS: u32 = 5;
 
 const REPLACE: [(&str, &str); 20] = [
     ("–", "-"),
@@ -276,7 +278,9 @@ impl Supertonic {
             if i > 0 {
                 pcm.resize(pcm.len() + gap, 0.0);
             }
-            pcm.extend(self.infer(c, lang, style, speed)?);
+            let mut part = self.infer(c, lang, style, speed)?;
+            fade(&mut part, (self.sample_rate * FADE_MS / 1000) as usize);
+            pcm.extend(part);
         }
         // Supertonic now and then overshoots; scale down instead of clipping.
         let peak = pcm.iter().fold(0f32, |m, x| m.max(x.abs()));
@@ -284,6 +288,16 @@ impl Supertonic {
             pcm.iter_mut().for_each(|x| *x /= peak);
         }
         Ok(pcm)
+    }
+}
+
+fn fade(pcm: &mut [f32], n: usize) {
+    let n = n.min(pcm.len() / 2);
+    let len = pcm.len();
+    for i in 0..n {
+        let gain = i as f32 / n as f32;
+        pcm[i] *= gain;
+        pcm[len - 1 - i] *= gain;
     }
 }
 
@@ -390,6 +404,16 @@ mod tests {
         assert_eq!(chunks("One. Two.\n\nThree.", 300), ["One. Two.", "Three."]);
         assert_eq!(chunks("Aaaa. Bbbb. Cccc.", 11), ["Aaaa. Bbbb.", "Cccc."]);
         assert!(chunks("  ", 300).is_empty());
+    }
+
+    #[test]
+    fn fades_both_ends() {
+        let mut pcm = vec![1.0f32; 10];
+        fade(&mut pcm, 2);
+        assert_eq!(pcm, [0.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.0]);
+        let mut short = vec![1.0f32; 1];
+        fade(&mut short, 2);
+        assert_eq!(short, [1.0]);
     }
 
     #[test]

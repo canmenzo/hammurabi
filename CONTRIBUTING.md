@@ -10,7 +10,11 @@ Security problems go through a private advisory instead. See [SECURITY.md](SECUR
 
 ## Building
 
-You need the [Rust toolchain](https://rustup.rs) (stable) and the platform dependencies listed in the README under [Build from source](README.md#build-from-source).
+You need the [Rust toolchain](https://rustup.rs) (stable) plus MSVC Build Tools (Windows), Xcode CLT (macOS), or on Linux:
+
+```sh
+sudo apt install pkg-config libasound2-dev libxkbcommon-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libwayland-dev libdbus-1-dev
+```
 
 ```sh
 cargo build --release          # app and hammurabi-cli
@@ -19,7 +23,35 @@ cargo run --release --example overlay_demo    # the caption overlay with scripte
 cargo run --release --example settings_demo   # the settings window with fake data
 ```
 
-GPU builds use `--features metal` (macOS) or `--features cuda` (NVIDIA; see the README for the toolkit setup).
+GPU builds:
+
+```sh
+cargo build --release --features metal       # Apple GPU
+cargo build --release --features cuda        # NVIDIA, needs CUDA toolkit 12.8+
+cargo build --release --features omnivoice   # Windows only: Speaker's voice on a Vulkan GPU
+```
+
+For `omnivoice`, run `git submodule update --init --recursive` first (it builds `third_party/omnivoice.cpp` and its ggml), and install [CMake](https://cmake.org) and the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows) with `VULKAN_SDK` set (the installer sets it) and `cmake` on `PATH`. The C++ part builds into `target/ov-release` to stay under Windows' 260-character path limit; keep the checkout path short too. The result links statically and needs only a GPU driver with Vulkan.
+
+For CUDA on Windows, build from a Visual Studio developer prompt with `CUDA_PATH` set and `CUDA_COMPUTE_CAP` set to your GPU (120 = RTX 50, 89 = RTX 40, 86 = RTX 30). Keep the toolkit's `bin` on `PATH` or copy `cudart64_12`, `cublas64_12`, `cublasLt64_12` and `curand64_10` DLLs next to the exe.
+
+## CLI
+
+`hammurabi-cli` ships with every build:
+
+```sh
+hammurabi-cli devices                                    # list audio devices
+hammurabi-cli record --source system --secs 10 out.wav   # record system audio
+hammurabi-cli transcribe out.wav --translate tr          # caption + translate a WAV
+hammurabi-cli download base                              # tiny, base, small, turbo, madlad, supertonic
+hammurabi-cli download omnivoice --accept-license        # GPU build: Speaker's voice (non-commercial)
+hammurabi-cli voices --lang tr                           # voices (with gender) and each persona's pick
+hammurabi-cli speak --lang tr "Merhaba dünya"            # read text aloud
+hammurabi-cli speak --lang tr --persona ayla "Merhaba"   # read it as a persona
+hammurabi-cli speak --lang tr --persona ayla --engine supertonic --out tr.wav "Merhaba"   # Supertonic to a WAV
+hammurabi-cli speak --engine omnivoice --lang tr --ref ref.wav --ref-text "What ref.wav says" --out out.wav "Merhaba"   # in ref.wav's voice
+hammurabi-cli transcribe talk.wav --realtime --translate tr --speak omnivoice   # read the translation in the speaker's voice
+```
 
 ## Testing
 

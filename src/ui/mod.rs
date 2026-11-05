@@ -76,6 +76,7 @@ pub struct App {
     state: EngineState,
     move_mode: bool,
     settings_open: bool,
+    settings_shown: bool,
     shown: bool,
     first_frame: bool,
     root_ready: bool,
@@ -136,6 +137,7 @@ impl App {
             state: EngineState::Idle,
             move_mode: false,
             settings_open: false,
+            settings_shown: false,
             // eframe shows the root after its first painted frame regardless of `with_visible(false)`,
             // so the first logic pass hides it again.
             shown: true,
@@ -659,7 +661,9 @@ impl eframe::App for App {
             let page = self.settings_win.page;
             let actions = ctx.show_viewport_immediate(
                 ViewportId::from_hash_of(SETTINGS_ID),
+                // winit shows a window before sizing it, and it is blank white until painted.
                 ViewportBuilder::default()
+                    .with_visible(false)
                     .with_title("Hammurabi Settings")
                     .with_icon(icons::window_icon())
                     .with_inner_size([740.0, 600.0])
@@ -670,6 +674,11 @@ impl eframe::App for App {
                         .show(ui.ctx(), &mut self.settings, &self.models)
                 },
             );
+            if !std::mem::replace(&mut self.settings_shown, true) {
+                let id = ViewportId::from_hash_of(SETTINGS_ID);
+                ctx.send_viewport_cmd_to(id, ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
+            }
             // The overlay was painted before this window, so it shows any change next frame.
             if page != self.settings_win.page || !actions.is_empty() {
                 ctx.request_repaint();
@@ -721,6 +730,7 @@ impl eframe::App for App {
             }
             if close {
                 self.settings_open = false;
+                self.settings_shown = false;
             }
         }
     }

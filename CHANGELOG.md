@@ -30,6 +30,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Opening Settings while captions were off crashed the app, so the tray icon vanished. This hit every tray click and the Settings menu item.
 - Starting Hammurabi now opens Settings, and starting it again brings up the running copy instead of doing nothing. `--background`, which Start at login now uses, starts it with no window.
 - On Windows 11, the invisible caption window no longer shows a faint outline on screen.
+- Settings no longer flashes a large white window as it opens.
 - Crashes are now written to the log.
 - Supertonic 3 audio fades at each end, to avoid clicks.
 

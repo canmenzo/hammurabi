@@ -23,6 +23,12 @@ cargo run --release --example overlay_demo    # the caption overlay with scripte
 cargo run --release --example settings_demo   # the settings window with fake data
 ```
 
+The Windows installer wraps a folder holding the files to install, and downloads Inno Setup the first time:
+
+```powershell
+packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-x64   # writes dist/hammurabi-windows-x64-setup.exe
+```
+
 GPU builds:
 
 ```sh

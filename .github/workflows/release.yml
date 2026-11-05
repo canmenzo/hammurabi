@@ -35,10 +35,28 @@ jobs:
           Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
           Compress-Archive -Path $stage -DestinationPath dist/hammurabi-windows-x64.zip
 
+      - name: Installer
+        shell: pwsh
+        run: packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-x64
+
+      - name: Try the installer
+        shell: pwsh
+        run: |
+          $setup = Resolve-Path dist/hammurabi-windows-x64-setup.exe
+          $app = Join-Path $env:LOCALAPPDATA 'Programs/Hammurabi'
+          Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          if (-not (Test-Path "$app/hammurabi.exe")) { throw 'the installer did not install the app' }
+          Start-Process "$app/unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Test-Path "$app/hammurabi.exe") -and (Get-Date) -lt $deadline) { Start-Sleep 1 }
+          if (Test-Path "$app/hammurabi.exe") { throw 'the uninstaller left the app behind' }
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows-x64
-          path: dist/hammurabi-windows-x64.zip
+          path: |
+            dist/hammurabi-windows-x64.zip
+            dist/hammurabi-windows-x64-setup.exe
           if-no-files-found: error
 
   # NVIDIA build. candle compiles its kernels for one compute capability, and its GGUF
@@ -81,10 +99,16 @@ jobs:
           }
           7z a -tzip -mx=5 dist/hammurabi-windows-cuda.zip ./$stage
 
+      - name: Installer
+        shell: pwsh
+        run: packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-cuda
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows-cuda
-          path: dist/hammurabi-windows-cuda.zip
+          path: |
+            dist/hammurabi-windows-cuda.zip
+            dist/hammurabi-windows-cuda-setup.exe
           compression-level: 0
           if-no-files-found: error
 
@@ -123,10 +147,16 @@ jobs:
           Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
           Compress-Archive -Path $stage -DestinationPath dist/hammurabi-windows-gpu.zip
 
+      - name: Installer
+        shell: pwsh
+        run: packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-gpu
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows-gpu
-          path: dist/hammurabi-windows-gpu.zip
+          path: |
+            dist/hammurabi-windows-gpu.zip
+            dist/hammurabi-windows-gpu-setup.exe
           if-no-files-found: error
 
   build-macos:
@@ -264,9 +294,10 @@ jobs:
 
             ### Download
 
-            - Windows (x64): `hammurabi-windows-x64.zip`
-            - Windows with an NVIDIA RTX 50 series GPU: `hammurabi-windows-cuda.zip` (much faster captions and translation; needs a recent NVIDIA driver)
-            - Windows with a GPU (NVIDIA, AMD or Intel): `hammurabi-windows-gpu.zip` adds Read aloud in the speaker's own voice (Speaker's voice). Its voice model is for personal, non-commercial use only.
+            - Windows (x64): `hammurabi-windows-x64-setup.exe`
+            - Windows with an NVIDIA RTX 50 series GPU: `hammurabi-windows-cuda-setup.exe` (much faster captions and translation; needs a recent NVIDIA driver)
+            - Windows with a GPU (NVIDIA, AMD or Intel): `hammurabi-windows-gpu-setup.exe` adds Read aloud in the speaker's own voice (Speaker's voice). Its voice model is for personal, non-commercial use only.
+            - The same Windows builds come as portable `.zip` files too.
             - macOS (Apple silicon): `hammurabi-macos-arm64.zip`
             - Linux (x64): `hammurabi-linux-x64.tar.gz`
 
@@ -274,4 +305,4 @@ jobs:
 
             - Hammurabi downloads its speech model on first use (about 300 MB on CPU builds, 1.6 GB for the GPU default `turbo` on CUDA and Metal). The optional built-in translation model is about 1.7 GB more.
             - macOS: move `Hammurabi.app` to Applications. It is not notarized, so macOS blocks the first launch, and right-click > Open no longer gets past that. Run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app` in Terminal, or open it once, click Done, then click Open Anyway in System Settings > Privacy & Security. Hammurabi runs in the menu bar. When you start captions, macOS asks to allow the microphone and system audio recording; allow both. If you declined, turn Hammurabi on in System Settings > Privacy & Security > Screen & System Audio Recording, under System Audio Recording Only. When upgrading from an earlier version, remove the old Hammurabi entry there with the minus button first, because the permission does not carry over to a new version.
-            - Windows: SmartScreen may warn that the app is unrecognized. Click More info, then Run anyway.
+            - Windows: SmartScreen may warn that the installer is unrecognized. Click More info, then Run anyway. It installs for your user only, needs no administrator rights, and upgrades in place. Remove it from Settings > Apps.

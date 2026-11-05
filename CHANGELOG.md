@@ -15,6 +15,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- A Windows installer for each Windows build. It installs for your user with no administrator rights, adds Start Menu and desktop shortcuts, upgrades in place, and removes itself from Settings > Apps. It offers to delete your settings and models on the way out. The portable zips stay.
 - Read aloud volume, and a stop button on voice samples.
 - Read aloud can play on its own speaker or headset (Settings > Read aloud > Read on). On macOS, system voices then keep their speed but lose their pitch; on Linux they need `espeak-ng`.
 - Windows: other apps can be turned down while a voice reads (Settings > Read aloud > Other apps while reading). They come back when it ends, unless you moved their volume meanwhile, and after a crash on the next start.

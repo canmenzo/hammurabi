@@ -914,7 +914,7 @@ fn read_aloud(
             ui.add_enabled(false, egui::RadioButton::new(false, "Speaker's voice"))
                 .on_disabled_hover_text("Comes with the Windows GPU build");
             indented(ui, |ui| {
-                ui.weak("Reads in the voice of whoever is speaking. Comes with the Windows GPU build, hammurabi-windows-gpu.zip.");
+                ui.weak("Reads in the voice of whoever is speaking. Comes with the Windows GPU build.");
             });
         }
         #[cfg(omnivoice)]

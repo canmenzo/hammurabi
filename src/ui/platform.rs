@@ -14,7 +14,7 @@ pub fn configure_event_loop(builder: &mut eframe::EventLoopBuilder<eframe::UserE
     let _ = builder;
 }
 
-/// First frame: keep the overlay on every Space and above fullscreen apps (macOS only).
+/// First frame: on macOS keep the overlay on every Space and above fullscreen apps; on Windows remove its outline.
 pub fn configure_overlay_window(frame: &eframe::Frame) {
     #[cfg(target_os = "macos")]
     {
@@ -38,7 +38,30 @@ pub fn configure_overlay_window(frame: &eframe::Frame) {
             window.setLevel(NSStatusWindowLevel);
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    // winit keeps a 1px frame row above a borderless window, and Windows 11 outlines the window,
+    // so a transparent overlay still shows a faint box. A window region cuts off that row, and
+    // Windows draws no outline around a window that has one. It is far larger than any monitor,
+    // so resizing the overlay needs no update.
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        const FAR: i32 = 1 << 20;
+        let Ok(handle) = frame.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(h) = handle.as_raw() else {
+            return;
+        };
+        // SAFETY: the handle is a live window on this thread, and Windows owns the region from here on.
+        unsafe {
+            let region = CreateRectRgn(-FAR, 1, FAR, FAR);
+            SetWindowRgn(HWND(h.hwnd.get() as *mut _), Some(region), true);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     let _ = frame;
 }
 

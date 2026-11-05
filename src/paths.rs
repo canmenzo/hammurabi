@@ -24,6 +24,12 @@ pub fn duck_journal() -> anyhow::Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("ducked.json"))
 }
 
+/// A second launch reaches the running copy through this socket (Windows uses named events).
+#[cfg(unix)]
+pub fn instance_socket() -> anyhow::Result<PathBuf> {
+    Ok(dirs()?.data_local_dir().join("instance.sock"))
+}
+
 pub fn log_dir() -> anyhow::Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("logs"))
 }

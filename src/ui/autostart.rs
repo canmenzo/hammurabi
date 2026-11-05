@@ -1,5 +1,6 @@
 //! Start at login: HKCU Run value (Windows), LaunchAgent (macOS), XDG autostart entry (Linux).
 //! `is_enabled` reads the OS state and is true only when the entry launches this executable.
+//! Entries from before `--background` existed still count; the app rewrites them on start.
 
 use std::path::PathBuf;
 
@@ -31,14 +32,23 @@ mod imp {
     const NAME: &str = "Hammurabi";
 
     fn command() -> anyhow::Result<String> {
-        Ok(format!("\"{}\"", super::exe()?.display()))
+        Ok(format!(
+            "\"{}\" {}",
+            super::exe()?.display(),
+            crate::ui::BACKGROUND_ARG
+        ))
     }
 
     pub fn is_enabled() -> bool {
         let ours = CURRENT_USER
             .open(RUN)
             .and_then(|k| k.get_string(NAME))
-            .is_ok_and(|v| command().is_ok_and(|c| v.eq_ignore_ascii_case(&c)));
+            .is_ok_and(|v| {
+                command().is_ok_and(|c| {
+                    let old = c.replace(&format!(" {}", crate::ui::BACKGROUND_ARG), "");
+                    v.eq_ignore_ascii_case(&c) || v.eq_ignore_ascii_case(&old)
+                })
+            });
         // First byte: even = enabled, odd = disabled.
         let disabled = CURRENT_USER
             .open(APPROVED)
@@ -88,6 +98,7 @@ mod imp {
     <key>ProgramArguments</key>
     <array>
         <string>{exe}</string>
+        <string>{arg}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -95,7 +106,8 @@ mod imp {
     <string>Interactive</string>
 </dict>
 </plist>
-"#
+"#,
+            arg = crate::ui::BACKGROUND_ARG
         );
         Ok((
             home.home_dir()
@@ -108,8 +120,9 @@ mod imp {
     fn entry() -> anyhow::Result<(PathBuf, String)> {
         let base = directories::BaseDirs::new().context("no home directory")?;
         let desktop = format!(
-            "[Desktop Entry]\nType=Application\nName=Hammurabi\nComment=Live captions and translation\nExec=\"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
-            super::exe()?.display()
+            "[Desktop Entry]\nType=Application\nName=Hammurabi\nComment=Live captions and translation\nExec=\"{}\" {}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+            super::exe()?.display(),
+            crate::ui::BACKGROUND_ARG
         );
         Ok((
             base.config_dir().join("autostart/hammurabi.desktop"),
@@ -117,8 +130,17 @@ mod imp {
         ))
     }
 
+    /// The entry as written before `--background` existed.
+    fn old_entry(text: &str) -> String {
+        let arg = crate::ui::BACKGROUND_ARG;
+        text.replace(&format!("        <string>{arg}</string>\n"), "")
+            .replace(&format!(" {arg}"), "")
+    }
+
     pub fn is_enabled() -> bool {
-        entry().is_ok_and(|(path, text)| std::fs::read_to_string(path).is_ok_and(|t| t == text))
+        entry().is_ok_and(|(path, text)| {
+            std::fs::read_to_string(path).is_ok_and(|t| t == text || t == old_entry(&text))
+        })
     }
 
     pub fn set(on: bool) -> anyhow::Result<()> {

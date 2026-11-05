@@ -1,6 +1,7 @@
 pub mod autostart;
 pub mod hotkey;
 pub mod icons;
+pub mod instance;
 pub mod overlay;
 pub mod platform;
 pub mod settings_window;
@@ -31,6 +32,8 @@ use settings_window::{ModelsStatus, Page, SettingsAction, SettingsWindow};
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 const WEBSITE: &str = "https://hammurabi.menzo.dev";
 const SETTINGS_ID: &str = "hammurabi-settings";
+/// Start without opening a window: what the login entry passes.
+pub const BACKGROUND_ARG: &str = "--background";
 
 /// Sent from tray/menu/hotkey handlers (any thread) to the UI loop.
 pub enum AppEvent {
@@ -75,6 +78,7 @@ pub struct App {
     settings_open: bool,
     shown: bool,
     first_frame: bool,
+    root_ready: bool,
     passthrough: bool,
     layout: Option<(egui::Pos2, egui::Vec2)>,
     status: String,
@@ -136,6 +140,7 @@ impl App {
             // so the first logic pass hides it again.
             shown: true,
             first_frame: true,
+            root_ready: false,
             passthrough: true,
             layout: None,
             status: String::new(),
@@ -149,15 +154,25 @@ impl App {
         if let Some(e) = hk_err.or_else(|| app.hotkeys.apply(&app.settings)) {
             app.warn(e);
         }
-        if std::env::args().any(|a| a == "--start") {
+        // Entries written before --background existed would otherwise open Settings at every login.
+        if app.models.autostart
+            && let Err(e) = autostart::set(true)
+        {
+            log::warn!("start at login: {e:#}");
+        }
+        let has_arg = |name: &str| std::env::args().any(|a| a == name);
+        let start = has_arg("--start");
+        if start {
             app.handle(UiAction::ToggleRunning, &ctx);
         }
         if first_run {
             app.settings_win.welcome = true;
-            app.handle(UiAction::OpenSettings, &ctx);
             if let Err(e) = config::save(&app.settings) {
                 log::error!("config save failed: {e:#}");
             }
+        }
+        if first_run || !(start || has_arg(BACKGROUND_ARG)) {
+            app.handle(UiAction::OpenSettings, &ctx);
         }
         log::info!("hammurabi ready (tray: {})", app.tray.is_some());
         app
@@ -261,10 +276,9 @@ impl App {
                     self.models.autostart = autostart::is_enabled();
                     self.models.voices = tts::voices();
                 } else {
-                    ctx.send_viewport_cmd_to(
-                        ViewportId::from_hash_of(SETTINGS_ID),
-                        ViewportCommand::Focus,
-                    );
+                    let id = ViewportId::from_hash_of(SETTINGS_ID);
+                    ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
                 }
             }
             UiAction::ToggleAutostart => {
@@ -464,6 +478,15 @@ impl App {
 
 fn install_handlers(ctx: &Context, tx: Sender<AppEvent>) {
     let (c, t) = (ctx.clone(), tx.clone());
+    instance::listen(move |signal| {
+        let id = match signal {
+            instance::Signal::Show => "settings",
+            instance::Signal::Quit => "quit",
+        };
+        let _ = t.send(AppEvent::Menu(MenuId::new(id)));
+        c.request_repaint();
+    });
+    let (c, t) = (ctx.clone(), tx.clone());
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
         let _ = t.send(AppEvent::Menu(e.id));
         c.request_repaint();
@@ -538,6 +561,7 @@ impl eframe::App for App {
             log::debug!("root visible = {visible}");
             self.shown = visible;
             ctx.send_viewport_cmd(ViewportCommand::Visible(visible));
+            self.root_ready = false;
             if visible {
                 ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
             }
@@ -618,7 +642,15 @@ impl eframe::App for App {
             self.set_move(false, &ctx);
         }
 
-        if self.settings_open {
+        // On Windows, eframe paints a hidden root, and the frame right after showing it, without the
+        // event loop it needs to create a window, and egui panics if asked to open one then. Frames
+        // after those come from a window event, which has the event loop.
+        let root_ready = self.root_ready;
+        self.root_ready = ctx.input(|i| i.viewport().visible()).unwrap_or(true);
+        if self.settings_open && !root_ready {
+            ctx.request_repaint();
+        }
+        if self.settings_open && root_ready {
             let mut close = false;
             self.models.running = self.running;
             self.models.loading = self.state == EngineState::Loading;

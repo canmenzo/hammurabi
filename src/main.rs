@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use hammurabi::{config, paths, ui};
+use ui::instance::{self, Signal};
 
 const LOG_CAP: u64 = 5_000_000;
 
@@ -59,10 +60,27 @@ fn main() -> eframe::Result {
             log::warn!("no log file: {e:#}");
         }
     }
+    // This is a GUI app, so without this a panic would leave no trace at all.
+    std::panic::set_hook(Box::new(|info| {
+        let trace = std::backtrace::Backtrace::force_capture();
+        log::error!("{info}\n{trace}");
+    }));
     log::info!("Hammurabi {} starting", env!("CARGO_PKG_VERSION"));
-    let instance = single_instance::SingleInstance::new("dev.menzo.hammurabi");
-    if instance.as_ref().is_ok_and(|i| !i.is_single()) {
+    let has_arg = |name: &str| std::env::args().any(|a| a == name);
+    let lock = single_instance::SingleInstance::new("dev.menzo.hammurabi");
+    if lock.as_ref().is_ok_and(|i| !i.is_single()) {
         log::info!("Hammurabi is already running");
+        let signal = if has_arg("--quit") {
+            Some(Signal::Quit)
+        } else {
+            (!has_arg(ui::BACKGROUND_ARG)).then_some(Signal::Show)
+        };
+        if let Some(Err(e)) = signal.map(instance::send) {
+            log::warn!("could not reach the running copy: {e:#}");
+        }
+        return Ok(());
+    }
+    if has_arg("--quit") {
         return Ok(());
     }
     let settings = config::load();

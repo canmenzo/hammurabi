@@ -11,12 +11,12 @@ $sha256 = '9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732'
 $iscc = Join-Path $InnoDir 'ISCC.exe'
 
 if (-not (Test-Path $iscc)) {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $download = Join-Path $env:TEMP 'hammurabi-innosetup.exe'
-    Invoke-WebRequest -UseBasicParsing -UserAgent 'OpenAI File Downloader, XaiImageApiFetch/1.0' -Uri $url -OutFile $download
+    curl.exe -sSfL -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' -o $download $url
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup download failed ($LASTEXITCODE)" }
     if ((Get-FileHash $download -Algorithm SHA256).Hash -ne $sha256) { throw 'Inno Setup download does not match its pinned hash' }
-    $args = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/PORTABLE=1', '/CURRENTUSER', "/DIR=`"$InnoDir`""
-    $p = Start-Process $download -ArgumentList $args -Wait -PassThru
+    $installArgs = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/PORTABLE=1', '/CURRENTUSER', "/DIR=`"$InnoDir`""
+    $p = Start-Process $download -ArgumentList $installArgs -Wait -PassThru
     if ($p.ExitCode -ne 0 -or -not (Test-Path $iscc)) { throw "Inno Setup install failed ($($p.ExitCode))" }
     Remove-Item $download
 }

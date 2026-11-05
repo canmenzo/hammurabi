@@ -3,14 +3,25 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: &docs
+      - "docs/**"
+      - "**.md"
   pull_request:
+    paths-ignore: *docs
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # Thin LTO re-links every test and example binary and took most of each build.
+  # Tests keep release optimisation; release.yml still ships with LTO.
+  CARGO_PROFILE_RELEASE_LTO: "off"
 
 jobs:
   build:

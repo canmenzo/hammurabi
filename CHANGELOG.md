@@ -33,6 +33,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Settings no longer flashes a large white window as it opens.
 - Crashes are now written to the log.
 - Supertonic 3 audio fades at each end, to avoid clicks.
+- Captions could stop for good until the next start when the speech model revised a line to something shorter than what was already on screen.
+- Linux: the end of every reading was cut off, up to a few seconds of it, because playback stopped while PulseAudio still had the audio buffered.
+- Speaker's voice now reads faster when captions pile up, like the other voices.
+- Settings no longer warns about a missing system voice when Supertonic 3 or Speaker's voice reads that language.
 
 ## [0.4.0] - 2026-10-23
 

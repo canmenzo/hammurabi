@@ -61,7 +61,7 @@ pub fn default_voice(_lang: &str) -> Option<String> {
     None
 }
 
-fn espeak(text: &str, lang: &str, rate: f32, pitch: f32, volume: f32) -> Command {
+fn espeak(lang: &str, rate: f32, pitch: f32, volume: f32) -> Command {
     let mut cmd = Command::new("espeak-ng");
     cmd.args(["-s", &espeak_speed(rate), "-p", &espeak_pitch(pitch)]);
     // 0..200, where 100 is the default.
@@ -81,7 +81,7 @@ fn speak_on_device(
     out: Output,
     cancel: &AtomicBool,
 ) -> anyhow::Result<()> {
-    let rendered = espeak(text, lang, rate, pitch, 1.0)
+    let rendered = espeak(lang, rate, pitch, 1.0)
         .arg("--stdout")
         .arg("--")
         .arg(text)
@@ -137,7 +137,7 @@ pub fn speak(
     let (mut child, is_spd) = match spawn(&mut spd) {
         Ok(c) => (c, true),
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            match spawn(espeak(text, lang, rate, pitch, volume).arg("--").arg(text)) {
+            match spawn(espeak(lang, rate, pitch, volume).arg("--").arg(text)) {
                 Ok(c) => (c, false),
                 Err(e) if e.kind() == ErrorKind::NotFound => {
                     anyhow::bail!("install speech-dispatcher (spd-say) or espeak-ng")

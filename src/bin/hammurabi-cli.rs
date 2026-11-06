@@ -459,7 +459,7 @@ fn speak_omnivoice(
         );
     }
     let t = Instant::now();
-    let pcm = ov.synthesize(text, lang, steps)?;
+    let pcm = ov.synthesize(text, lang, steps, 1.0)?;
     let synth = t.elapsed().as_secs_f32();
     let secs = pcm.len() as f32 / omnivoice::SAMPLE_RATE as f32;
     println!(

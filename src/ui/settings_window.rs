@@ -972,6 +972,7 @@ fn read_aloud(
             && s.speak
             && !m.voices.is_empty()
             && voices.is_empty()
+            && !(neural && tts::neural(&s.speak_style(), l).is_some())
         {
             ui.colored_label(WARN, tts::missing_voice(l));
         }

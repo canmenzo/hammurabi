@@ -109,8 +109,9 @@ impl Assembler {
             st.emitted = end + 1;
         }
         self.flush_at = None;
+        // A newer partial can be shorter than what earlier ones already showed.
         let emitted = self.segs[&seg].emitted;
-        let live = self.join_carry(&words[emitted..]);
+        let live = self.join_carry(words.get(emitted..).unwrap_or_default());
         out.push(live_line(&live, Some(lang.to_string())));
         self.prev_partial = Some((seg, words));
         out
@@ -232,6 +233,20 @@ fn live_line(words: &[String], lang: Option<String>) -> Out {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_shorter_than_what_was_shown() {
+        let words = |t: &str| t.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let now = Instant::now();
+        let mut a = Assembler::default();
+        let long = "One two three four five. Six";
+        a.partial(1, words(long), "en", now);
+        let shown = a.partial(1, words(long), "en", now);
+        assert!(matches!(&shown[0], Out::Sentence { text, .. } if text.ends_with("five.")));
+        let out = a.partial(1, words("One two three"), "en", now);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(&out[0], Out::Live { text, .. } if text.is_empty()));
+    }
 
     fn w(s: &str) -> Vec<String> {
         s.split(' ')

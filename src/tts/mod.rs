@@ -716,11 +716,11 @@ fn speak_cloned(
     ducker: &mut Ducker,
     ov: &mut omnivoice::OmniVoice,
     text: &str,
-    lang: &str,
+    (lang, pace): (&str, f32),
     out: (Output, f32),
 ) -> anyhow::Result<()> {
     let t = Instant::now();
-    let pcm = ov.synthesize(text, lang, omnivoice::STEPS)?;
+    let pcm = ov.synthesize(text, lang, omnivoice::STEPS, pace)?;
     let (ms, secs) = (
         t.elapsed().as_millis(),
         pcm.len() as f32 / omnivoice::SAMPLE_RATE as f32,
@@ -884,7 +884,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                         &mut ducker,
                         o,
                         &u.text,
-                        &u.lang,
+                        (&u.lang, pace),
                         (style.output(), style.duck),
                     ) {
                         Ok(()) => continue,

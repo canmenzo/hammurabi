@@ -109,14 +109,20 @@ fn frames(text: &str, ref_weight: f32, ref_frames: f32) -> f32 {
     }
 }
 
-/// Seconds to force for `text` read in a voice learned from `ref_frames` of `ref_text`, or 0 to
-/// keep the reference's pace when it is not much slower than OmniVoice's own voice.
-fn forced_seconds(text: &str, ref_text: &str, ref_frames: i32) -> f32 {
+/// Seconds to force for `text` read `pace` times as fast, in OmniVoice's own voice or in one
+/// learned from (`ref_text`, `ref_frames`), or 0 to leave the length to OmniVoice: the reference's
+/// pace when it is not much slower than the own voice's.
+fn forced_seconds(text: &str, reference: Option<(&str, i32)>, pace: f32) -> f32 {
     // Without a reference OmniVoice paces text like "Nice to meet you." in 1 s.
     let own = frames(text, weight("Nice to meet you."), FPS);
+    let Some((ref_text, ref_frames)) = reference else {
+        return if pace > 1.0 { own / pace / FPS } else { 0.0 };
+    };
     let cloned = frames(text, weight(ref_text), ref_frames as f32);
     if cloned > own * MAX_SLOWER {
-        own * MAX_SLOWER / FPS
+        own * MAX_SLOWER / pace / FPS
+    } else if pace > 1.0 {
+        cloned / pace / FPS
     } else {
         0.0
     }
@@ -151,7 +157,7 @@ impl OmniVoice {
             bail!("it did not start on the GPU ({DEVICE}): {}", last_error());
         }
         let mut ov = OmniVoice { ctx, voice: None };
-        ov.synthesize("Hello.", "en", STEPS)?;
+        ov.synthesize("Hello.", "en", STEPS, 1.0)?;
         Ok(ov)
     }
 
@@ -188,11 +194,20 @@ impl OmniVoice {
     }
 
     /// 24 kHz mono speech for `text` in caption language `lang`, in the learned voice (OmniVoice's
-    /// own voice before one is learned).
-    pub fn synthesize(&mut self, text: &str, lang: &str, steps: i32) -> anyhow::Result<Vec<f32>> {
+    /// own voice before one is learned), `pace` times as fast as it would normally read.
+    pub fn synthesize(
+        &mut self,
+        text: &str,
+        lang: &str,
+        steps: i32,
+        pace: f32,
+    ) -> anyhow::Result<Vec<f32>> {
         let (r, seconds) = match &self.voice {
-            Some(v) => (v.ptr.cast_const(), forced_seconds(text, &v.text, v.frames)),
-            None => (ptr::null(), 0.0),
+            Some(v) => (
+                v.ptr.cast_const(),
+                forced_seconds(text, Some((&v.text, v.frames)), pace),
+            ),
+            None => (ptr::null(), forced_seconds(text, None, pace)),
         };
         let (text, lang) = (cstr(text), cstr(language(lang)));
         let (mut out, mut n) = (ptr::null_mut(), 0);
@@ -251,10 +266,19 @@ mod tests {
         // A reference read at the own voice's pace keeps its own length.
         let r = "Merhaba! Altyazıları bu sesle okuyacağım.";
         let normal = (weight(r) / weight("Nice to meet you.") * FPS) as i32;
-        assert_eq!(forced_seconds(text, r, normal), 0.0);
+        assert_eq!(forced_seconds(text, Some((r, normal)), 1.0), 0.0);
         // One read twice as slowly is held to 10% longer than the own voice.
-        let s = forced_seconds(text, r, normal * 2);
+        let s = forced_seconds(text, Some((r, normal * 2)), 1.0);
         assert!((s - own * MAX_SLOWER / FPS).abs() < 1e-3, "{s}");
+        // Catching up shortens all of them.
+        let s = forced_seconds(text, Some((r, normal * 2)), 1.25);
+        assert!((s - own * MAX_SLOWER / 1.25 / FPS).abs() < 1e-3, "{s}");
+        let s = forced_seconds(text, Some((r, normal)), 1.25);
+        let cloned = frames(text, weight(r), normal as f32);
+        assert!((s - cloned / 1.25 / FPS).abs() < 1e-3, "{s}");
+        assert_eq!(forced_seconds(text, None, 1.0), 0.0);
+        let s = forced_seconds(text, None, 1.25);
+        assert!((s - own / 1.25 / FPS).abs() < 1e-3, "{s}");
         assert_eq!(weight("ab 1."), 2.0 + 0.2 + 3.5 + 0.5);
         assert_eq!(weight("日本"), 6.0);
     }

@@ -369,16 +369,25 @@ pub fn play(
         f => anyhow::bail!("unsupported output sample format {f} on {device}"),
     }?;
     stream.play()?;
+    let started = Instant::now();
+    let secs = Duration::from_secs_f64(len as f64 / f64::from(out_rate));
     // A device that stops pulling data ends playback a little after the audio's length.
-    let deadline = Instant::now() + Duration::from_secs_f64(len as f64 / f64::from(out_rate) + 2.0);
+    let deadline = started + secs + Duration::from_secs(2);
     while pos.load(Ordering::Relaxed) < len && Instant::now() < deadline {
         if cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
         std::thread::sleep(POLL);
     }
-    // The last buffer handed over is still in the device.
-    std::thread::sleep(Duration::from_millis(150));
+    // What was handed over is still in the device's buffer, seconds of it on PulseAudio, and
+    // dropping the stream loses it.
+    let end = started + secs + Duration::from_millis(150);
+    while Instant::now() < end {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        std::thread::sleep(POLL);
+    }
     Ok(())
 }
 

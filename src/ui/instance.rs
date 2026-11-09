@@ -87,7 +87,13 @@ mod imp {
         Ok(UnixListener::bind(path)?)
     }
 
-    pub fn listen(on: impl Fn(Signal) + Send + 'static) {
+    pub fn listen(on: impl Fn(Signal) + Send + Sync + 'static) {
+        let on = std::sync::Arc::new(on);
+        #[cfg(target_os = "macos")]
+        {
+            let on = on.clone();
+            super::reopen::install(move || on(Signal::Show));
+        }
         let listener = match bind() {
             Ok(l) => l,
             Err(e) => {
@@ -109,6 +115,51 @@ mod imp {
                     }
                 }
             });
+    }
+}
+
+/// macOS never starts a second copy of a running app: opening it again from Finder, Spotlight or
+/// Launchpad sends the running one a reopen Apple Event instead, which winit ignores.
+#[cfg(target_os = "macos")]
+mod reopen {
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, NSObject};
+    use objc2::{AllocAnyThread, DefinedClass, class, define_class, msg_send, sel};
+
+    const CORE_EVENT_CLASS: u32 = u32::from_be_bytes(*b"aevt");
+    const REOPEN_APPLICATION: u32 = u32::from_be_bytes(*b"rapp");
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[name = "HammurabiReopenHandler"]
+        #[ivars = Box<dyn Fn()>]
+        struct Handler;
+
+        impl Handler {
+            #[unsafe(method(handleReopen:withReply:))]
+            fn handle_reopen(&self, _event: *mut AnyObject, _reply: *mut AnyObject) {
+                (self.ivars())();
+            }
+        }
+    );
+
+    pub fn install(on: impl Fn() + 'static) {
+        let handler = Handler::alloc().set_ivars(Box::new(on) as Box<dyn Fn()>);
+        // SAFETY: NSObject's init on a freshly allocated object; the manager is a process-wide
+        // singleton, and the handler is leaked so it outlives every event sent to it.
+        unsafe {
+            let handler: Retained<Handler> = msg_send![super(handler), init];
+            let manager: *mut AnyObject =
+                msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+            let _: () = msg_send![
+                manager,
+                setEventHandler: &*handler,
+                andSelector: sel!(handleReopen:withReply:),
+                forEventClass: CORE_EVENT_CLASS,
+                andEventID: REOPEN_APPLICATION
+            ];
+            std::mem::forget(handler);
+        }
     }
 }
 

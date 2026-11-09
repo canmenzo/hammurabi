@@ -4,6 +4,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
 ### Changed
 
 - Click and hold any caption to drag it anywhere. The Move captions item, its shortcut and the dashed frame are gone. Reset position stays in Settings > Captions.
@@ -97,7 +99,8 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
-[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.5.0
 [0.4.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.2.0

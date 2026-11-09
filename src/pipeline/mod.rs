@@ -546,6 +546,10 @@ impl Engine {
         let feed_tx = audio_tx.clone();
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let (done_tx, done) = crossbeam_channel::bounded::<()>(1);
+        let exit = ExitSignal {
+            done: Some(done_tx),
+            notify: notifier.clone(),
+        };
         let events = Events {
             tx: event_tx,
             notify: notifier,
@@ -553,6 +557,7 @@ impl Engine {
         std::thread::Builder::new()
             .name("hm-engine".into())
             .spawn(move || {
+                let exit = exit;
                 let now = Instant::now();
                 // Windows keeps an app's lowered volume if we died with it turned down.
                 std::thread::spawn(crate::audio::duck::recover);
@@ -582,7 +587,7 @@ impl Engine {
                 engine.stop_capture();
                 // Read aloud ends (and frees its GPU context) before the app may exit.
                 drop(engine.speaker.take());
-                drop(done_tx);
+                drop(exit);
             })
             .expect("spawn engine thread");
         (
@@ -1177,6 +1182,19 @@ fn downloading(p: &Progress) -> bool {
     matches!(p.phase, ProgressPhase::Downloading) && p.total.is_none_or(|t| p.done < t)
 }
 
+/// Dropped when the engine thread ends, by a panic too: says so, and wakes the UI to look.
+struct ExitSignal {
+    done: Option<Sender<()>>,
+    notify: Notifier,
+}
+
+impl Drop for ExitSignal {
+    fn drop(&mut self) {
+        self.done.take();
+        (self.notify)();
+    }
+}
+
 pub struct EngineHandle {
     cmd_tx: Sender<EngineCommand>,
     event_rx: Receiver<EngineEvent>,
@@ -1197,6 +1215,13 @@ impl EngineHandle {
         self.event_rx.recv_timeout(timeout).ok()
     }
 
+    pub fn finished(&self) -> bool {
+        matches!(
+            self.done.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        )
+    }
+
     /// Sends Shutdown and joins the engine thread, giving up after `timeout`.
     pub fn shutdown(self, timeout: Duration) {
         self.send(EngineCommand::Shutdown);
@@ -1207,6 +1232,23 @@ impl EngineHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ending_the_engine_is_noticed_and_wakes_the_ui() {
+        let woken = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let w = woken.clone();
+        let (engine, _feed) = Engine::spawn_fed(Arc::new(move || {
+            w.store(true, std::sync::atomic::Ordering::SeqCst)
+        }));
+        assert!(!engine.finished());
+        engine.send(EngineCommand::Shutdown);
+        let t = Instant::now();
+        while !engine.finished() && t.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(engine.finished());
+        assert!(woken.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[test]
     fn live_captions_text_reaches_captions_and_translation() {

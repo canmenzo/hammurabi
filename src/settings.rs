@@ -157,7 +157,6 @@ pub struct Settings {
     pub overlay_pos: Option<[f32; 2]>,
     /// Parsed with `str::parse::<global_hotkey::hotkey::HotKey>()`.
     pub hotkey_toggle: String,
-    pub hotkey_move: String,
     /// Ask GitHub for a newer release at startup and once a day.
     pub check_updates: bool,
     /// Last version the overlay announced, so each update is announced once.
@@ -192,7 +191,6 @@ impl Default for Settings {
             caption: CaptionStyle::default(),
             overlay_pos: None,
             hotkey_toggle: "alt+shift+KeyT".into(),
-            hotkey_move: "alt+shift+KeyM".into(),
             check_updates: true,
             update_notified: None,
         }

@@ -2207,6 +2207,7 @@ dependencies = [
  "windows-registry",
  "winit",
  "winresource",
+ "x11-dl",
 ]
 
 [[package]]

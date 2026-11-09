@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Key, ViewportCommand};
+use eframe::egui::{self, ViewportCommand};
 use hammurabi::settings::Settings;
 use hammurabi::types::{CaptionUpdate, Status, StatusLevel};
 use hammurabi::ui::overlay::{OverlayState, layout_for_monitor, viewport_builder};
@@ -28,7 +28,6 @@ enum Step {
     Live(&'static str),
     Final(u64, bool),
     Status,
-    Move(bool),
 }
 
 struct Demo {
@@ -37,7 +36,6 @@ struct Demo {
     start: Instant,
     script: Vec<(f32, Step)>,
     next: usize,
-    move_mode: bool,
     placed: bool,
 }
 
@@ -50,8 +48,6 @@ impl Demo {
             script.push((t + 1.2, Step::Final(i as u64, false)));
             script.push((t + 1.8, Step::Final(i as u64, true)));
         }
-        script.push((14.0, Step::Move(true)));
-        script.push((20.0, Step::Move(false)));
         Self {
             settings: Settings {
                 target_language: "tr".into(),
@@ -61,14 +57,8 @@ impl Demo {
             start: Instant::now(),
             script,
             next: 0,
-            move_mode: false,
             placed: false,
         }
-    }
-
-    fn set_move(&mut self, ctx: &egui::Context, on: bool) {
-        self.move_mode = on;
-        ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(!on));
     }
 }
 
@@ -119,12 +109,8 @@ impl eframe::App for Demo {
                     },
                     now,
                 ),
-                Step::Move(on) => self.set_move(ctx, on),
             }
             self.next += 1;
-        }
-        if ctx.input(|i| i.key_pressed(Key::M)) {
-            self.set_move(ctx, !self.move_mode);
         }
         ctx.request_repaint_after(Duration::from_millis(50));
     }
@@ -141,13 +127,7 @@ impl eframe::App for Demo {
             self.placed = true;
         }
         let style = self.settings.caption.clone();
-        let r = self.overlay.paint(ui, &style, self.move_mode, None);
-        if r.start_drag {
-            ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
-        }
-        if r.finish_move {
-            self.set_move(&ui.ctx().clone(), false);
-        }
+        self.overlay.paint(ui, &style, None);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

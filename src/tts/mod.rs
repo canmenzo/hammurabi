@@ -241,6 +241,23 @@ pub fn neural(style: &Style, lang: &str) -> Option<(&'static str, &'static str, 
     Some((lang, voice, speed))
 }
 
+/// Supertonic reading in place of an OS voice, when the OS has none for `lang`.
+pub fn neural_fallback(
+    style: &Style,
+    voices: &[Voice],
+    lang: &str,
+) -> Option<(&'static str, &'static str, f32)> {
+    if style.resolve(voices, lang).is_ok() {
+        return None;
+    }
+    let style = Style {
+        engine: Engine::Supertonic,
+        voice: None,
+        ..style.clone()
+    };
+    neural(&style, lang)
+}
+
 impl Style {
     fn output(&self) -> Output<'_> {
         Output {
@@ -900,8 +917,9 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                 None => {}
             }
         }
-        if let Some((lang, voice, speed)) = neural(&style, &u.lang)
-            && models::is_cached(ModelId::Supertonic)
+        if models::is_cached(ModelId::Supertonic)
+            && let Some((lang, voice, speed)) =
+                neural(&style, &u.lang).or_else(|| neural_fallback(&style, &voices(), &u.lang))
         {
             let loaded = neural_engine.is_some();
             report(Activity::Reading(format!("Supertonic 3 {voice}")));
@@ -1244,6 +1262,22 @@ mod tests {
         for l in SOURCE_LANGS.iter().chain(TARGET_LANGS.iter()) {
             assert!(!sample(l, "Ayla").contains("Ayla"), "{l}");
         }
+    }
+
+    #[test]
+    fn supertonic_stands_in_only_for_a_missing_os_voice() {
+        let voices = [voice("zira", "en-US")];
+        let style = Style {
+            engine: Engine::System,
+            ..style("deniz")
+        };
+        assert_eq!(
+            neural_fallback(&style, &voices, "tr").map(|n| n.1),
+            Some("M4")
+        );
+        assert_eq!(neural_fallback(&style, &voices, "en"), None);
+        // No voice list: the OS picks, so nothing is known to be missing.
+        assert_eq!(neural_fallback(&style, &[], "tr"), None);
     }
 
     #[test]

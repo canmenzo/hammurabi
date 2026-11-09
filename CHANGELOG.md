@@ -6,6 +6,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ### Changed
 
+- Click and hold any caption to drag it anywhere. The Move captions item, its shortcut and the dashed frame are gone. Reset position stays in Settings > Captions.
+- With system voices and none installed for the language being read, Supertonic 3 reads instead, if it is downloaded.
 - Voice personas now have the same names and descriptions as the Babil extension: English names by default, and Turkish or Spanish ones on those systems. Saved choices are kept.
 - Settings is now split into pages (Listen, Translate, Read aloud, Captions, General) with the site's colors. A header shows whether captions are on, has a Start/Stop button, shows warnings, and says what the first start will download.
 - On Windows 11, system audio keeps being captioned while a voice reads: Hammurabi leaves its own sound out of what it captures. Everywhere, the same goes when the voice plays on another device than the one captioned. Otherwise, and for the microphone, listening still pauses.
@@ -27,6 +29,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ### Fixed
 
+- Windows: captions stayed invisible until Move captions had been used once, because Windows does not show a click-through window whose layering was never set up.
+- If the engine ever crashes, it now restarts and captions carry on. Before, Start and every setting silently did nothing until the app was restarted.
 - Opening Settings while captions were off crashed the app, so the tray icon vanished. This hit every tray click and the Settings menu item.
 - Starting Hammurabi now opens Settings, and starting it again brings up the running copy instead of doing nothing. `--background`, which Start at login now uses, starts it with no window.
 - On Windows 11, the invisible caption window no longer shows a faint outline on screen.

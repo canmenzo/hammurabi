@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod cursor;
 pub mod hotkey;
 pub mod icons;
 pub mod instance;
@@ -30,6 +31,8 @@ use overlay::OverlayState;
 use settings_window::{ModelsStatus, Page, SettingsAction, SettingsWindow};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+/// An engine that dies again within this long is left stopped instead of restarted.
+const ENGINE_RESTART_GAP: Duration = Duration::from_secs(30);
 const WEBSITE: &str = "https://hammurabi.menzo.dev";
 const SETTINGS_ID: &str = "hammurabi-settings";
 /// Start without opening a window: what the login entry passes.
@@ -54,7 +57,6 @@ pub enum UiAction {
     ToggleSpeakerVoice,
     #[cfg(omnivoice)]
     RelearnVoice,
-    ToggleMove,
     OpenSettings,
     ToggleAutostart,
     OpenUpdate,
@@ -74,7 +76,10 @@ pub struct App {
     app_rx: Receiver<AppEvent>,
     running: bool,
     state: EngineState,
-    move_mode: bool,
+    engine_restarted: Option<Instant>,
+    /// The window is being dragged by a caption.
+    dragging: bool,
+    pointer: cursor::Watch,
     settings_open: bool,
     settings_shown: bool,
     shown: bool,
@@ -135,7 +140,9 @@ impl App {
             app_rx,
             running: false,
             state: EngineState::Idle,
-            move_mode: false,
+            engine_restarted: None,
+            dragging: false,
+            pointer: cursor::Watch::spawn(ctx.clone()),
             settings_open: false,
             settings_shown: false,
             // eframe shows the root after its first painted frame regardless of `with_visible(false)`,
@@ -268,7 +275,6 @@ impl App {
                 self.models.voice_learned = false;
                 self.engine().send(EngineCommand::RelearnVoice);
             }
-            UiAction::ToggleMove => self.set_move(!self.move_mode, ctx),
             UiAction::OpenSettings => {
                 if !self.settings_open {
                     self.settings_open = true;
@@ -309,16 +315,31 @@ impl App {
         }
     }
 
-    fn set_move(&mut self, on: bool, ctx: &Context) {
-        if self.move_mode == on {
+    /// The engine thread ended without being asked to, so a panic took it down. Everything sent
+    /// to it would go nowhere, and nothing would say so.
+    fn engine_died(&mut self, ctx: &Context) {
+        log::error!("the engine stopped unexpectedly");
+        let c = ctx.clone();
+        self.engine = Some(Engine::spawn(Arc::new(move || c.request_repaint())));
+        self.models.reading = None;
+        self.models.previewing = None;
+        self.models.downloading.clear();
+        let now = Instant::now();
+        let again = self
+            .engine_restarted
+            .is_some_and(|t| now.duration_since(t) < ENGINE_RESTART_GAP);
+        self.engine_restarted = Some(now);
+        if !self.running {
             return;
         }
-        self.move_mode = on;
-        self.tray_dirty = true;
-        if !on && let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
-            self.settings.overlay_pos = Some([rect.min.x, rect.min.y]);
-            self.layout = None;
-            self.dirty_since = Some(Instant::now());
+        if again {
+            self.running = false;
+            self.state = EngineState::Idle;
+            self.warn("Captions stopped after an internal error. See the log for details.".into());
+        } else {
+            self.engine()
+                .send(EngineCommand::Start(self.settings.clone()));
+            self.warn("Captions hit an internal error and restarted.".into());
         }
     }
 
@@ -539,6 +560,9 @@ impl eframe::App for App {
         while let Some(ev) = self.engine().try_recv() {
             self.on_engine(ev);
         }
+        if self.engine().finished() {
+            self.engine_died(ctx);
+        }
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
         }
@@ -547,21 +571,17 @@ impl eframe::App for App {
             self.tray_dirty = false;
             let tip = self.tooltip();
             if let Some(t) = &mut self.tray {
-                t.sync(
-                    &self.settings,
-                    self.running,
-                    self.move_mode,
-                    self.models.autostart,
-                    &tip,
-                );
+                t.sync(&self.settings, self.running, self.models.autostart, &tip);
             }
         }
 
-        let visible =
-            self.running || self.settings_open || self.move_mode || self.overlay.has_status();
+        let visible = self.running || self.settings_open || self.overlay.has_status();
         if visible != self.shown {
             log::debug!("root visible = {visible}");
             self.shown = visible;
+            if !visible {
+                self.pointer.set_rects(Vec::new());
+            }
             ctx.send_viewport_cmd(ViewportCommand::Visible(visible));
             self.root_ready = false;
             if visible {
@@ -609,7 +629,8 @@ impl eframe::App for App {
             platform::configure_overlay_window(frame);
         }
 
-        if !self.move_mode
+        // Crossing monitors mid-drag changes the size to lay out for, but not the saved position.
+        if !self.dragging
             && let Some(monitor) = ctx.input(|i| i.viewport().monitor_size)
         {
             let layout = overlay::layout_for_monitor(
@@ -623,25 +644,47 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(layout.1));
             }
         }
-        if self.passthrough != !self.move_mode {
-            self.passthrough = !self.move_mode;
-            ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(self.passthrough));
+        let passthrough = !(self.dragging || self.pointer.over());
+        if self.passthrough != passthrough {
+            self.passthrough = passthrough;
+            ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(passthrough));
         }
 
         // Styling captions shows them where they will appear.
         let sample = (self.settings_open && self.settings_win.page == Page::Captions)
             .then(|| tts::sample(&self.settings.target_language, "Hammurabi"));
-        let resp = self.overlay.paint(
-            ui,
-            &self.settings.caption,
-            self.move_mode,
-            sample.as_deref(),
-        );
-        if resp.start_drag {
+        let pressed = self
+            .overlay
+            .paint(ui, &self.settings.caption, sample.as_deref());
+        if pressed {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+            self.dragging = true;
         }
-        if resp.finish_move {
-            self.set_move(false, &ctx);
+        // Windows runs a drag in its own loop, so no release event reaches this window.
+        if self.dragging {
+            if !pressed && cursor::read().is_none_or(|p| !p.down) {
+                self.dragging = false;
+                if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
+                    self.settings.overlay_pos = Some([rect.min.x, rect.min.y]);
+                    self.layout = None;
+                    self.dirty_since = Some(Instant::now());
+                }
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+        }
+        if let Some(inner) = ctx.input(|i| i.viewport().inner_rect) {
+            let scale = if cfg!(target_os = "macos") {
+                1.0
+            } else {
+                ctx.pixels_per_point()
+            };
+            let rects = self.overlay.bubbles().iter();
+            self.pointer.set_rects(
+                rects
+                    .map(|r| r.translate(inner.min.to_vec2()) * scale)
+                    .collect(),
+            );
         }
 
         // On Windows, eframe paints a hidden root, and the frame right after showing it, without the
@@ -718,7 +761,6 @@ impl eframe::App for App {
                     }
                     SettingsAction::StopPreview => self.engine().send(EngineCommand::StopSpeech),
                     SettingsAction::ToggleRunning => self.handle(UiAction::ToggleRunning, &ctx),
-                    SettingsAction::MoveCaptions => self.handle(UiAction::ToggleMove, &ctx),
                     SettingsAction::ResetPosition => {
                         self.settings.overlay_pos = None;
                         self.layout = None;

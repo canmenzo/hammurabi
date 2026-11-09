@@ -50,19 +50,20 @@ ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "
 winit = { version = "0.30", default-features = false }   # eframe 0.37 does not re-export winit/egui_winit
 
 [target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "2"
 tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 cpal = { version = "0.18", features = ["pulseaudio"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWindow", "NSView", "NSResponder", "NSGraphics"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWindow", "NSView", "NSResponder", "NSGraphics", "NSEvent"] }
 raw-window-handle = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSEnumerator"] }
 objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVSpeechSynthesis"] }
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = { version = "0.25", optional = true }
-windows = { version = "0.62", features = ["Foundation_Collections", "Media_Core", "Media_SpeechSynthesis", "Storage_Streams", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_Security", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Foundation_Collections", "Media_Core", "Media_SpeechSynthesis", "Storage_Streams", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_Security", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 windows-core = "0.62"
 windows-registry = "0.6"
 

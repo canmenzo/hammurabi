@@ -26,7 +26,6 @@ pub struct Tray {
     personas: Vec<CheckMenuItem>,
     #[cfg(omnivoice)]
     speaker_voice: (CheckMenuItem, MenuItem),
-    move_item: CheckMenuItem,
     autostart: CheckMenuItem,
     update: Option<MenuItem>,
     active: Option<bool>,
@@ -54,7 +53,6 @@ impl Tray {
             .iter()
             .map(|p| CheckMenuItem::with_id(format!("voice:{}", p.id), p.name(), true, false, None))
             .collect();
-        let move_item = CheckMenuItem::with_id("move", "Move captions", true, false, None);
         let autostart = CheckMenuItem::with_id("autostart", "Start at login", true, false, None);
 
         let source_menu = Submenu::new("Source", true);
@@ -88,7 +86,6 @@ impl Tray {
             &target_menu,
             &speak,
             &voice_menu,
-            &move_item,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id("settings", "Settings…", true, None),
             &autostart,
@@ -130,7 +127,6 @@ impl Tray {
             personas,
             #[cfg(omnivoice)]
             speaker_voice,
-            move_item,
             autostart,
             update: None,
             active: Some(false),
@@ -147,7 +143,6 @@ impl Tray {
             "speaker-voice" => UiAction::ToggleSpeakerVoice,
             #[cfg(omnivoice)]
             "relearn" => UiAction::RelearnVoice,
-            "move" => UiAction::ToggleMove,
             "settings" => UiAction::OpenSettings,
             "autostart" => UiAction::ToggleAutostart,
             "update" => UiAction::OpenUpdate,
@@ -185,14 +180,7 @@ impl Tray {
     }
 
     /// Muda toggles check items on click, so every check is rewritten from state.
-    pub fn sync(
-        &mut self,
-        s: &Settings,
-        running: bool,
-        move_mode: bool,
-        autostart: bool,
-        tooltip: &str,
-    ) {
+    pub fn sync(&mut self, s: &Settings, running: bool, autostart: bool, tooltip: &str) {
         self.start.set_text(if running {
             "Stop captions"
         } else {
@@ -225,7 +213,6 @@ impl Tray {
             self.speaker_voice.0.set_checked(on);
             self.speaker_voice.1.set_enabled(on && s.speak);
         }
-        self.move_item.set_checked(move_mode);
         self.autostart.set_checked(autostart);
         let _ = self.icon.set_tooltip(Some(tooltip));
         if self.active != Some(running) {

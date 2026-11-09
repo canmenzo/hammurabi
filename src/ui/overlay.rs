@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, CursorIcon, FontId, Galley, Pos2, Rect, Shape, Stroke, Ui,
-    Vec2, ViewportBuilder, vec2,
+    self, Color32, CornerRadius, CursorIcon, FontId, Galley, Pos2, Rect, Ui, Vec2, ViewportBuilder,
+    vec2,
 };
 
 use crate::settings::{CaptionStyle, Edge, Settings};
@@ -12,12 +12,10 @@ use crate::types::{CaptionUpdate, Status, StatusLevel};
 const FADE: Duration = Duration::from_millis(250);
 const FADE_IN: Duration = Duration::from_millis(120);
 const SAMPLE_ORIGINAL: &str = "This is how captions will look.";
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 8.0;
 const BLOCK_GAP: f32 = 6.0;
 const LINE_GAP: f32 = 2.0;
-const MOVE_HINT: &str = "Drag to move \u{b7} double-click to finish";
 
 struct Line {
     original: String,
@@ -87,15 +85,8 @@ pub struct OverlayState {
     live: Option<Line>,
     status: Option<StatusPill>,
     hold_secs: f32,
-    last_press: Option<Instant>,
-}
-
-#[derive(Default)]
-pub struct OverlayResponse {
-    /// Primary press in move mode: caller sends `ViewportCommand::StartDrag`.
-    pub start_drag: bool,
-    /// Double-click in move mode: caller leaves move mode and saves the position.
-    pub finish_move: bool,
+    /// The bubbles painted last, in window coordinates.
+    bubbles: Vec<Rect>,
 }
 
 impl OverlayState {
@@ -177,14 +168,13 @@ impl OverlayState {
         cues.chain(status).min()
     }
 
+    pub fn bubbles(&self) -> &[Rect] {
+        &self.bubbles
+    }
+
     /// `sample`: a translation to show as a sample caption while nothing else is on screen.
-    pub fn paint(
-        &mut self,
-        ui: &mut Ui,
-        style: &CaptionStyle,
-        move_mode: bool,
-        sample: Option<&str>,
-    ) -> OverlayResponse {
+    /// Returns whether a bubble was just pressed, which starts dragging the window.
+    pub fn paint(&mut self, ui: &mut Ui, style: &CaptionStyle, sample: Option<&str>) -> bool {
         let now = Instant::now();
         self.cues.retain(|c| now < c.hold_end() + FADE);
         if self
@@ -200,6 +190,7 @@ impl OverlayState {
         let wrap = (rect.width() - 2.0 * PAD_X - 8.0).max(50.0);
         let mut y = rect.bottom() - 4.0;
         let mut fading = false;
+        let mut bubbles = Vec::new();
 
         let sample = sample
             .filter(|_| self.cues.is_empty() && self.live.is_none())
@@ -235,6 +226,7 @@ impl OverlayState {
             let size = vec2(w + 2.0 * PAD_X, h + 2.0 * PAD_Y);
             let r = Rect::from_center_size(Pos2::new(rect.center().x, y - size.y / 2.0), size);
             painter.rect_filled(r, CornerRadius::same(10), bg.gamma_multiply(alpha));
+            bubbles.push(r);
             let mut ty = r.top() + PAD_Y;
             for (g, color) in lines {
                 let pos = Pos2::new(rect.center().x - g.size().x / 2.0, ty);
@@ -299,51 +291,14 @@ impl OverlayState {
                 .request_repaint_after(d.saturating_duration_since(now));
         }
 
-        let mut resp = OverlayResponse::default();
-        if move_mode {
-            let frame = rect.shrink(2.0);
-            let path = [
-                frame.left_top(),
-                frame.right_top(),
-                frame.right_bottom(),
-                frame.left_bottom(),
-                frame.left_top(),
-            ];
-            let stroke = Stroke::new(2.0, Color32::from_rgb(255, 224, 102));
-            painter.extend(Shape::dashed_line(&path, stroke, 10.0, 6.0));
-            let g = painter.layout_no_wrap(
-                MOVE_HINT.into(),
-                FontId::proportional(16.0),
-                Color32::WHITE,
-            );
-            let hint = Align2::CENTER_TOP.anchor_size(
-                frame.center_top() + vec2(0.0, 8.0),
-                g.size() + vec2(20.0, 8.0),
-            );
-            painter.rect_filled(hint, CornerRadius::same(8), Color32::from_black_alpha(200));
-            painter.galley(hint.center() - g.size() / 2.0, g, Color32::WHITE);
-
+        self.bubbles = bubbles;
+        let hovered = ui
+            .input(|i| i.pointer.latest_pos())
+            .is_some_and(|p| self.bubbles.iter().any(|r| r.contains(p)));
+        if hovered {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
-            let pressed = ui.input(|i| {
-                i.pointer.primary_pressed()
-                    && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))
-            });
-            if pressed {
-                if self
-                    .last_press
-                    .is_some_and(|t| now.duration_since(t) < DOUBLE_CLICK)
-                {
-                    resp.finish_move = true;
-                    self.last_press = None;
-                } else {
-                    resp.start_drag = true;
-                    self.last_press = Some(now);
-                }
-            }
-        } else {
-            self.last_press = None;
         }
-        resp
+        hovered && ui.input(|i| i.pointer.primary_pressed())
     }
 
     pub fn is_empty(&self) -> bool {

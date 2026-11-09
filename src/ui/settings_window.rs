@@ -55,7 +55,6 @@ pub enum SettingsAction {
     Preview(&'static str),
     StopPreview,
     ToggleRunning,
-    MoveCaptions,
     ResetPosition,
     #[cfg(omnivoice)]
     RelearnVoice,
@@ -79,19 +78,13 @@ const PAGES: [(Page, &str); 5] = [
     (Page::General, "General"),
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Hotkey {
-    Toggle,
-    Move,
-}
-
 #[derive(Default)]
 pub struct SettingsWindow {
     pub page: Page,
     /// First launch: explain where the app lives.
     pub welcome: bool,
-    /// The hotkey waiting for its new key press.
-    recording: Option<Hotkey>,
+    /// The shortcut is waiting for its new key press.
+    recording: bool,
 }
 
 /// The website's colors and a little more room, for both OS themes.
@@ -314,11 +307,11 @@ impl SettingsWindow {
         }
     }
 
-    /// While a hotkey is recording, the next key press with a modifier becomes that hotkey.
+    /// While recording, the next key press with a modifier becomes the shortcut.
     fn record_hotkey(&mut self, ctx: &Context, s: &mut Settings, changed: &mut bool) {
-        let Some(which) = self.recording else {
+        if !self.recording {
             return;
-        };
+        }
         let pressed = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
                 Event::Key {
@@ -334,26 +327,20 @@ impl SettingsWindow {
             return;
         };
         if key == Key::Escape {
-            self.recording = None;
+            self.recording = false;
             return;
         }
         let Some(text) = hotkey_text(mods, key) else {
             return;
         };
-        let (value, other) = match which {
-            Hotkey::Toggle => (&mut s.hotkey_toggle, &s.hotkey_move),
-            Hotkey::Move => (&mut s.hotkey_move, &s.hotkey_toggle),
-        };
-        if text != *other {
-            *value = text;
-            *changed = true;
-            self.recording = None;
-        }
+        s.hotkey_toggle = text;
+        *changed = true;
+        self.recording = false;
     }
 
-    fn hotkey_row(&mut self, ui: &mut Ui, which: Hotkey, label: &str, value: &str) {
+    fn hotkey_row(&mut self, ui: &mut Ui, label: &str, value: &str) {
         ui.label(label);
-        let recording = self.recording == Some(which);
+        let recording = self.recording;
         let text = if recording {
             "Press the keys\u{2026}".to_string()
         } else {
@@ -369,7 +356,7 @@ impl SettingsWindow {
             .on_hover_text(hint)
             .clicked()
         {
-            self.recording = (!recording).then_some(which);
+            self.recording = !recording;
         }
         ui.end_row();
     }
@@ -398,10 +385,9 @@ impl SettingsWindow {
             .changed();
 
         section(ui, "Shortcuts");
-        let (toggle, move_) = (s.hotkey_toggle.clone(), s.hotkey_move.clone());
+        let toggle = s.hotkey_toggle.clone();
         grid(ui, "hotkeys", |ui| {
-            self.hotkey_row(ui, Hotkey::Toggle, "Start / stop captions", &toggle);
-            self.hotkey_row(ui, Hotkey::Move, "Move captions", &move_);
+            self.hotkey_row(ui, "Start / stop captions", &toggle);
         });
 
         section(ui, "Files");
@@ -944,7 +930,9 @@ fn read_aloud(
                 persona: p.id.into(),
                 ..s.speak_style()
             };
-            let voice = match (tts::neural(&style, &sample_lang).filter(|_| neural), style.resolve(&m.voices, &sample_lang)) {
+            let reader = tts::neural(&style, &sample_lang)
+                .or_else(|| tts::neural_fallback(&style, &m.voices, &sample_lang));
+            let voice = match (reader.filter(|_| neural), style.resolve(&m.voices, &sample_lang)) {
                 (Some((_, v, _)), _) => format!("Supertonic 3 {v}"),
                 (_, Ok((Some(v), ..))) => format!("{} ({})", v.name, v.lang),
                 (_, Ok((None, ..))) => "System voice".into(),
@@ -972,7 +960,9 @@ fn read_aloud(
             && s.speak
             && !m.voices.is_empty()
             && voices.is_empty()
-            && !(neural && tts::neural(&s.speak_style(), l).is_some())
+            && !(neural
+                && (tts::neural(&s.speak_style(), l).is_some()
+                    || tts::neural_fallback(&s.speak_style(), &m.voices, l).is_some()))
         {
             ui.colored_label(WARN, tts::missing_voice(l));
         }
@@ -1154,22 +1144,15 @@ fn color_row(ui: &mut Ui, hex: &mut String, changed: &mut bool) {
 
 fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec<SettingsAction>) {
     section(ui, "Position");
-    ui.weak("A sample caption is on screen while this page is open.");
-    ui.horizontal(|ui| {
-        if ui
-            .button("Move captions")
-            .on_hover_text("Drag the caption area, then double-click it to finish.")
-            .clicked()
-        {
-            actions.push(SettingsAction::MoveCaptions);
-        }
-        if ui
-            .add_enabled(s.overlay_pos.is_some(), egui::Button::new("Reset position"))
-            .clicked()
-        {
-            actions.push(SettingsAction::ResetPosition);
-        }
-    });
+    ui.weak(
+        "Click and hold any caption to drag it. A sample is on screen while this page is open.",
+    );
+    if ui
+        .add_enabled(s.overlay_pos.is_some(), egui::Button::new("Reset position"))
+        .clicked()
+    {
+        actions.push(SettingsAction::ResetPosition);
+    }
 
     section(ui, "Look");
     let c = &mut s.caption;

@@ -44,8 +44,10 @@ pub fn configure_overlay_window(frame: &eframe::Frame) {
     // so resizing the overlay needs no update.
     #[cfg(windows)]
     {
+        use windows::Win32::Foundation::COLORREF;
         use windows::Win32::Foundation::HWND;
         use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
+        use windows::Win32::UI::WindowsAndMessaging::{LWA_ALPHA, SetLayeredWindowAttributes};
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
         const FAR: i32 = 1 << 20;
@@ -56,9 +58,15 @@ pub fn configure_overlay_window(frame: &eframe::Frame) {
             return;
         };
         // SAFETY: the handle is a live window on this thread, and Windows owns the region from here on.
+        let hwnd = HWND(h.hwnd.get() as *mut _);
         unsafe {
             let region = CreateRectRgn(-FAR, 1, FAR, FAR);
-            SetWindowRgn(HWND(h.hwnd.get() as *mut _), Some(region), true);
+            SetWindowRgn(hwnd, Some(region), true);
+            // winit makes a click-through window layered without ever setting these, and Windows
+            // shows nothing of a layered window until something does.
+            if let Err(e) = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA) {
+                log::warn!("overlay window attributes: {e}");
+            }
         }
     }
     #[cfg(not(any(target_os = "macos", windows)))]

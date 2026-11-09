@@ -33,6 +33,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - If the engine ever crashes, it now restarts and captions carry on. Before, Start and every setting silently did nothing until the app was restarted.
 - Opening Settings while captions were off crashed the app, so the tray icon vanished. This hit every tray click and the Settings menu item.
 - Starting Hammurabi now opens Settings, and starting it again brings up the running copy instead of doing nothing. `--background`, which Start at login now uses, starts it with no window.
+- macOS: opening Hammurabi again from Finder, Spotlight or Launchpad while it runs now brings up Settings. Before, nothing happened, because macOS does not start a second copy.
 - On Windows 11, the invisible caption window no longer shows a faint outline on screen.
 - Settings no longer flashes a large white window as it opens.
 - Crashes are now written to the log.

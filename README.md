@@ -13,15 +13,15 @@
 
 | Your computer | File |
 |---|---|
-| Windows 10/11 | [`hammurabi-windows-x64.zip`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64.zip) |
-| Windows + NVIDIA RTX 50 series | [`hammurabi-windows-cuda.zip`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda.zip) |
-| Windows + any GPU, reads in the speaker's voice | [`hammurabi-windows-gpu.zip`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-gpu.zip) |
+| Windows 10/11 | [`hammurabi-windows-x64-setup.exe`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64-setup.exe) |
+| Windows + NVIDIA RTX 50 series | [`hammurabi-windows-cuda-setup.exe`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda-setup.exe) |
+| Windows + any GPU, reads in the speaker's voice | [`hammurabi-windows-gpu-setup.exe`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-gpu-setup.exe) |
 | macOS, Apple silicon | [`hammurabi-macos-arm64.zip`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip) |
 | Linux x64 | [`hammurabi-linux-x64.tar.gz`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz) |
 
 The builds are not code signed yet:
 
-- **Windows:** unzip and run `hammurabi.exe`. On "Windows protected your PC", click **More info > Run anyway**.
+- **Windows:** run the installer. It installs for your user, no administrator rights needed. On "Windows protected your PC", click **More info > Run anyway**.
 - **macOS:** move `Hammurabi.app` to Applications, run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app`, and allow **System Audio Recording** when asked.
 - **Linux:** run `tar -xzf hammurabi-linux-x64.tar.gz && ./hammurabi-linux-x64/hammurabi`. Use X11, and PulseAudio or `pipewire-pulse` for system audio.
 

@@ -69,7 +69,16 @@ pub enum ModelChoice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TranslatorChoice {
     Builtin,
-    Llm { base_url: String, model: String },
+    /// A language model Hammurabi downloads and runs itself (`translate::server`): reads slang,
+    /// idiom and tone where MADLAD translates word for word. Needs a GPU; `light` is the smaller
+    /// model, for one with little memory free.
+    Natural {
+        light: bool,
+    },
+    Llm {
+        base_url: String,
+        model: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +129,8 @@ pub struct Settings {
     pub output_device: Option<String>,
     /// None = auto-detect.
     pub spoken_language: Option<String>,
+    /// Names and unusual words the speech will have, so they are heard and spelled right.
+    pub hint: String,
     pub asr_backend: AsrBackend,
     pub model: ModelChoice,
     /// Encode only the speech plus a margin instead of Whisper's full 30 s window (much faster on CPU).
@@ -155,6 +166,10 @@ pub struct Settings {
     pub caption: CaptionStyle,
     /// Logical px.
     pub overlay_pos: Option<[f32; 2]>,
+    /// Captions cannot be dragged, so a click on one always goes to the app under it.
+    pub overlay_locked: bool,
+    /// Serve captions as a web page (`ui::web`) for a streaming app's browser source.
+    pub browser_source: bool,
     /// Parsed with `str::parse::<global_hotkey::hotkey::HotKey>()`.
     pub hotkey_toggle: String,
     /// Ask GitHub for a newer release at startup and once a day.
@@ -170,6 +185,7 @@ impl Default for Settings {
             input_device: None,
             output_device: None,
             spoken_language: None,
+            hint: String::new(),
             asr_backend: AsrBackend::Whisper,
             model: ModelChoice::Auto,
             trim_audio: true,
@@ -190,6 +206,8 @@ impl Default for Settings {
             omnivoice_accepted: false,
             caption: CaptionStyle::default(),
             overlay_pos: None,
+            overlay_locked: false,
+            browser_source: false,
             hotkey_toggle: "alt+shift+KeyT".into(),
             check_updates: true,
             update_notified: None,

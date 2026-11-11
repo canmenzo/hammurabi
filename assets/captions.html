@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Hammurabi captions</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #box {
+    position: absolute; left: 0; right: 0; bottom: 4%;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .cue {
+    max-width: 80%; padding: 8px 14px; border-radius: 10px; text-align: center;
+    line-height: 1.25; opacity: 0; transition: opacity .2s;
+  }
+  .cue.in { opacity: 1; }
+  .cue span { display: block; }
+</style>
+<div id="box"></div>
+<script>
+// Add ?scale=1.5 to the address to make everything larger or smaller.
+const scale = parseFloat(new URLSearchParams(location.search).get('scale')) || 1;
+const box = document.getElementById('box');
+let st = {
+  trans_size: 30, orig_size: 20, trans_color: '#ffffff', orig_color: '#ffe066', bg: 0.75,
+  show_original: true, original_first: false, cues: 2, hold: 4, edge: 'Shadow',
+};
+let cues = [];
+const live = { el: null };
+
+function shadow() {
+  const b = 'rgba(0,0,0,.9)';
+  if (st.edge === 'Shadow') return `2px 2px 0 ${b}`;
+  if (st.edge !== 'Outline') return 'none';
+  return [[-1.5, 0], [1.5, 0], [0, -1.5], [0, 1.5], [-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1]]
+    .map(([x, y]) => `${x}px ${y}px 0 ${b}`).join(',');
+}
+
+// Same order and styles as the desktop overlay.
+function lines(c) {
+  const out = [];
+  if (c.tr) {
+    out.push([c.tr, true]);
+    if (st.show_original && !c.same && c.o) out.push([c.o, false]);
+  } else {
+    out.push([c.o, c.same || !st.show_original]);
+  }
+  return st.original_first ? out.reverse() : out;
+}
+
+function draw(c) {
+  c.el.style.background = `rgba(0,0,0,${st.bg})`;
+  c.el.replaceChildren(...lines(c).map(([text, tr]) => {
+    const s = document.createElement('span');
+    s.textContent = text;
+    s.style.fontSize = (tr ? st.trans_size : st.orig_size) * scale + 'px';
+    s.style.color = tr ? st.trans_color : st.orig_color;
+    s.style.textShadow = shadow();
+    return s;
+  }));
+}
+
+function element() {
+  const el = document.createElement('div');
+  el.className = 'cue';
+  requestAnimationFrame(() => el.classList.add('in'));
+  return el;
+}
+
+function remove(c) {
+  clearTimeout(c.timer);
+  cues = cues.filter(x => x !== c);
+  c.el.classList.remove('in');
+  setTimeout(() => c.el.remove(), 250);
+}
+
+function hold(c) {
+  const chars = Math.max(c.o.length, (c.tr || '').length);
+  const ms = Math.max(st.hold, chars / 15) * 1000 - (Date.now() - c.shown);
+  clearTimeout(c.timer);
+  c.timer = setTimeout(() => remove(c), Math.max(ms, 0));
+}
+
+function final(e) {
+  let c = cues.find(x => x.id === e.id);
+  if (!c) {
+    // A translation that comes after its caption left: newer ones are up already.
+    if (e.tr && cues.length && cues[cues.length - 1].id > e.id) return;
+    c = { id: e.id, el: element(), shown: Date.now() };
+    box.insertBefore(c.el, live.el);
+    cues.push(c);
+    while (cues.length > Math.max(st.cues, 1)) remove(cues[0]);
+  }
+  Object.assign(c, { o: e.o, tr: e.tr, same: e.same });
+  draw(c);
+  hold(c);
+}
+
+function setLive(e) {
+  if (!e.o.trim()) {
+    if (live.el) live.el.remove();
+    live.el = null;
+    return;
+  }
+  if (!live.el) {
+    live.el = element();
+    box.appendChild(live.el);
+  }
+  draw({ el: live.el, o: e.o, tr: e.tr, same: e.same });
+}
+
+function clear() {
+  cues.slice().forEach(remove);
+  setLive({ o: '' });
+}
+
+const events = new EventSource('/events');
+events.onopen = clear;
+events.onmessage = m => {
+  const e = JSON.parse(m.data);
+  if (e.t === 'final') final(e);
+  else if (e.t === 'live') setLive(e);
+  else if (e.t === 'clear') clear();
+  else if (e.t === 'style') {
+    st = e;
+    cues.forEach(draw);
+  }
+};
+</script>
+</html>

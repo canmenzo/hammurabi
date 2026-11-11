@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 const USER_AGENT: &str = "OpenAI File Downloader, XaiImageApiFetch/1.0";
 /// No data for this long ends the request; the download continues with a new Range request
 /// if the last one made progress, else fails. ureq only has whole-body timeouts.
-const IDLE: Duration = Duration::from_secs(30);
+pub const IDLE: Duration = Duration::from_secs(30);
 
 /// Downloads `huggingface.co/{repo}/resolve/{rev}/{file}` to `dest` via `dest.part` with Range resume,
 /// checking the result against `sha256`. `progress(done, total)`; returns an error when `cancel` is set.
@@ -32,7 +32,8 @@ pub fn fetch(
     )
 }
 
-fn fetch_url(
+/// `fetch` for any URL.
+pub fn fetch_url(
     url: &str,
     sha256: &str,
     dest: &Path,

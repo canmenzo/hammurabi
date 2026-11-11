@@ -107,6 +107,8 @@ impl OverlayState {
                 if let Some(c) = self.cues.iter_mut().find(|c| c.id == id) {
                     c.line = line;
                     c.hold = hold;
+                } else if line.translated.is_some() && self.cues.last().is_some_and(|c| c.id > id) {
+                    // A translation that comes after its caption left: newer ones are up already.
                 } else {
                     self.cues.push(Cue {
                         id,

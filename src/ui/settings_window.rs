@@ -17,6 +17,8 @@ use crate::types::AudioSource;
 
 const OLLAMA_URL: &str = "http://localhost:11434/v1";
 const OLLAMA_MODEL: &str = "qwen2.5:3b";
+const NATURAL_NOTE: &str = "Understands slang, idiom and tone. Needs a graphics card with 8 GB of memory free, or 3.5 GB \
+     with the smaller model.";
 const SIDEBAR: f32 = 150.0;
 const WARN: Color32 = Color32::from_rgb(230, 160, 60);
 
@@ -451,8 +453,12 @@ pub fn pending_downloads(s: &Settings, m: &ModelsStatus) -> Vec<ModelId> {
     if !lc {
         out.push(ModelId::whisper(s.model, m.compute != "CPU"));
     }
-    if s.translate && s.translator == TranslatorChoice::Builtin {
-        out.push(ModelId::Madlad3bQ4k);
+    if s.translate {
+        match s.translator {
+            TranslatorChoice::Builtin => out.push(ModelId::Madlad3bQ4k),
+            TranslatorChoice::Natural { light } => out.push(ModelId::natural(light)),
+            TranslatorChoice::Llm { .. } => {}
+        }
     }
     out.retain(|id| !m.cached.contains(id) && !m.downloading.iter().any(|d| d.0 == *id));
     out
@@ -462,7 +468,7 @@ fn download_note(pending: &[ModelId]) -> String {
     let names: Vec<&str> = pending
         .iter()
         .map(|id| match id {
-            ModelId::Madlad3bQ4k => "translation",
+            ModelId::Madlad3bQ4k | ModelId::Gemma12b | ModelId::GemmaE4b => "translation",
             _ => "speech",
         })
         .collect();
@@ -642,6 +648,19 @@ fn speech(
         });
         ui.end_row();
 
+        ui.label("Words to expect");
+        ui.add_enabled_ui(!lc, |ui| {
+            *changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut s.hint)
+                        .hint_text("Names and unusual words, e.g. Lamar, Los Santos")
+                        .desired_width(260.0),
+                )
+                .on_hover_text("Helps the speech model hear and spell names, places and slang.")
+                .changed();
+        });
+        ui.end_row();
+
         ui.label("Model");
         let label = |c: ModelChoice| match c {
             ModelChoice::Auto => {
@@ -718,28 +737,54 @@ fn translation(
             ui.end_row();
 
             ui.label("Engine");
-            let mut llm = matches!(s.translator, TranslatorChoice::Llm { .. });
-            ui.horizontal(|ui| {
-                let a = ui.radio_value(&mut llm, false, "Built-in (MADLAD, 1.7 GB)");
-                let b = ui.radio_value(&mut llm, true, "Local LLM");
-                if a.changed() || b.changed() {
-                    s.translator = if llm {
-                        TranslatorChoice::Llm {
-                            base_url: OLLAMA_URL.into(),
-                            model: OLLAMA_MODEL.into(),
-                        }
-                    } else {
-                        TranslatorChoice::Builtin
-                    };
-                    *changed = true;
+            // 0 = MADLAD, 1 = Natural, 2 = the user's own server.
+            let was = match s.translator {
+                TranslatorChoice::Builtin => 0,
+                TranslatorChoice::Natural { .. } => 1,
+                TranslatorChoice::Llm { .. } => 2,
+            };
+            let mut now = was;
+            ui.vertical(|ui| {
+                ui.radio_value(&mut now, 0, "Fast (MADLAD)")
+                    .on_hover_text("Word for word. Runs on any computer.");
+                if cfg!(windows) {
+                    ui.radio_value(&mut now, 1, "Natural (language model)")
+                        .on_hover_text(NATURAL_NOTE);
                 }
+                ui.radio_value(&mut now, 2, "Your own LLM server")
+                    .on_hover_text("Ollama, LM Studio or any OpenAI-compatible server.");
             });
+            if now != was {
+                s.translator = match now {
+                    0 => TranslatorChoice::Builtin,
+                    1 => TranslatorChoice::Natural { light: false },
+                    _ => TranslatorChoice::Llm {
+                        base_url: OLLAMA_URL.into(),
+                        model: OLLAMA_MODEL.into(),
+                    },
+                };
+                *changed = true;
+            }
             ui.end_row();
 
             match &mut s.translator {
                 TranslatorChoice::Builtin => {
                     ui.label("Model");
                     model_status(ui, ModelId::Madlad3bQ4k, m, actions);
+                    ui.end_row();
+                }
+                TranslatorChoice::Natural { light } => {
+                    ui.label("Model");
+                    ui.vertical(|ui| {
+                        model_status(ui, ModelId::natural(*light), m, actions);
+                        *changed |= ui
+                            .checkbox(light, "Smaller model")
+                            .on_hover_text(
+                                "Takes 3.5 GB of graphics memory instead of 8, and translates a \
+                                 little less naturally. For when a game runs on the same card.",
+                            )
+                            .changed();
+                    });
                     ui.end_row();
                 }
                 TranslatorChoice::Llm { base_url, model } => {
@@ -1152,6 +1197,25 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         .clicked()
     {
         actions.push(SettingsAction::ResetPosition);
+    }
+    *changed |= ui
+        .checkbox(&mut s.overlay_locked, "Lock in place")
+        .on_hover_text("Captions cannot be dragged, and a click on one goes to the app under it.")
+        .changed();
+
+    section(ui, "Streaming");
+    *changed |= ui
+        .checkbox(&mut s.browser_source, "Captions as a web page")
+        .on_hover_text("For a stream: the caption window is not part of a captured game.")
+        .changed();
+    if s.browser_source {
+        ui.horizontal(|ui| {
+            ui.weak("In OBS, add a Browser source with this address:");
+            let url = super::web::Web::url();
+            if ui.link(&url).on_hover_text("Copy").clicked() {
+                ui.ctx().copy_text(url);
+            }
+        });
     }
 
     section(ui, "Look");

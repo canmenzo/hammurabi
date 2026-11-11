@@ -4,6 +4,26 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- A Natural translator (Settings > Translate), on Windows: a language model (Gemma 4) that Hammurabi downloads and runs itself. It reads slang, idiom and tone where MADLAD translates word for word, and it is tuned for English to Turkish. It needs a graphics card with 8 GB of memory free (a 7 GB download), or 3.5 GB with its smaller model (5 GB).
+- Captions as a web page, for streams: turn it on in Settings > Captions and add `http://127.0.0.1:7460` to OBS as a Browser source. The caption window itself is not part of a captured game or capture card.
+- Lock in place (Settings > Captions): captions cannot be dragged, so a click on one always reaches the game under it.
+- Words to expect (Settings > Listen): names and unusual words, so they are heard and spelled right.
+
+### Changed
+
+- Speech is found by a voice detector instead of by loudness. Talk under music, engines and gunfire is now captioned, and loud sound that is not speech is left alone. Sound too loud for the detector to make out is still recognized, and kept only when it reads as speech.
+- Speech is recognized in longer stretches, with the quiet end of each word kept, so fewer words are cut or misheard.
+- On a GPU, captions come about a third sooner, and each sentence is a caption of its own.
+- With Show original text off, captions show translations only. The original no longer flashes first.
+- The speech model is warmed up while it loads, so the first captions are not late.
+
+### Fixed
+
+- Captions could stop for good without saying so. Now the speech model is loaded again when it fails or stops answering, a lost audio device is waited for instead of giving up or switching to the microphone, and a failing translator is tried again after a pause instead of staying off.
+- A translation that arrives after its caption left no longer pops up out of order.
+
 ## [0.5.0] - 2026-11-09
 
 ### Changed

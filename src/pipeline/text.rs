@@ -43,7 +43,8 @@ const PUNCT: [char; 5] = [',', '.', '!', '?', '…'];
 
 /// Returns the cleaned text, or an empty string when the result should be dropped.
 pub fn clean(text: &str, language: &str, no_speech: f32, lang_conf: f32) -> String {
-    if no_speech > NO_SPEECH || lang_conf < LANG_MIN {
+    // Written so that NaN scores are dropped too.
+    if !(no_speech <= NO_SPEECH && lang_conf >= LANG_MIN) {
         return String::new();
     }
     let stripped = BRACKETS.replace_all(text, " ");

@@ -14,6 +14,8 @@ pub struct Job {
     pub id: u64,
     pub segment: u64,
     pub is_final: bool,
+    /// The segment may hold no speech at all (`Segment::unsure`).
+    pub unsure: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -37,14 +39,20 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn close(&mut self, seg: Segment, now: Instant) -> Closing {
         let mut out = Closing::default();
-        if seg.speech < MIN_SPEECH {
+        if seg.speech < MIN_SPEECH && !seg.unsure {
             out.abandoned.push(seg.id);
             return out;
         }
         self.finals.push_back(seg);
         while self.finals.len() > MAX_BACKLOG {
-            out.abandoned.push(self.finals.pop_front().unwrap().id);
-            if self.ready && self.lag_reported.is_none_or(|t| now - t > LAG_REPORT_EVERY) {
+            // What may not be speech goes first, and without a word.
+            let unsure = self.finals.iter().position(|s| s.unsure);
+            let dropped = self.finals.remove(unsure.unwrap_or(0)).unwrap();
+            out.abandoned.push(dropped.id);
+            if unsure.is_none()
+                && self.ready
+                && self.lag_reported.is_none_or(|t| now - t > LAG_REPORT_EVERY)
+            {
                 self.lag_reported = Some(now);
                 out.lagging = true;
             }
@@ -57,11 +65,11 @@ impl Scheduler {
         if !self.ready || self.in_flight.is_some() {
             return None;
         }
-        let (segment, is_final, audio) = match self.finals.pop_front() {
-            Some(s) => (s.id, true, s.audio()),
+        let (segment, is_final, unsure, audio) = match self.finals.pop_front() {
+            Some(s) => (s.id, true, s.unsure, s.audio()),
             None => {
                 let (id, audio) = seg.probe()?;
-                (id, false, audio)
+                (id, false, false, audio)
             }
         };
         self.next_job += 1;
@@ -69,6 +77,7 @@ impl Scheduler {
             id: self.next_job,
             segment,
             is_final,
+            unsure,
         };
         self.in_flight = Some((job, false));
         Some((job, audio))

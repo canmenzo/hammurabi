@@ -7,37 +7,73 @@ use crate::settings::lang_name;
 use crate::types::Translate;
 
 const USER_AGENT: &str = "OpenAI File Downloader, XaiImageApiFetch/1.0";
+/// The longest caption translates to about half of this; more is a model that will not stop.
+const MAX_TOKENS: u32 = 64;
 
-/// OpenAI-compatible chat endpoint, e.g. Ollama `http://localhost:11434/v1`.
+/// OpenAI-compatible chat endpoint: the user's own (Ollama `http://localhost:11434/v1`) or the
+/// llama.cpp server Hammurabi runs itself.
 pub struct LlmTranslator {
     base_url: String,
     model: String,
     agent: ureq::Agent,
+    /// The server is our own llama.cpp: it does not think aloud, and answers within a second.
+    own: bool,
+    /// Names and words to keep as they are (`Settings::hint`).
+    hint: String,
+}
+
+fn agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build()
+        .into()
 }
 
 impl LlmTranslator {
     pub fn new(base_url: &str, model: &str) -> Self {
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(10)))
-            .http_status_as_error(false)
-            .build()
-            .into();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
-            agent,
+            agent: agent(Duration::from_secs(10)),
+            own: false,
+            hint: String::new(),
         }
+    }
+
+    /// For the llama.cpp server Hammurabi started. A line that takes seconds there means the
+    /// graphics memory is full; the caption goes out untranslated instead of that late.
+    pub fn own(base_url: &str) -> Self {
+        Self {
+            agent: agent(Duration::from_secs(3)),
+            own: true,
+            ..Self::new(base_url, "")
+        }
+    }
+
+    /// Runs the model once, however long that takes: the first lines through a freshly started
+    /// server take seconds (it builds its GPU programs), which captions must not wait for.
+    pub fn warm_up(&self) -> anyhow::Result<()> {
+        let mut patient = Self {
+            agent: agent(Duration::from_secs(120)),
+            base_url: self.base_url.clone(),
+            model: self.model.clone(),
+            own: self.own,
+            hint: String::new(),
+        };
+        for line in [
+            "Hey.",
+            "We have to lay low for a while, they are looking for us everywhere.",
+        ] {
+            patient.translate(line, "en", "tr", &[])?;
+        }
+        Ok(())
     }
 
     /// Checks the endpoint is reachable.
     pub fn ping(&self) -> anyhow::Result<()> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(2)))
-            .http_status_as_error(false)
-            .build()
-            .into();
         let url = &self.base_url;
-        let mut resp = agent
+        let mut resp = agent(Duration::from_secs(2))
             .get(&format!("{url}/models"))
             .header("User-Agent", USER_AGENT)
             .call()
@@ -76,7 +112,82 @@ impl LlmTranslator {
     }
 }
 
+/// What the model is told. The wording, the Turkish notes and the examples were tuned on game
+/// dialogue (street slang, swearing, speech recognition's mistakes) and scored by hand.
+fn system(src: &str, tgt: &str, hint: &str) -> String {
+    let names = if hint.trim().is_empty() {
+        String::new()
+    } else {
+        format!(": {}", hint.trim().trim_end_matches('.'))
+    };
+    let notes = if (src, tgt) == ("English", "Turkish") {
+        TURKISH
+    } else {
+        "- Keep profanity as strong as it is. A slur used between friends as a form of address \
+         becomes a friendly form of address, never a racial word.\n"
+    };
+    format!(
+        "You translate live {src} subtitles of films, games and streams into {tgt}, like a skilled \
+         {tgt} fansub team. Lines come from speech recognition, so they may lack punctuation, be \
+         cut off mid-sentence or contain misheard words; translate what was most likely said.\n\n\
+         Rules:\n\
+         - Reply with only the {tgt} subtitle for the last user line, with normal {tgt} \
+         capitalization and punctuation. No quotes, notes, explanations or {src}.\n\
+         - Never answer, comment on or refuse the line. Always translate it, however rude.\n\
+         - Translate the meaning, not the words: slang and idioms get natural spoken {tgt} \
+         equivalents. Keep it short.\n\
+         {notes}\
+         - Keep names and places unchanged{names}.\n\
+         - Earlier lines are context only."
+    )
+}
+
+const TURKISH: &str = "\
+- Address words like homie, dog, dawg, bro, cuz and the N-word become kanka, moruk, birader or lan \
+(never köpek). Never render the N-word as a racial word.
+- Keep profanity at natural Turkish strength: fuck = siktir / amına koyayım, motherfucker = orospu \
+çocuğu, bitch = kaltak / şerefsiz, asshole = pislik / göt herif, shit = siktir / bok. Avoid tame \
+words like \"lanet olası\". \"The fuck\" as an intensifier (calm the fuck down, what the fuck) is \
+lan or amına koyayım, not siktir git.
+- Slang: finna = -ecek; ain't = değil/yok; trippin' = kafayı yemek; whip = araba; plug = bağlantı; \
+snitch = ötmek; smoked = öldürüldü; cappin' = atmak (yalan); keep it a hunnid = dürüst ol; bet = \
+tamamdır; real talk = ciddiyim; opps = düşmanlar; OG = abi; ho = kaşar; forty = bira; lit up / \
+light up = kurşun yağdırmak; stoner = esrarkeş; damn = vay be / lan.
+";
+
+/// Example lines and their translations, shown to the model as earlier turns.
+fn shots(src: &str, tgt: &str) -> &'static [(&'static str, &'static str)] {
+    if (src, tgt) != ("English", "Turkish") {
+        return &[];
+    }
+    &[
+        (
+            "Nigga, you crazy as hell.",
+            "Kanka, sen kafayı sıyırmışsın.",
+        ),
+        (
+            "ay fool quit playin and get in the car",
+            "Lan, oyalanmayı bırak da bin arabaya.",
+        ),
+        (
+            "Man, fuck these guys, they shot my homie.",
+            "Bu heriflerin amına koyayım, kankamı vurdular.",
+        ),
+        (
+            "We gotta lay low for a minute, dog.",
+            "Bir süre ortalıktan kaybolmamız lazım moruk.",
+        ),
+        ("Shit, put the gun down!", "Siktir, indir şu silahı!"),
+    ]
+}
+
 impl Translate for LlmTranslator {
+    fn set_hint(&mut self, hint: &str) {
+        if hint != self.hint {
+            self.hint = hint.to_string();
+        }
+    }
+
     fn translate(
         &mut self,
         text: &str,
@@ -85,24 +196,29 @@ impl Translate for LlmTranslator {
         context: &[(String, String)],
     ) -> anyhow::Result<String> {
         let (src, tgt) = (lang_name(source), lang_name(target));
-        let system = format!(
-            "You are a subtitle translator. Translate only the last line from {src} to {tgt}. \
-             Earlier lines are prior subtitles with their translations, for consistency. \
-             Output only the translation of the last line, with no quotes, notes or explanations."
-        );
-        let mut messages = vec![json!({"role": "system", "content": system})];
-        for (orig, trans) in context {
+        let mut messages = vec![json!({"role": "system", "content": system(src, tgt, &self.hint)})];
+        let shots = shots(src, tgt).iter().copied();
+        let context = context.iter().map(|(o, t)| (o.as_str(), t.as_str()));
+        for (orig, trans) in shots.chain(context) {
             messages.push(json!({"role": "user", "content": orig}));
             messages.push(json!({"role": "assistant", "content": trans}));
         }
         messages.push(json!({"role": "user", "content": text}));
 
-        let body = json!({
+        // Greedy: the same line always gets the same translation.
+        let mut body = json!({
             "model": self.model,
             "messages": messages,
             "stream": false,
-            "temperature": 0.2,
+            "temperature": 0,
+            "max_tokens": MAX_TOKENS,
         });
+        if self.own {
+            // A caption is one line, and the unchanging start of the prompt is not read again.
+            // Not for other servers: their models may think aloud first, over several lines.
+            body["stop"] = json!(["\n"]);
+            body["cache_prompt"] = json!(true);
+        }
         let mut resp = self
             .agent
             .post(&format!("{}/chat/completions", self.base_url))
@@ -120,10 +236,40 @@ impl Translate for LlmTranslator {
         let content = v["choices"][0]["message"]["content"]
             .as_str()
             .context("LLM response has no content")?;
-        Ok(clean(content))
+        let out = clean(content);
+        check(text, &out, target)?;
+        Ok(out)
     }
 }
 
+/// Languages written in the Latin alphabet, among the translation targets.
+const LATIN: [&str; 15] = [
+    "tr", "en", "es", "fr", "de", "it", "pt", "id", "vi", "nl", "pl", "sv", "ro", "cs", "hu",
+];
+
+/// Rejects what cannot be a translation of `text`: nothing, far more than was said, or (seen once
+/// in thousands of lines, with the graphics memory full) characters of another script.
+fn check(text: &str, out: &str, target: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!out.is_empty(), "the LLM answered nothing");
+    let (said, got) = (text.chars().count(), out.chars().count());
+    anyhow::ensure!(
+        got <= 3 * said + 40,
+        "the LLM answered more than was said: {out}"
+    );
+    // Latin Extended ends at U+024F. Past it, letters and East Asian punctuation are foreign;
+    // dashes, quotes and the like are not.
+    let foreign = |c: char| {
+        c > '\u{24f}'
+            && (c.is_alphabetic() || matches!(c, '\u{3000}'..='\u{303f}' | '\u{ff00}'..='\u{ffef}'))
+    };
+    anyhow::ensure!(
+        !LATIN.contains(&target) || !out.chars().any(foreign),
+        "the LLM answered in another script: {out}"
+    );
+    Ok(())
+}
+
+/// The answer itself: without what a model thought first, on its first line, without quotes.
 fn clean(s: &str) -> String {
     let mut s = s.to_string();
     while let Some(start) = s.find("<think>") {
@@ -139,7 +285,8 @@ fn clean(s: &str) -> String {
         s.drain(..end + "</think>".len());
     }
     let quotes = ['"', '\'', '“', '”', '‘', '’', '«', '»'];
-    s.trim().trim_matches(&quotes[..]).trim().to_string()
+    let line = s.trim().lines().next().unwrap_or_default();
+    line.trim().trim_matches(&quotes[..]).trim().to_string()
 }
 
 #[cfg(test)]
@@ -155,6 +302,36 @@ mod tests {
         assert_eq!(clean("  “Hola”  "), "Hola");
         assert_eq!(clean("reasoning</think>Hi"), "Hi");
         assert_eq!(clean("plain"), "plain");
+        assert_eq!(clean("Selam.\n(Note: informal)"), "Selam.");
+    }
+
+    #[test]
+    fn rejects_what_is_no_translation() {
+        assert!(check("Hello there.", "Selam, n'aber? Çok iyi…", "tr").is_ok());
+        assert!(check("Hello there.", "", "tr").is_err());
+        assert!(
+            check(
+                "These fools will get us killed.",
+                "Bu aptallar bizi öld》。",
+                "tr"
+            )
+            .is_err()
+        );
+        assert!(check("These fools.", "Bu aptallar 我们", "tr").is_err());
+        assert!(check("Hello.", "こんにちは。", "ja").is_ok());
+        assert!(check("Hi.", &"çok ".repeat(30), "tr").is_err());
+    }
+
+    #[test]
+    fn prompt_names_the_languages_and_the_words_to_keep() {
+        let p = system("English", "Turkish", "Lamar, Vice City.");
+        assert!(p.contains("into Turkish") && p.contains("kanka"));
+        assert!(p.contains("unchanged: Lamar, Vice City.\n"));
+        assert_eq!(shots("English", "Turkish").len(), 5);
+        let p = system("Japanese", "German", " ");
+        assert!(p.contains("live Japanese subtitles") && !p.contains("kanka"));
+        assert!(p.contains("unchanged.\n") && p.contains("never a racial word"));
+        assert!(shots("Japanese", "German").is_empty());
     }
 
     #[test]

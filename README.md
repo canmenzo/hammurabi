@@ -27,14 +27,21 @@ The builds are not code signed yet:
 
 ## ▶️ Use
 
-Press `Alt+Shift+T` to start or stop captions, and `Alt+Shift+M` to move them. Right-click the tray icon for everything else.
+Press `Alt+Shift+T` to start or stop captions, and drag a caption to move them. Right-click the tray icon for everything else.
 
-The first start downloads a speech model (up to about 1.6 GB). Translation downloads another 1.7 GB.
+The first start downloads a speech model (up to about 1.6 GB). Translation downloads another 1.7 GB, or 5 to 7 GB for the Natural translator.
+
+## 🎥 Streaming
+
+To put captions on a stream, turn on **Settings > Captions > Captions as a web page** and add `http://127.0.0.1:7460` to OBS as a Browser source. Add `?scale=1.5` to the address to make them larger.
+
+For games and films, pick the **Natural** translator in Settings > Translate (Windows, needs a graphics card): it reads slang and tone where the fast one translates word for word.
 
 ## 📄 License
 
 [MIT](LICENSE). Some downloads have their own licenses:
 
+- [Gemma 4](https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf) (Natural translator): Apache-2.0
 - [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3): OpenRAIL-M
 - [OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) (speaker's voice): personal, non-commercial use only
 

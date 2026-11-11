@@ -13,6 +13,8 @@ use crate::models::ModelPaths;
 use crate::types::{Recognizer, Transcript};
 
 const PRIOR_FLOOR: f32 = 0.01;
+/// Whisper reads at most 224 tokens of earlier text; a list of names needs far fewer.
+const HINT_TOKENS: usize = 120;
 
 enum Model {
     Normal(model::Whisper),
@@ -71,6 +73,10 @@ pub struct WhisperEngine {
     langs: Vec<(&'static str, u32)>,
     /// -inf for config.suppress_tokens and every special token after EOT (timestamps, no-speech, ...).
     suppress: Vec<f32>,
+    sot_prev: Option<u32>,
+    /// Words to expect, as text and tokens. Whisper is told they came before the audio, which
+    /// steers what it hears and how it spells it.
+    hint: (String, Vec<u32>),
 }
 
 impl WhisperEngine {
@@ -122,6 +128,8 @@ impl WhisperEngine {
         }
 
         Ok(Self {
+            sot_prev: tokenizer.token_to_id("<|startofprev|>"),
+            hint: Default::default(),
             trim: true,
             mel: mel::Mel::new(config.num_mel_bins, device)?,
             model,
@@ -165,6 +173,20 @@ impl WhisperEngine {
 }
 
 impl Recognizer for WhisperEngine {
+    fn set_hint(&mut self, hint: &str) {
+        let hint = hint.trim();
+        if hint == self.hint.0 {
+            return;
+        }
+        let mut tokens = Vec::new();
+        if !hint.is_empty()
+            && let Ok(e) = self.tokenizer.encode(format!(" {hint}"), false)
+        {
+            tokens.extend(e.get_ids().iter().take(HINT_TOKENS));
+        }
+        self.hint = (hint.to_string(), tokens);
+    }
+
     fn transcribe(
         &mut self,
         audio: &[f32],
@@ -212,8 +234,14 @@ impl Recognizer for WhisperEngine {
             .find(|(_, id)| *id == lang)
             .map_or("en", |(l, _)| l);
 
-        let mut tokens = vec![self.sot, lang, self.transcribe, self.no_timestamps];
+        let mut tokens = Vec::new();
+        if let Some(p) = self.sot_prev.filter(|_| !self.hint.1.is_empty()) {
+            tokens.push(p);
+            tokens.extend(&self.hint.1);
+        }
+        tokens.extend([self.sot, lang, self.transcribe, self.no_timestamps]);
         let prompt_len = tokens.len();
+        let mut logprob = 0f32;
         let secs = audio.len() as f32 / m::SAMPLE_RATE as f32;
         let max_new = 128.min((secs * 7.0).ceil() as usize + 8);
         for i in 0..max_new {
@@ -235,6 +263,8 @@ impl Recognizer for WhisperEngine {
             if next == self.eot {
                 break;
             }
+            let max = logits[next as usize];
+            logprob -= logits.iter().map(|v| (v - max).exp()).sum::<f32>().ln();
             tokens.push(next);
             if let Some(n) = repeated_tail(&tokens[prompt_len..]) {
                 tokens.truncate(tokens.len() - n);
@@ -248,11 +278,19 @@ impl Recognizer for WhisperEngine {
             .decode(&tokens[prompt_len..], true)
             .map_err(|e| anyhow!("decode: {e}"))?;
 
+        let n = (tokens.len() - prompt_len).max(1) as f32;
+        log::debug!(
+            "asr {secs:.1}s logprob {:.2} conf {lang_conf:.2}: {}",
+            logprob / n,
+            text.trim()
+        );
+
         Ok(Transcript {
             text: text.trim().to_string(),
             language: lang_code.to_string(),
             no_speech,
             lang_conf,
+            avg_logprob: logprob / n,
         })
     }
 }

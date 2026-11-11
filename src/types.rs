@@ -118,6 +118,8 @@ pub struct AsrRequest {
     pub audio: Vec<f32>,
     pub language: Option<String>,
     pub prior: HashMap<String, f32>,
+    /// `Settings::hint`.
+    pub hint: String,
 }
 
 pub struct AsrResult {
@@ -126,6 +128,7 @@ pub struct AsrResult {
     pub language: String,
     pub no_speech: f32,
     pub lang_conf: f32,
+    pub avg_logprob: f32,
     pub ms: u32,
     pub error: Option<String>,
 }
@@ -143,16 +146,26 @@ pub struct TranslateRequest {
     pub source: String,
     pub target: String,
     pub context: Vec<(String, String)>,
+    /// `Settings::hint`: names to keep as they are.
+    pub hint: String,
 }
 
 pub enum TranslatorEvent {
     Progress(Progress),
     Ready,
-    Result { id: u64, text: Option<String> },
+    Result {
+        id: u64,
+        text: Option<String>,
+    },
+    /// Translations keep failing; they are tried again after a pause.
+    Trouble(String),
     Error(String),
 }
 
 pub trait Recognizer: Send {
+    /// Words to expect (`Settings::hint`), for recognizers that can use them.
+    fn set_hint(&mut self, _hint: &str) {}
+
     fn transcribe(
         &mut self,
         audio: &[f32],
@@ -166,9 +179,14 @@ pub struct Transcript {
     pub language: String,
     pub no_speech: f32,
     pub lang_conf: f32,
+    /// Mean log probability of the tokens of `text`: how sure the recognizer is of it.
+    pub avg_logprob: f32,
 }
 
 pub trait Translate: Send {
+    /// Names and words to keep as they are (`Settings::hint`), for translators that can.
+    fn set_hint(&mut self, _hint: &str) {}
+
     fn translate(
         &mut self,
         text: &str,

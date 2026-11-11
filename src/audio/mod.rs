@@ -28,6 +28,8 @@ pub struct AudioCapture {
     pub own_excluded: bool,
     /// What was used instead of the requested source or device, for the user.
     pub notes: Vec<String>,
+    /// System audio could not be opened and the microphone is captured in its place.
+    pub mic_instead: bool,
 }
 
 impl AudioCapture {
@@ -47,6 +49,7 @@ impl AudioCapture {
         let mut notes = Vec::new();
         #[cfg_attr(not(windows), allow(unused_mut))]
         let mut own_excluded = false;
+        let mut system = false;
         let (streams, more) = open_sources(source, |kind| {
             let (id, what) = match kind {
                 SourceKind::System => (output, "audio output"),
@@ -57,6 +60,7 @@ impl AudioCapture {
                 match own_excluded::OwnExcluded::start(tx.clone(), failure.clone()) {
                     Ok(c) => {
                         own_excluded = true;
+                        system = true;
                         return Ok(Box::new(c) as Box<dyn Any>);
                     }
                     Err(e) => log::info!("system audio with our own sound in it: {e:#}"),
@@ -64,9 +68,10 @@ impl AudioCapture {
             }
             #[cfg(not(windows))]
             let _ = exclude_own;
-            let open = |id| {
-                open_stream(&host, kind, id, tx.clone(), failure.clone())
-                    .map(|s| Box::new(s) as Box<dyn Any>)
+            let mut open = |id| -> anyhow::Result<Box<dyn Any>> {
+                let s = open_stream(&host, kind, id, tx.clone(), failure.clone())?;
+                system |= kind == SourceKind::System;
+                Ok(Box::new(s) as Box<dyn Any>)
             };
             let Some(id) = id else {
                 return open(None);
@@ -96,6 +101,7 @@ impl AudioCapture {
             failure,
             own_excluded,
             notes,
+            mic_instead: source == AudioSource::System && !system,
         })
     }
 

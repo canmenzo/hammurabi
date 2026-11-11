@@ -63,9 +63,18 @@ enum Cmd {
         /// Spoken language code; auto-detected when omitted.
         #[arg(long)]
         lang: Option<String>,
+        /// Names and unusual words the speech will have.
+        #[arg(long, default_value = "")]
+        hint: String,
         /// Translate captions to this language code.
         #[arg(long)]
         translate: Option<String>,
+        /// Translate with the Natural translator (a language model run by Hammurabi) instead of MADLAD.
+        #[arg(long)]
+        natural: bool,
+        /// With --natural, its smaller model.
+        #[arg(long)]
+        light: bool,
         /// Translate with an OpenAI-compatible endpoint (e.g. http://localhost:11434/v1) instead of MADLAD.
         #[arg(long)]
         llm: Option<String>,
@@ -201,6 +210,10 @@ enum DownloadModel {
     Small,
     Turbo,
     Madlad,
+    /// The language model of the Natural translator.
+    Gemma12b,
+    /// Its smaller one.
+    GemmaE4b,
     Supertonic,
     #[cfg(omnivoice)]
     Omnivoice,
@@ -223,7 +236,10 @@ fn main() -> anyhow::Result<()> {
             input,
             model,
             lang,
+            hint,
             translate,
+            natural,
+            light,
             llm,
             llm_model,
             realtime,
@@ -243,6 +259,7 @@ fn main() -> anyhow::Result<()> {
             let settings = Settings {
                 model,
                 spoken_language: lang,
+                hint,
                 trim_audio: !no_trim,
                 translate: translate.is_some(),
                 target_language: translate.unwrap_or_else(|| "en".into()),
@@ -251,6 +268,7 @@ fn main() -> anyhow::Result<()> {
                         base_url,
                         model: llm_model,
                     },
+                    None if natural => TranslatorChoice::Natural { light },
                     None => TranslatorChoice::Builtin,
                 },
                 speak: speak.is_some(),
@@ -282,6 +300,8 @@ fn main() -> anyhow::Result<()> {
                 DownloadModel::Small => ModelId::WhisperSmall,
                 DownloadModel::Turbo => ModelId::WhisperTurbo,
                 DownloadModel::Madlad => ModelId::Madlad3bQ4k,
+                DownloadModel::Gemma12b => ModelId::Gemma12b,
+                DownloadModel::GemmaE4b => ModelId::GemmaE4b,
                 DownloadModel::Supertonic => ModelId::Supertonic,
                 #[cfg(omnivoice)]
                 DownloadModel::Omnivoice => {
@@ -707,6 +727,10 @@ struct Timed<T> {
 }
 
 impl<T: Recognizer> Recognizer for Timed<T> {
+    fn set_hint(&mut self, hint: &str) {
+        self.inner.set_hint(hint);
+    }
+
     fn transcribe(
         &mut self,
         audio: &[f32],
@@ -721,6 +745,10 @@ impl<T: Recognizer> Recognizer for Timed<T> {
 }
 
 impl Translate for Timed<Box<dyn Translate>> {
+    fn set_hint(&mut self, hint: &str) {
+        self.inner.set_hint(hint);
+    }
+
     fn translate(
         &mut self,
         text: &str,
@@ -815,6 +843,17 @@ fn transcribe_sim(
                 );
                 Box::new(m)
             }
+            #[cfg(windows)]
+            TranslatorChoice::Natural { light } => {
+                let t = Instant::now();
+                let tr = hammurabi::translate::natural(ensure(ModelId::natural(*light))?.weights)?;
+                eprintln!("language model loaded in {} ms", t.elapsed().as_millis());
+                tr
+            }
+            #[cfg(not(windows))]
+            TranslatorChoice::Natural { .. } => {
+                anyhow::bail!("the Natural translator runs on Windows only")
+            }
             TranslatorChoice::Llm { base_url, model } => {
                 let l = LlmTranslator::new(base_url, model);
                 l.ping()?;
@@ -835,6 +874,7 @@ fn transcribe_sim(
         &mut rec,
         tr.as_mut().map(|t| t as &mut dyn Translate),
         settings,
+        true,
     );
     let wall = t.elapsed();
     for e in &events {

@@ -102,6 +102,36 @@ includes use restrictions. The vector estimator comes from
 https://huggingface.co/payam1394/traxlate-supertonic-3-q8ve, the same model with that one file
 quantized to 8 bits, or from the original repository if that copy is gone.
 
+## assets/silero_vad.onnx
+
+The voice detector is Silero VAD v5.1.2, copied unmodified from
+https://github.com/snakers4/silero-vad (src/silero_vad/data/silero_vad.onnx). Silero VAD is MIT
+licensed:
+
+```
+MIT License
+
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## ONNX Runtime
 
 Linked into the binaries through the `ort` crate (MIT/Apache-2.0, https://github.com/pykeio/ort).
@@ -197,3 +227,13 @@ omnivoice-tokenizer-Q8_0.gguf, revision 017094167b5c9ed565a5076ac9b3b93c5ecf5c73
 licensed CC-BY-NC-4.0 (https://huggingface.co/k2-fsa/OmniVoice#license): for personal,
 non-commercial use only. Hammurabi asks you to agree to that before it downloads them. The Higgs
 Audio v2 tokenizer (https://huggingface.co/bosonai/higgs-audio-v2-tokenizer) is Apache-2.0.
+
+## llama.cpp and Gemma 4 (Natural translator, downloaded, not bundled)
+
+The Natural translator runs llama.cpp's server (https://github.com/ggml-org/llama.cpp, MIT
+licensed), downloaded on first use as the official Windows Vulkan build b12290
+(llama-b12290-bin-win-vulkan-x64.zip, checked against its sha256). Its language model is Gemma 4
+by Google, downloaded on request from https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf
+(revision 29d097773436b69ff9feafd636ab4cf873786537) or, as the smaller model,
+https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf (revision
+4b4a2c1d584be7264f87aac328a1bc739ce81b6c). Both are Apache-2.0.

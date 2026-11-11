@@ -5,6 +5,7 @@ pub mod rolling;
 pub mod scheduler;
 pub mod segmenter;
 pub mod text;
+mod vad;
 #[cfg(omnivoice)]
 mod voice;
 
@@ -42,6 +43,19 @@ const CONTEXT_PAIRS: usize = 3;
 const LC_LANG: &str = "en";
 /// Live Captions shows what it heard about a second late, so its text stays muted longer after speech.
 const LC_TAIL: Duration = Duration::from_secs(2);
+/// This many failed transcriptions in a row reload the speech model.
+const ASR_MAX_ERRORS: u32 = 5;
+/// A transcription still running after this long never returns; the speech model is reloaded.
+const ASR_STUCK: Duration = Duration::from_secs(30);
+/// A speech model that failed to load is tried again this many times, this far apart.
+const ASR_RETRIES: u32 = 3;
+const ASR_RETRY_AFTER: Duration = Duration::from_secs(5);
+/// How often a lost audio device is looked for.
+const REOPEN_EVERY: Duration = Duration::from_secs(2);
+/// The recognizer reads noise and music as words it is unsure of: text below this mean token log
+/// probability is dropped. Sound that may not be speech at all (`Segment::unsure`) has to do better.
+const LOGPROB_MIN: f32 = -1.2;
+const UNSURE_LOGPROB_MIN: f32 = -0.8;
 
 #[cfg(not(all(windows, feature = "win-livecaptions")))]
 enum LcEvent {}
@@ -106,12 +120,16 @@ struct Core {
 }
 
 impl Core {
-    fn new(settings: Settings, events: Events) -> Self {
+    fn new(settings: Settings, events: Events, vad: bool) -> Self {
         #[cfg(omnivoice)]
         let enabled = settings.speak && settings.speak_engine == tts::Engine::Speaker;
         Self {
             settings,
-            seg: Segmenter::new(),
+            seg: if vad {
+                Segmenter::with_vad()
+            } else {
+                Segmenter::new()
+            },
             sched: Scheduler::default(),
             asm: Assembler::default(),
             rolling: RollingText::default(),
@@ -235,6 +253,7 @@ impl Core {
                 audio,
                 language: self.settings.spoken_language.clone(),
                 prior: self.prior.clone(),
+                hint: self.settings.hint.clone(),
             });
         }
     }
@@ -253,7 +272,16 @@ impl Core {
                     Vec::new()
                 }
             } else {
-                let text = text::clean(&r.text, &r.language, r.no_speech, r.lang_conf);
+                let floor = if job.unsure {
+                    UNSURE_LOGPROB_MIN
+                } else {
+                    LOGPROB_MIN
+                };
+                let text = if r.avg_logprob < floor {
+                    String::new()
+                } else {
+                    text::clean(&r.text, &r.language, r.no_speech, r.lang_conf)
+                };
                 let words: Vec<String> = text.split_whitespace().map(String::from).collect();
                 if job.is_final {
                     #[cfg(omnivoice)]
@@ -295,6 +323,7 @@ impl Core {
             source: lang.to_string(),
             target: self.settings.target_language.clone(),
             context: self.context.iter().cloned().collect(),
+            hint: self.settings.hint.clone(),
         });
         self.pending.insert(self.next_tr, p);
         None
@@ -305,19 +334,23 @@ impl Core {
             match o {
                 Out::Sentence { id, text, lang } => {
                     let lang = lang.unwrap_or_default();
-                    self.caption(CaptionUpdate::Final {
-                        id,
-                        original: text.clone(),
-                        translated: None,
-                        lang: lang.clone(),
-                    });
                     let p = Pending::Final {
                         id,
                         original: text.clone(),
                         lang: lang.clone(),
                     };
                     let before = self.next_tr;
-                    if let Some(t) = self.request(&text, &lang, p) {
+                    let same = self.request(&text, &lang, p);
+                    // With the original hidden, a caption waits for its translation.
+                    if self.next_tr == before || !self.translation_only() {
+                        self.caption(CaptionUpdate::Final {
+                            id,
+                            original: text.clone(),
+                            translated: None,
+                            lang: lang.clone(),
+                        });
+                    }
+                    if let Some(t) = same {
                         // Already in the target language: it is heard as it is.
                         if self.settings.speak_same_lang {
                             self.speak(&t, &lang);
@@ -334,8 +367,12 @@ impl Core {
                 }
                 Out::Live { text, lang } => {
                     self.live = (self.live.0 + 1, text.clone(), lang.clone());
+                    // Unfinished speech in another language is the original, too.
+                    let hidden = self.translation_only()
+                        && !self.settings.instant
+                        && lang.as_deref() != Some(self.settings.target_language.as_str());
                     self.caption(CaptionUpdate::Live {
-                        original: text,
+                        original: if hidden { String::new() } else { text },
                         translated: None,
                         lang,
                     });
@@ -345,6 +382,11 @@ impl Core {
                 }
             }
         }
+    }
+
+    /// Captions show translations alone, not what was said.
+    fn translation_only(&self) -> bool {
+        self.settings.translate && !self.settings.caption.show_original
     }
 
     /// Translated only in instant mode, since translating a half sentence reorders words on
@@ -375,7 +417,17 @@ impl Core {
         match p {
             Pending::Final { id, original, lang } => {
                 let Some(t) = text else {
-                    return self.speak(&original, &lang);
+                    self.speak(&original, &lang);
+                    // Not translated after all: better the original than nothing.
+                    if self.translation_only() {
+                        self.caption(CaptionUpdate::Final {
+                            id,
+                            original,
+                            translated: None,
+                            lang,
+                        });
+                    }
+                    return;
                 };
                 let target = self.settings.target_language.clone();
                 self.speak(&t, &target);
@@ -421,12 +473,14 @@ impl Core {
 
 /// Runs the pipeline over 100 ms frames on a virtual clock (frame i at i*100 ms), calling the
 /// recognizer and translator inline as if they were instant. Returns every event produced,
-/// including the final flush of an unfinished sentence.
+/// including the final flush of an unfinished sentence. `vad`: find speech with the voice detector
+/// (real audio) instead of by loudness (synthetic frames).
 pub fn simulate(
     frames: impl IntoIterator<Item = Vec<f32>>,
     rec: &mut dyn Recognizer,
     mut tr: Option<&mut dyn Translate>,
     settings: &Settings,
+    vad: bool,
 ) -> Vec<EngineEvent> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let mut core = Core::new(
@@ -435,6 +489,7 @@ pub fn simulate(
             tx,
             notify: Arc::new(|| {}),
         },
+        vad,
     );
     core.tr_ready = tr.is_some();
     core.asr_ready();
@@ -466,6 +521,7 @@ fn drain(
         }
         for req in asr {
             let started = Instant::now();
+            rec.set_hint(&req.hint);
             let r = rec.transcribe(&req.audio, req.language.as_deref(), &req.prior);
             let ms = started.elapsed().as_millis() as u32;
             let r = match r {
@@ -475,6 +531,7 @@ fn drain(
                     language: t.language,
                     no_speech: t.no_speech,
                     lang_conf: t.lang_conf,
+                    avg_logprob: t.avg_logprob,
                     ms,
                     error: None,
                 },
@@ -484,6 +541,7 @@ fn drain(
                     language: String::new(),
                     no_speech: 1.0,
                     lang_conf: 0.0,
+                    avg_logprob: 0.0,
                     ms,
                     error: Some(e.to_string()),
                 },
@@ -492,6 +550,7 @@ fn drain(
         }
         for req in trs {
             let text = tr.as_mut().and_then(|t| {
+                t.set_hint(&req.hint);
                 t.translate(&req.text, &req.source, &req.target, &req.context)
                     .ok()
             });
@@ -523,6 +582,13 @@ pub struct Engine {
     padded_until: Instant,
     /// Earliest time to reopen a capture whose device went away.
     reopen_at: Instant,
+    /// The audio device is gone and is being waited for.
+    capture_lost: bool,
+    asr_errors: u32,
+    /// When the speech worker took the job it is on.
+    asr_busy: Option<Instant>,
+    asr_retries: u32,
+    asr_retry_at: Option<Instant>,
     /// A worker is downloading its model (Stop cancels that download).
     asr_downloading: bool,
     tr_downloading: bool,
@@ -562,7 +628,7 @@ impl Engine {
                 // Windows keeps an app's lowered volume if we died with it turned down.
                 std::thread::spawn(crate::audio::duck::recover);
                 let mut engine = Engine {
-                    core: Core::new(Settings::default(), events),
+                    core: Core::new(Settings::default(), events, true),
                     running: false,
                     asr: None,
                     asr_device: String::new(),
@@ -580,6 +646,11 @@ impl Engine {
                     last_audio: now,
                     padded_until: now,
                     reopen_at: now,
+                    capture_lost: false,
+                    asr_errors: 0,
+                    asr_busy: None,
+                    asr_retries: ASR_RETRIES,
+                    asr_retry_at: None,
                     asr_downloading: false,
                     tr_downloading: false,
                 };
@@ -663,6 +734,7 @@ impl Engine {
             if self.running {
                 self.check_capture(now);
                 self.pad_silence(now);
+                self.check_asr(now);
             }
             self.core.tick(now);
             self.submit();
@@ -673,6 +745,7 @@ impl Engine {
         for req in std::mem::take(&mut self.core.asr_out) {
             if let Some((_, w)) = &self.asr {
                 w.submit(req);
+                self.asr_busy = Some(Instant::now());
             }
         }
         for req in std::mem::take(&mut self.core.tr_out) {
@@ -749,6 +822,7 @@ impl Engine {
                 if self.running {
                     self.stop();
                 }
+                self.asr_retries = ASR_RETRIES;
                 self.core.set_settings(s);
                 self.core.reset();
                 self.sync_speaker();
@@ -760,7 +834,7 @@ impl Engine {
                 }
                 self.ensure_workers();
                 self.core.reset();
-                if self.start_capture() {
+                if self.start_capture(false) {
                     self.running = true;
                     let state = if self.core.sched.ready {
                         EngineState::Running
@@ -800,7 +874,7 @@ impl Engine {
                     )
                 {
                     self.stop_capture();
-                    if !self.start_capture() {
+                    if !self.start_capture(false) {
                         self.stop();
                     }
                 }
@@ -830,7 +904,9 @@ impl Engine {
         }
     }
 
-    fn start_capture(&mut self) -> bool {
+    /// `reopen`: the device went away mid-run. Failing then is not an error (it is tried again),
+    /// and the microphone is no substitute for system audio that was working.
+    fn start_capture(&mut self, reopen: bool) -> bool {
         self.frames = Frames16k::new();
         self.last_audio = Instant::now();
         if self.fed {
@@ -847,6 +923,11 @@ impl Engine {
             )
         };
         match start(s.source) {
+            Ok(c) if reopen && c.mic_instead => false,
+            Err(e) if reopen => {
+                log::debug!("audio capture not back yet: {e:#}");
+                false
+            }
             Ok(c) => {
                 for note in &c.notes {
                     log::warn!("{note}");
@@ -885,21 +966,61 @@ impl Engine {
         if now < self.reopen_at {
             return;
         }
-        let Some(reason) = self.capture.as_ref().and_then(AudioCapture::failure) else {
+        let failure = self.capture.as_ref().and_then(AudioCapture::failure);
+        if failure.is_none() && !self.capture_lost {
             return;
-        };
-        self.reopen_at = now + Duration::from_secs(2);
-        log::warn!("audio capture lost ({reason}), reopening");
+        }
+        self.reopen_at = now + REOPEN_EVERY;
+        if let Some(reason) = failure {
+            log::warn!("audio capture lost ({reason}), reopening");
+        }
         self.stop_capture();
-        if self.start_capture() {
+        if self.start_capture(true) {
+            // Only a warning takes the place of the one that stays up while the device is away.
+            let level = if std::mem::take(&mut self.capture_lost) {
+                StatusLevel::Warning
+            } else {
+                StatusLevel::Info
+            };
             self.events().status(
-                StatusLevel::Info,
+                level,
                 "Audio device changed, captions continue".into(),
                 Some(Duration::from_secs(3)),
             );
-        } else {
-            self.stop();
+        } else if !std::mem::replace(&mut self.capture_lost, true) {
+            self.events().status(
+                StatusLevel::Warning,
+                "Audio device lost, waiting for it".into(),
+                None,
+            );
         }
+    }
+
+    /// Reloads a speech model that failed to load, or whose worker never answered.
+    fn check_asr(&mut self, now: Instant) {
+        if self.asr_retry_at.is_some_and(|t| now >= t) {
+            self.asr_retry_at = None;
+            self.ensure_workers();
+        }
+        if self
+            .asr_busy
+            .is_some_and(|t| now.saturating_duration_since(t) > ASR_STUCK)
+        {
+            self.restart_asr("Speech model stopped answering, reloading");
+        }
+    }
+
+    fn restart_asr(&mut self, why: &str) {
+        log::error!("{why}");
+        self.asr = None;
+        self.asr_errors = 0;
+        self.asr_busy = None;
+        self.events().status(
+            StatusLevel::Warning,
+            why.into(),
+            Some(Duration::from_secs(5)),
+        );
+        self.ensure_workers();
     }
 
     /// Stopping during a model download cancels it; the next Start resumes it.
@@ -942,6 +1063,9 @@ impl Engine {
             self.lc = None;
         }
         self.running = false;
+        self.capture_lost = false;
+        self.asr_retry_at = None;
+        self.asr_busy = None;
         self.core.reset();
         self.core.caption(CaptionUpdate::Clear);
     }
@@ -967,6 +1091,7 @@ impl Engine {
         if !self.lc_active() && self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
             self.asr = Some((key, AsrWorker::spawn(key.0, key.1)));
             self.asr_downloading = false;
+            self.asr_busy = None;
             self.core.reset();
             self.core.sched.forget_in_flight();
             self.core.sched.ready = false;
@@ -989,6 +1114,7 @@ impl Engine {
                 self.events().send(EngineEvent::Progress(p));
             }
             AsrEvent::Ready { model, device } => {
+                self.asr_retries = ASR_RETRIES;
                 self.core.asr_ready();
                 if self.running {
                     self.events().send(EngineEvent::State(EngineState::Running));
@@ -1001,18 +1127,41 @@ impl Engine {
                 self.asr_device = device;
             }
             AsrEvent::Result(r) => {
+                self.asr_busy = None;
+                match &r.error {
+                    Some(e) => {
+                        log::warn!("transcription failed: {e}");
+                        self.asr_errors += 1;
+                    }
+                    None => self.asr_errors = 0,
+                }
                 let ms = r.ms;
                 self.core.asr_result(r, Instant::now());
                 self.events().send(EngineEvent::Stats {
                     asr_ms: ms,
                     device: self.asr_device.clone(),
                 });
+                if self.asr_errors >= ASR_MAX_ERRORS {
+                    self.restart_asr("Speech model keeps failing, reloading");
+                }
             }
             AsrEvent::Error(e) => {
                 self.asr = None;
                 self.asr_downloading = false;
+                self.asr_busy = None;
                 self.core.sched.forget_in_flight();
                 self.core.sched.ready = false;
+                if self.running && self.asr_retries > 0 {
+                    self.asr_retries -= 1;
+                    self.asr_retry_at = Some(Instant::now() + ASR_RETRY_AFTER);
+                    log::error!("speech model failed, trying again: {e}");
+                    self.events().status(
+                        StatusLevel::Warning,
+                        "Speech model failed, trying again".into(),
+                        Some(ASR_RETRY_AFTER),
+                    );
+                    return;
+                }
                 if self.running {
                     self.stop();
                 }
@@ -1118,7 +1267,7 @@ impl Engine {
         );
         self.core.reset();
         self.ensure_workers();
-        if !self.start_capture() {
+        if !self.start_capture(false) {
             self.running = false;
             self.core.reset();
         } else if self.core.sched.ready {
@@ -1141,6 +1290,11 @@ impl Engine {
                 );
             }
             TranslatorEvent::Result { id, text } => self.core.translation(id, text),
+            TranslatorEvent::Trouble(e) => self.events().status(
+                StatusLevel::Warning,
+                format!("Translation is failing, trying again: {e}"),
+                Some(Duration::from_secs(8)),
+            ),
             TranslatorEvent::Error(e) => {
                 self.tr = None;
                 self.tr_downloading = false;
@@ -1264,6 +1418,7 @@ mod tests {
                 tx,
                 notify: Arc::new(|| {}),
             },
+            false,
         );
         core.tr_ready = true;
         let t = Instant::now();
@@ -1308,6 +1463,7 @@ mod tests {
                     tx,
                     notify: Arc::new(|| {}),
                 },
+                false,
             );
             c.tr_ready = ready;
             c

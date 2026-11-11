@@ -16,6 +16,9 @@ pub enum ModelId {
     WhisperSmall,
     WhisperTurbo,
     Madlad3bQ4k,
+    /// The language models of the Natural translator, as GGUF for llama.cpp.
+    Gemma12b,
+    GemmaE4b,
     /// Supertonic 3 neural voices for Read aloud.
     Supertonic,
     /// OmniVoice for Read aloud in the speaker's voice. Non-commercial weights.
@@ -30,10 +33,20 @@ impl ModelId {
         Self::WhisperSmall,
         Self::WhisperTurbo,
         Self::Madlad3bQ4k,
+        Self::Gemma12b,
+        Self::GemmaE4b,
         Self::Supertonic,
         #[cfg(omnivoice)]
         Self::OmniVoice,
     ];
+
+    pub fn natural(light: bool) -> ModelId {
+        if light {
+            Self::GemmaE4b
+        } else {
+            Self::Gemma12b
+        }
+    }
 
     /// `Auto` = turbo on CUDA/Metal (faster than small there), base on CPU.
     pub fn whisper(choice: ModelChoice, gpu: bool) -> ModelId {
@@ -149,6 +162,27 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
         approx_bytes: 1_670 * MB,
         label: "MADLAD-400 3B",
     };
+    // Google's own quantization-aware Q4_0 files, Apache-2.0. Of the models that fit a 16 GB card
+    // beside Whisper, these translated game dialogue best; E4B takes 3.4 GB of graphics memory
+    // where 12B takes 8.
+    static GEMMA_12B: ModelSpec = ModelSpec {
+        repo: "google/gemma-4-12B-it-qat-q4_0-gguf",
+        revision: "29d097773436b69ff9feafd636ab4cf873786537",
+        files: &["gemma-4-12b-it-qat-q4_0.gguf"],
+        sha256: &["93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b"],
+        mirror: None,
+        approx_bytes: 6_976 * MB,
+        label: "Gemma 4 12B",
+    };
+    static GEMMA_E4B: ModelSpec = ModelSpec {
+        repo: "google/gemma-4-E4B-it-qat-q4_0-gguf",
+        revision: "4b4a2c1d584be7264f87aac328a1bc739ce81b6c",
+        files: &["gemma-4-E4B_q4_0-it.gguf"],
+        sha256: &["676c35070db6dbe52f93e9c864ee0fba4eddea94b9c875d9cb10daff453fbaee"],
+        mirror: None,
+        approx_bytes: 5_155 * MB,
+        label: "Gemma 4 E4B",
+    };
     // Babil's catalog: the official files, but the vector estimator quantized to int8 (a quarter
     // of the size, same speech) with the official full-size one as the fallback.
     static SUPERTONIC: ModelSpec = ModelSpec {
@@ -219,6 +253,8 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
         ModelId::WhisperSmall => &SMALL,
         ModelId::WhisperTurbo => &TURBO,
         ModelId::Madlad3bQ4k => &MADLAD,
+        ModelId::Gemma12b => &GEMMA_12B,
+        ModelId::GemmaE4b => &GEMMA_E4B,
         ModelId::Supertonic => &SUPERTONIC,
         #[cfg(omnivoice)]
         ModelId::OmniVoice => &OMNIVOICE,

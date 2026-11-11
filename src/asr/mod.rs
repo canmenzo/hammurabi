@@ -12,7 +12,9 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::models::{self, ModelId};
 use crate::settings::ModelChoice;
-use crate::types::{AsrEvent, AsrRequest, AsrResult, Progress, ProgressPhase, Recognizer};
+use crate::types::{
+    AsrEvent, AsrRequest, AsrResult, Progress, ProgressPhase, Recognizer, SAMPLE_RATE,
+};
 use whisper::WhisperEngine;
 
 /// Thread "hm-asr": ensures + loads the model, then serves requests one at a time.
@@ -80,7 +82,17 @@ fn load(
                 0,
                 None,
             )));
-            WhisperEngine::load(paths, &device)
+            let mut engine = WhisperEngine::load(paths, &device)?;
+            // The first run on a GPU takes seconds (it sets up its kernels); captions would start
+            // that far behind.
+            let t = Instant::now();
+            engine.transcribe(
+                &vec![0.0; 3 * SAMPLE_RATE as usize],
+                Some("en"),
+                &Default::default(),
+            )?;
+            log::info!("speech model warmed up in {:?}", t.elapsed());
+            Ok(engine)
         },
     )?;
     let _ = tx.send(AsrEvent::Ready {
@@ -113,7 +125,10 @@ fn run(
     for req in rx {
         let t0 = Instant::now();
         let r = match engine.as_mut() {
-            Some(e) => e.transcribe(&req.audio, req.language.as_deref(), &req.prior),
+            Some(e) => {
+                e.set_hint(&req.hint);
+                e.transcribe(&req.audio, req.language.as_deref(), &req.prior)
+            }
             None => Err(anyhow::anyhow!("speech model not loaded")),
         };
         let ms = t0.elapsed().as_millis() as u32;
@@ -124,6 +139,7 @@ fn run(
                 language: t.language,
                 no_speech: t.no_speech,
                 lang_conf: t.lang_conf,
+                avg_logprob: t.avg_logprob,
                 ms,
                 error: None,
             },
@@ -133,6 +149,7 @@ fn run(
                 language: req.language.unwrap_or_default(),
                 no_speech: 1.0,
                 lang_conf: 0.0,
+                avg_logprob: 0.0,
                 ms,
                 error: Some(format!("{e:#}")),
             },

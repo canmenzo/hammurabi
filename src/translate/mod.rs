@@ -1,8 +1,11 @@
 pub mod llm;
 pub mod madlad;
+#[cfg(windows)]
+pub mod server;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use regex::Regex;
@@ -13,8 +16,9 @@ use crate::types::{Progress, ProgressPhase, Translate, TranslateRequest, Transla
 
 /// Requests waiting beyond this are answered untranslated.
 const MAX_QUEUE: usize = 3;
-/// This many failed translations in a row disable the translator until the next Start.
+/// This many failed translations in a row pause the translator for `RETRY_AFTER`.
 const MAX_FAILURES: u32 = 3;
+const RETRY_AFTER: Duration = Duration::from_secs(15);
 
 /// Thread "hm-tr": ensures MADLAD or pings the LLM endpoint, then serves requests.
 pub struct TranslatorWorker {
@@ -73,6 +77,7 @@ fn serve(
     ev: Sender<TranslatorEvent>,
 ) {
     let mut failures = 0;
+    let mut paused_until = None;
     // Without a translator every request still gets an (empty) answer.
     while let Ok(req) = rx.recv() {
         let text = if req.source == req.target {
@@ -82,7 +87,10 @@ fn serve(
             // is already shown untranslated).
             log::info!("translation backlog, skipped #{}", req.id);
             None
+        } else if paused_until.is_some_and(|t| Instant::now() < t) {
+            None
         } else if let Some(t) = tr.as_mut() {
+            t.set_hint(&req.hint);
             match t.translate(&req.text, &req.source, &req.target, &req.context) {
                 Ok(text) => {
                     failures = 0;
@@ -92,8 +100,9 @@ fn serve(
                     log::warn!("translate failed: {e:#}");
                     failures += 1;
                     if failures == MAX_FAILURES {
-                        let _ = ev.send(TranslatorEvent::Error(format!("{e:#}")));
-                        tr = None;
+                        failures = 0;
+                        paused_until = Some(Instant::now() + RETRY_AFTER);
+                        let _ = ev.send(TranslatorEvent::Trouble(format!("{e:#}")));
                     }
                     None
                 }
@@ -141,11 +150,89 @@ fn load(
             )?;
             Ok(Box::new(m))
         }
+        #[cfg(windows)]
+        TranslatorChoice::Natural { light } => {
+            let model = ModelId::natural(light);
+            let progress = |phase, done, total| {
+                let _ = ev.send(TranslatorEvent::Progress(Progress {
+                    model,
+                    phase,
+                    done,
+                    total,
+                }));
+            };
+            let paths = models::ensure(
+                model,
+                &mut |done, total| progress(ProgressPhase::Downloading, done, total),
+                cancel,
+            )?;
+            progress(ProgressPhase::Loading, 0, None);
+            Ok(Box::new(Natural::start(paths.weights, cancel)?))
+        }
+        #[cfg(not(windows))]
+        TranslatorChoice::Natural { .. } => {
+            anyhow::bail!("the Natural translator runs on Windows only for now")
+        }
         TranslatorChoice::Llm { base_url, model } => {
             let llm = llm::LlmTranslator::new(&base_url, &model);
             llm.ping()?;
             Ok(Box::new(llm))
         }
+    }
+}
+
+/// The LLM translator on a llama.cpp server of our own, which is started again if it dies.
+#[cfg(windows)]
+struct Natural {
+    model: std::path::PathBuf,
+    server: server::Server,
+    llm: llm::LlmTranslator,
+    hint: String,
+}
+
+#[cfg(windows)]
+impl Natural {
+    fn start(model: std::path::PathBuf, cancel: &AtomicBool) -> anyhow::Result<Self> {
+        let server = server::Server::start(&model, &mut |_, _| {}, cancel)?;
+        let llm = llm::LlmTranslator::own(&server.base_url());
+        let t = Instant::now();
+        llm.warm_up()?;
+        log::info!("language model warmed up in {:?}", t.elapsed());
+        Ok(Self {
+            model,
+            server,
+            llm,
+            hint: String::new(),
+        })
+    }
+}
+
+/// The Natural translator over its downloaded `model`, for tools.
+#[cfg(windows)]
+pub fn natural(model: std::path::PathBuf) -> anyhow::Result<Box<dyn Translate>> {
+    Ok(Box::new(Natural::start(model, &AtomicBool::new(false))?))
+}
+
+#[cfg(windows)]
+impl Translate for Natural {
+    fn set_hint(&mut self, hint: &str) {
+        self.hint = hint.to_string();
+    }
+
+    fn translate(
+        &mut self,
+        text: &str,
+        source: &str,
+        target: &str,
+        context: &[(String, String)],
+    ) -> anyhow::Result<String> {
+        self.llm.set_hint(&self.hint);
+        let r = self.llm.translate(text, source, target, context);
+        if r.is_err() && !self.server.alive() {
+            log::error!("llama.cpp stopped, starting it again");
+            *self = Self::start(self.model.clone(), &AtomicBool::new(false))?;
+        }
+        r
     }
 }
 
@@ -198,6 +285,7 @@ mod tests {
             source: "en".into(),
             target: "tr".into(),
             context: vec![],
+            hint: String::new(),
         });
         let mut ready = false;
         loop {
@@ -210,7 +298,7 @@ mod tests {
                     assert!(text.unwrap().to_lowercase().contains("arkadaş"));
                     break;
                 }
-                TranslatorEvent::Error(e) => panic!("{e}"),
+                TranslatorEvent::Error(e) | TranslatorEvent::Trouble(e) => panic!("{e}"),
                 TranslatorEvent::Progress(_) => {}
             }
         }
@@ -232,6 +320,7 @@ mod tests {
                 source: "en".into(),
                 target: target.into(),
                 context: vec![],
+                hint: String::new(),
             })
             .unwrap();
         }
@@ -268,6 +357,7 @@ mod tests {
             source: "en".into(),
             target: "tr".into(),
             context: vec![],
+            hint: String::new(),
         }
     }
 
@@ -303,7 +393,7 @@ mod tests {
             ]
         ));
 
-        // 3 failures in a row report an error, then requests are answered without trying.
+        // 3 failures in a row report trouble, then requests are answered without trying for a while.
         let (tx, rx) = crossbeam_channel::unbounded();
         let (ev_tx, ev) = crossbeam_channel::unbounded();
         let h = std::thread::spawn(move || {

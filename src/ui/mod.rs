@@ -8,6 +8,7 @@ pub mod platform;
 pub mod settings_window;
 pub mod tray;
 pub mod update;
+pub mod web;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -71,6 +72,7 @@ pub struct App {
     tray: Option<tray::Tray>,
     hotkeys: hotkey::Hotkeys,
     overlay: OverlayState,
+    web: Option<web::Web>,
     settings_win: SettingsWindow,
     models: ModelsStatus,
     app_rx: Receiver<AppEvent>,
@@ -117,6 +119,7 @@ impl App {
             tray,
             hotkeys,
             overlay: OverlayState::default(),
+            web: None,
             settings_win: SettingsWindow::default(),
             models: ModelsStatus {
                 cached: Vec::new(),
@@ -163,6 +166,7 @@ impl App {
         if let Some(e) = hk_err.or_else(|| app.hotkeys.apply(&app.settings)) {
             app.warn(e);
         }
+        app.sync_web();
         // Entries written before --background existed would otherwise open Settings at every login.
         if app.models.autostart
             && let Err(e) = autostart::set(true)
@@ -204,6 +208,22 @@ impl App {
             Instant::now(),
         );
         self.tray_dirty = true;
+    }
+
+    /// Starts the captions page once it is wanted, and tells it how captions look now.
+    fn sync_web(&mut self) {
+        if self.settings.browser_source && self.web.is_none() {
+            match web::Web::spawn() {
+                Ok(w) => self.web = Some(w),
+                Err(e) => return self.warn(format!("The captions page could not start: {e}")),
+            }
+        }
+        if let Some(w) = &self.web {
+            w.style(&self.settings);
+            if !self.settings.browser_source {
+                w.caption(&CaptionUpdate::Clear, "");
+            }
+        }
     }
 
     /// Saving and reconfiguring the engine wait for `SAVE_DEBOUNCE` without further changes,
@@ -436,6 +456,11 @@ impl App {
                 {
                     log::debug!("final #{id} ({lang}) {original:?} => {translated:?}");
                 }
+                if self.settings.browser_source
+                    && let Some(w) = &self.web
+                {
+                    w.caption(&c, &self.settings.target_language);
+                }
                 self.overlay.apply(c, &self.settings, now)
             }
             EngineEvent::Speech(a) => match a {
@@ -610,6 +635,7 @@ impl eframe::App for App {
                 if let Err(e) = config::save(&self.settings) {
                     log::error!("config save failed: {e:#}");
                 }
+                self.sync_web();
                 if self.running {
                     self.engine()
                         .send(EngineCommand::Reconfigure(self.settings.clone()));
@@ -644,7 +670,7 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(layout.1));
             }
         }
-        let passthrough = !(self.dragging || self.pointer.over());
+        let passthrough = self.settings.overlay_locked || !(self.dragging || self.pointer.over());
         if self.passthrough != passthrough {
             self.passthrough = passthrough;
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(passthrough));

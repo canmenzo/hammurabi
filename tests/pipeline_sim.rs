@@ -61,6 +61,7 @@ impl Recognizer for FakeAsr {
             language: "en".into(),
             no_speech: 0.0,
             lang_conf: 1.0,
+            avg_logprob: 0.0,
         })
     }
 }
@@ -141,7 +142,13 @@ fn f(id: u64, o: &str, t: Option<&str>) -> Final {
 fn captions_end_to_end_with_translation() {
     let mut asr = FakeAsr::default();
     let mut tr = Upper;
-    let events = simulate(frames(), &mut asr, Some(&mut tr), &settings("tr", true));
+    let events = simulate(
+        frames(),
+        &mut asr,
+        Some(&mut tr),
+        &settings("tr", true),
+        false,
+    );
     let (finals, lives, all) = split(events);
     assert_eq!(
         finals,
@@ -179,14 +186,26 @@ fn captions_end_to_end_with_translation() {
 #[test]
 fn same_language_and_no_translator() {
     let mut asr = FakeAsr::default();
-    let (finals, _, _) = split(simulate(frames(), &mut asr, None, &settings("en", true)));
+    let (finals, _, _) = split(simulate(
+        frames(),
+        &mut asr,
+        None,
+        &settings("en", true),
+        false,
+    ));
     assert_eq!(finals[0], f(1, "Hello world.", None));
     assert_eq!(finals[1], f(1, "Hello world.", Some("Hello world.")));
     assert_eq!(finals.len(), 6);
 
     // No translator loaded yet: captions go out untranslated, once each.
     let mut asr = FakeAsr::default();
-    let (finals, _, _) = split(simulate(frames(), &mut asr, None, &settings("tr", true)));
+    let (finals, _, _) = split(simulate(
+        frames(),
+        &mut asr,
+        None,
+        &settings("tr", true),
+        false,
+    ));
     assert_eq!(
         finals.iter().map(|x| x.1.as_str()).collect::<Vec<_>>(),
         ["Hello world.", "How are you today?", "this has no ending"]
@@ -202,7 +221,7 @@ fn instant_mode_translates_live_line() {
         instant: true,
         ..settings("tr", true)
     };
-    let events = simulate(frames(), &mut asr, Some(&mut tr), &s);
+    let events = simulate(frames(), &mut asr, Some(&mut tr), &s, false);
     let live_translations: Vec<String> = events
         .into_iter()
         .filter_map(|e| match e {
@@ -221,9 +240,35 @@ fn instant_mode_translates_live_line() {
 }
 
 #[test]
+fn hidden_original_shows_translations_only() {
+    let mut asr = FakeAsr::default();
+    let mut tr = Upper;
+    let mut s = settings("tr", true);
+    s.caption.show_original = false;
+    let events = simulate(frames(), &mut asr, Some(&mut tr), &s, false);
+    let (finals, lives, _) = split(events);
+    assert_eq!(
+        finals,
+        vec![
+            f(1, "Hello world.", Some("HELLO WORLD.")),
+            f(2, "How are you today?", Some("HOW ARE YOU TODAY?")),
+            f(3, "this has no ending", Some("THIS HAS NO ENDING")),
+        ]
+    );
+    assert!(lives.iter().all(String::is_empty));
+
+    // Without a translator the original is all there is.
+    let mut asr = FakeAsr::default();
+    let (finals, lives, _) = split(simulate(frames(), &mut asr, None, &s, false));
+    assert_eq!(finals.len(), 3);
+    assert!(finals.iter().all(|x| x.2.is_none()));
+    assert!(lives.iter().all(String::is_empty));
+}
+
+#[test]
 fn silence_and_noise_produce_nothing() {
     let mut asr = FakeAsr::default();
-    let events = simulate(silence(100), &mut asr, None, &settings("tr", true));
+    let events = simulate(silence(100), &mut asr, None, &settings("tr", true), false);
     assert!(events.is_empty());
     assert!(asr.priors.is_empty());
 }

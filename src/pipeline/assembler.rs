@@ -99,14 +99,18 @@ impl Assembler {
         st.words = words.clone();
         st.language = Some(lang.to_string());
         let emitted = st.emitted;
-        let end = (emitted..stable).rev().find(|&i| ends_sentence(&words[i]));
-        if let Some(end) = end {
-            let joined = self.join_carry(&words[emitted..=end]);
+        // Each sentence is a caption of its own, however many became stable at once.
+        let mut start = emitted;
+        for end in (emitted..stable).filter(|&i| ends_sentence(&words[i])) {
+            let joined = self.join_carry(&words[start..=end]);
             self.emit(&mut out, joined, Some(lang.to_string()), now);
             self.carry.clear();
+            start = end + 1;
+        }
+        if start > emitted {
             let st = self.segs.get_mut(&seg).unwrap();
-            st.last_emitted = words[end].clone();
-            st.emitted = end + 1;
+            st.last_emitted = words[start - 1].clone();
+            st.emitted = start;
         }
         self.flush_at = None;
         // A newer partial can be shorter than what earlier ones already showed.
@@ -288,6 +292,23 @@ mod tests {
         assert_eq!(sentences(&o), ["How are you?"]);
         assert_eq!(live(&o), Some(""));
         assert_eq!(a.flush_deadline(), None);
+    }
+
+    #[test]
+    fn sentences_stable_at_once_are_captions_of_their_own() {
+        let t = Instant::now();
+        let mut a = Assembler::default();
+        a.finish(1, Some((w("and then"), "en".into())), t);
+        a.partial(2, w("we left. Go. Now! What"), "en", t);
+        let o = a.partial(2, w("we left. Go. Now! What is"), "en", t);
+        assert_eq!(sentences(&o), ["and then we left.", "Go.", "Now!"]);
+        assert_eq!(live(&o), Some("What is"));
+        let o = a.finish(
+            2,
+            Some((w("we left. Go. Now! What is it?"), "en".into())),
+            t,
+        );
+        assert_eq!(sentences(&o), ["What is it?"]);
     }
 
     #[test]

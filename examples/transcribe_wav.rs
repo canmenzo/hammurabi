@@ -90,12 +90,13 @@ fn main() -> anyhow::Result<()> {
         let t0 = Instant::now();
         let t = engine.transcribe(chunk, lang.as_deref(), &prior)?;
         println!(
-            "[{:>3}s] {:?}  lang={} no_speech={:.3} lang_conf={:.3} ms={}",
+            "[{:>3}s] {:?}  lang={} no_speech={:.3} lang_conf={:.3} logprob={:.2} ms={}",
             i * 5,
             t.text,
             t.language,
             t.no_speech,
             t.lang_conf,
+            t.avg_logprob,
             t0.elapsed().as_millis()
         );
     }

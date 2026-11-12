@@ -179,10 +179,15 @@ impl Recognizer for WhisperEngine {
             return;
         }
         let mut tokens = Vec::new();
-        if !hint.is_empty()
-            && let Ok(e) = self.tokenizer.encode(format!(" {hint}"), false)
+        let list = hint.trim_end_matches(['.', ',']);
+        if !list.is_empty()
+            && let Ok(e) = self.tokenizer.encode(format!(" {list}"), false)
+            && let Ok(stop) = self.tokenizer.encode(".", false)
         {
+            // Whisper writes the way what came before was written: after a bare list of names
+            // it leaves out full stops, which captions are cut at.
             tokens.extend(e.get_ids().iter().take(HINT_TOKENS));
+            tokens.extend(stop.get_ids());
         }
         self.hint = (hint.to_string(), tokens);
     }

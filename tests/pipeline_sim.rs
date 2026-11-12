@@ -155,10 +155,15 @@ fn captions_end_to_end_with_translation() {
         vec![
             f(1, "Hello world.", None),
             f(1, "Hello world.", Some("HELLO WORLD.")),
-            f(2, "How are you today?", None),
-            f(2, "How are you today?", Some("HOW ARE YOU TODAY?")),
-            f(3, "this has no ending", None),
-            f(3, "this has no ending", Some("THIS HAS NO ENDING")),
+            // The next sentence follows closely, so the caption grows.
+            f(1, "Hello world. How are you today?", None),
+            f(
+                1,
+                "Hello world. How are you today?",
+                Some("HELLO WORLD. HOW ARE YOU TODAY?")
+            ),
+            f(2, "this has no ending", None),
+            f(2, "this has no ending", Some("THIS HAS NO ENDING")),
         ]
     );
     // The live line grows with partials, shrinks after each emitted sentence, and ends cleared.
@@ -208,7 +213,11 @@ fn same_language_and_no_translator() {
     ));
     assert_eq!(
         finals.iter().map(|x| x.1.as_str()).collect::<Vec<_>>(),
-        ["Hello world.", "How are you today?", "this has no ending"]
+        [
+            "Hello world.",
+            "Hello world. How are you today?",
+            "this has no ending"
+        ]
     );
     assert!(finals.iter().all(|x| x.2.is_none()));
 }
@@ -251,8 +260,12 @@ fn hidden_original_shows_translations_only() {
         finals,
         vec![
             f(1, "Hello world.", Some("HELLO WORLD.")),
-            f(2, "How are you today?", Some("HOW ARE YOU TODAY?")),
-            f(3, "this has no ending", Some("THIS HAS NO ENDING")),
+            f(
+                1,
+                "Hello world. How are you today?",
+                Some("HELLO WORLD. HOW ARE YOU TODAY?")
+            ),
+            f(2, "this has no ending", Some("THIS HAS NO ENDING")),
         ]
     );
     assert!(lives.iter().all(String::is_empty));

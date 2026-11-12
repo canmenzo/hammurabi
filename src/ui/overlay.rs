@@ -105,8 +105,16 @@ impl OverlayState {
                     self.hold_secs.max(line.chars() as f32 / 15.0).max(0.0),
                 );
                 if let Some(c) = self.cues.iter_mut().find(|c| c.id == id) {
+                    let mut line = line;
+                    if line.original != c.line.original {
+                        // The caption grew: it stays up as long as a new one would, and keeps
+                        // the translation it has until the one for all of it comes.
+                        c.hold = now.saturating_duration_since(c.shown) + hold;
+                        if line.translated.is_none() {
+                            line.translated = c.line.translated.take();
+                        }
+                    }
                     c.line = line;
-                    c.hold = hold;
                 } else if line.translated.is_some() && self.cues.last().is_some_and(|c| c.id > id) {
                     // A translation that comes after its caption left: newer ones are up already.
                 } else {

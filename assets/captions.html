@@ -91,6 +91,12 @@ function final(e) {
     cues.push(c);
     while (cues.length > Math.max(st.cues, 1)) remove(cues[0]);
   }
+  if (c.o !== undefined && c.o !== e.o) {
+    // The caption grew: it stays up as long as a new one would, and keeps the translation it
+    // has until the one for all of it comes.
+    c.shown = Date.now();
+    if (!e.tr) e.tr = c.tr;
+  }
   Object.assign(c, { o: e.o, tr: e.tr, same: e.same });
   draw(c);
   hold(c);

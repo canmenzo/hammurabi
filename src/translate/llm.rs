@@ -9,6 +9,10 @@ use crate::types::Translate;
 const USER_AGENT: &str = "OpenAI File Downloader, XaiImageApiFetch/1.0";
 /// The longest caption translates to about half of this; more is a model that will not stop.
 const MAX_TOKENS: u32 = 64;
+const HINT_CHARS: usize = 600;
+/// For targets in the Latin alphabet, our own server may only write Latin letters, punctuation
+/// and symbols. Once in thousands of lines the model ends a word in East Asian punctuation.
+const LATIN_GRAMMAR: &str = r"root ::= [\x20-ɏ‐-⃏]+";
 
 /// OpenAI-compatible chat endpoint: the user's own (Ollama `http://localhost:11434/v1`) or the
 /// llama.cpp server Hammurabi runs itself.
@@ -115,10 +119,12 @@ impl LlmTranslator {
 /// What the model is told. The wording, the Turkish notes and the examples were tuned on game
 /// dialogue (street slang, swearing, speech recognition's mistakes) and scored by hand.
 fn system(src: &str, tgt: &str, hint: &str) -> String {
-    let names = if hint.trim().is_empty() {
+    // A list far longer than the names of one game or film would crowd out the lines themselves.
+    let hint: String = hint.trim().chars().take(HINT_CHARS).collect();
+    let names = if hint.is_empty() {
         String::new()
     } else {
-        format!(": {}", hint.trim().trim_end_matches('.'))
+        format!(": {}", hint.trim_end_matches('.'))
     };
     let notes = if (src, tgt) == ("English", "Turkish") {
         TURKISH
@@ -152,7 +158,8 @@ lan or amına koyayım, not siktir git.
 - Slang: finna = -ecek; ain't = değil/yok; trippin' = kafayı yemek; whip = araba; plug = bağlantı; \
 snitch = ötmek; smoked = öldürüldü; cappin' = atmak (yalan); keep it a hunnid = dürüst ol; bet = \
 tamamdır; real talk = ciddiyim; opps = düşmanlar; OG = abi; ho = kaşar; forty = bira; lit up / \
-light up = kurşun yağdırmak; stoner = esrarkeş; damn = vay be / lan.
+light up = kurşun yağdırmak; stoner = esrarkeş; damn = vay be / lan; bad bitch = afet (a \
+compliment); pony = at kuyruğu; you want some? = dayak mı istiyorsun.
 ";
 
 /// Example lines and their translations, shown to the model as earlier turns.
@@ -218,6 +225,9 @@ impl Translate for LlmTranslator {
             // Not for other servers: their models may think aloud first, over several lines.
             body["stop"] = json!(["\n"]);
             body["cache_prompt"] = json!(true);
+            if LATIN.contains(&target) {
+                body["grammar"] = json!(LATIN_GRAMMAR);
+            }
         }
         let mut resp = self
             .agent
@@ -238,9 +248,14 @@ impl Translate for LlmTranslator {
             .context("LLM response has no content")?;
         let out = clean(content);
         check(text, &out, target)?;
-        Ok(out)
+        Ok(SLUR.replace_all(&out, "o kelime").into_owned())
     }
 }
+
+/// The model keeps the N-word as it is when it is talked about rather than used ("you can't say
+/// ..."). A stream cannot show it, and "o kelime" (that word) is better than it in any language.
+static SLUR: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)\bnigg(?:a|er)s?\b").unwrap());
 
 /// Languages written in the Latin alphabet, among the translation targets.
 const LATIN: [&str; 15] = [
@@ -284,9 +299,14 @@ fn clean(s: &str) -> String {
     if let Some(end) = s.rfind("</think>") {
         s.drain(..end + "</think>".len());
     }
-    let quotes = ['"', '\'', '“', '”', '‘', '’', '«', '»'];
-    let line = s.trim().lines().next().unwrap_or_default();
-    line.trim().trim_matches(&quotes[..]).trim().to_string()
+    let line = s.trim().lines().next().unwrap_or_default().trim();
+    // Quotes around the whole line go; ones that open or close a part of it stay.
+    let quotes = [('"', '"'), ('\'', '\''), ('“', '”'), ('‘', '’'), ('«', '»')];
+    let inner = quotes.iter().find_map(|&(open, close)| {
+        let inner = line.strip_prefix(open)?.strip_suffix(close)?;
+        (!inner.contains([open, close])).then_some(inner)
+    });
+    inner.unwrap_or(line).trim().to_string()
 }
 
 #[cfg(test)]
@@ -303,6 +323,14 @@ mod tests {
         assert_eq!(clean("reasoning</think>Hi"), "Hi");
         assert_eq!(clean("plain"), "plain");
         assert_eq!(clean("Selam.\n(Note: informal)"), "Selam.");
+        assert_eq!(
+            clean("\"Ben kaçtım\" dedi ve gitti."),
+            "\"Ben kaçtım\" dedi ve gitti."
+        );
+        assert_eq!(
+            SLUR.replace_all("Yayında nigga diyemezsin.", "o kelime"),
+            "Yayında o kelime diyemezsin."
+        );
     }
 
     #[test]

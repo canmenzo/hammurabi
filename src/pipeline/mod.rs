@@ -103,6 +103,9 @@ struct Core {
     next_tr: u64,
     pending: HashMap<u64, Pending>,
     context: VecDeque<(String, String)>,
+    /// The caption translated last and the request for it: a caption that grew is translated
+    /// again, and the answer for what it was before is of no use.
+    last_final: (u64, u64),
     /// Current live line; only its latest version is translated, one request at a time.
     live: (u64, String, Option<String>),
     live_in_flight: bool,
@@ -123,6 +126,7 @@ impl Core {
     fn new(settings: Settings, events: Events, vad: bool) -> Self {
         #[cfg(omnivoice)]
         let enabled = settings.speak && settings.speak_engine == tts::Engine::Speaker;
+        let separate = settings.speak;
         Self {
             settings,
             seg: if vad {
@@ -131,13 +135,18 @@ impl Core {
                 Segmenter::new()
             },
             sched: Scheduler::default(),
-            asm: Assembler::default(),
+            asm: {
+                let mut asm = Assembler::default();
+                asm.separate = separate;
+                asm
+            },
             rolling: RollingText::default(),
             prior: HashMap::new(),
             tr_ready: false,
             next_tr: 0,
             pending: HashMap::new(),
             context: VecDeque::new(),
+            last_final: (0, 0),
             live: (0, String::new(), None),
             live_in_flight: false,
             asr_out: Vec::new(),
@@ -162,6 +171,7 @@ impl Core {
         if s.target_language != self.settings.target_language {
             self.context.clear();
         }
+        self.asm.separate = s.speak;
         self.settings = s;
     }
 
@@ -324,6 +334,7 @@ impl Core {
             target: self.settings.target_language.clone(),
             context: self.context.iter().cloned().collect(),
             hint: self.settings.hint.clone(),
+            at: Instant::now(),
         });
         self.pending.insert(self.next_tr, p);
         None
@@ -341,6 +352,9 @@ impl Core {
                     };
                     let before = self.next_tr;
                     let same = self.request(&text, &lang, p);
+                    if self.next_tr != before {
+                        self.last_final = (id, self.next_tr);
+                    }
                     // With the original hidden, a caption waits for its translation.
                     if self.next_tr == before || !self.translation_only() {
                         self.caption(CaptionUpdate::Final {
@@ -414,7 +428,10 @@ impl Core {
         let Some(p) = self.pending.remove(&id) else {
             return;
         };
+        let request = id;
         match p {
+            Pending::Final { id, .. }
+                if self.last_final.0 == id && self.last_final.1 != request => {}
             Pending::Final { id, original, lang } => {
                 let Some(t) = text else {
                     self.speak(&original, &lang);

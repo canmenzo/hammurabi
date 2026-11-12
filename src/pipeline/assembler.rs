@@ -12,6 +12,13 @@ const FLUSH_AFTER: Duration = Duration::from_millis(1500);
 /// Words; very long unpunctuated speech is shown in chunks.
 const MAX_CARRY: usize = 30;
 const DEDUPE_WINDOW: Duration = Duration::from_secs(5);
+/// A sentence that follows the last caption this soon joins it, up to this many characters (two
+/// subtitle lines): "Hey, Simeon." grows into "Hey, Simeon. I'm out." instead of being pushed
+/// off the screen by it before it is read.
+const JOIN_WITHIN: Duration = Duration::from_millis(1500);
+const CAPTION_CHARS: usize = 84;
+/// Partials that repeat the one before them before the sentence they end in counts as over.
+const SETTLED: u32 = 2;
 
 static TERMINATOR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"[.!?…。！？]["'”’)\]]*$"#).unwrap());
@@ -43,11 +50,17 @@ struct SegText {
 pub struct Assembler {
     segs: HashMap<u64, SegText>,
     prev_partial: Option<(u64, Vec<String>)>,
+    /// Partials in a row that said exactly what the one before said.
+    same: u32,
     /// Finished audio whose sentence has not ended yet.
     carry: Vec<String>,
     carry_lang: Option<String>,
     flush_at: Option<Instant>,
     last_sentence: Option<(String, Instant)>,
+    /// The caption emitted last: id, words, when, language.
+    last_caption: Option<(u64, Vec<String>, Instant, Option<String>)>,
+    /// Captions are read aloud as they come, so one must not come again with more in it.
+    pub separate: bool,
     next_id: u64,
 }
 
@@ -56,6 +69,7 @@ impl Assembler {
     pub fn reset(&mut self) {
         *self = Self {
             next_id: self.next_id,
+            separate: self.separate,
             ..Default::default()
         };
     }
@@ -86,6 +100,29 @@ impl Assembler {
         out
     }
 
+    /// The unfinished sentence is over after all when what follows it opens a new one: in quick
+    /// back-and-forth, one speaker's line often ends without a full stop as the next one starts.
+    /// Whisper capitalizes what it hears as a start. Not German, which capitalizes every noun,
+    /// and not "I", which says nothing either way.
+    fn end_carry(&mut self, out: &mut Vec<Out>, next: Option<&String>, lang: &str, now: Instant) {
+        let (Some(last), Some(next)) = (self.carry.last(), next) else {
+            return;
+        };
+        let word = next.trim_start_matches(|c: char| !c.is_alphanumeric());
+        let opens = word.chars().next().is_some_and(char::is_uppercase)
+            && word.split("'").next() != Some("I");
+        if !opens
+            || lang == "de"
+            || last.ends_with([',', '-'])
+            || self.join_carry(std::slice::from_ref(next)).len() == self.carry.len()
+        {
+            return;
+        }
+        let carry = std::mem::take(&mut self.carry);
+        let lang = self.carry_lang.take();
+        self.emit(out, carry, lang, now);
+    }
+
     /// Words two consecutive partials agree on are stable; complete sentences inside them are
     /// shown right away instead of waiting for the pause that closes the segment.
     pub fn partial(&mut self, seg: u64, words: Vec<String>, lang: &str, now: Instant) -> Vec<Out> {
@@ -95,13 +132,22 @@ impl Assembler {
             _ => Vec::new(),
         };
         let stable = words.iter().zip(&prev).take_while(|(a, b)| a == b).count();
+        self.same = if prev == words { self.same + 1 } else { 0 };
         let st = self.segs.entry(seg).or_default();
         st.words = words.clone();
         st.language = Some(lang.to_string());
         let emitted = st.emitted;
-        // Each sentence is a caption of its own, however many became stable at once.
+        // Not the sentence the audio so far ends in, until nothing has been added to it for a
+        // while: Whisper closes whatever it has with a full stop ("This is real." before "This
+        // is real nice, Dad.").
         let mut start = emitted;
-        for end in (emitted..stable).filter(|&i| ends_sentence(&words[i])) {
+        let ended = if self.same >= SETTLED {
+            stable
+        } else {
+            stable.min(words.len().saturating_sub(1))
+        };
+        for end in (emitted..ended).filter(|&i| ends_sentence(&words[i])) {
+            self.end_carry(&mut out, words.get(start), lang, now);
             let joined = self.join_carry(&words[start..=end]);
             self.emit(&mut out, joined, Some(lang.to_string()), now);
             self.carry.clear();
@@ -148,8 +194,15 @@ impl Assembler {
                 skip = lo + j + 1;
             }
         }
-        let all = self.join_carry(&words[skip.min(words.len())..]);
+        let rest = &words[skip.min(words.len())..];
         let mut out = Vec::new();
+        self.end_carry(
+            &mut out,
+            rest.first(),
+            lang.as_deref().unwrap_or_default(),
+            now,
+        );
+        let all = self.join_carry(rest);
         let mut start = 0;
         for i in 0..all.len() {
             if ends_sentence(&all[i]) {
@@ -204,26 +257,58 @@ impl Assembler {
         out
     }
 
-    fn emit(&mut self, out: &mut Vec<Out>, words: Vec<String>, lang: Option<String>, now: Instant) {
-        let text = words.join(" ").trim().to_string();
-        if text.is_empty() {
-            return;
+    /// False for "Please. Please." or a sentence the final repeats: one caption is enough.
+    fn fresh(&mut self, words: &[String], now: Instant) -> bool {
+        let lower = words.join(" ").trim().to_lowercase();
+        if lower.is_empty() {
+            return false;
         }
-        // "Please. Please." or a sentence the final repeats: one caption is enough.
-        let lower = text.to_lowercase();
         if let Some((prev, t)) = &self.last_sentence
             && *prev == lower
             && now - *t < DEDUPE_WINDOW
         {
-            return;
+            return false;
         }
         self.last_sentence = Some((lower, now));
+        true
+    }
+
+    fn emit(&mut self, out: &mut Vec<Out>, words: Vec<String>, lang: Option<String>, now: Instant) {
+        if !self.fresh(&words, now) {
+            return;
+        }
+        let chars = |w: &[String]| w.iter().map(|w| w.chars().count() + 1).sum::<usize>();
+        if let Some((id, said, at, l)) = &mut self.last_caption
+            && !self.separate
+            && now.saturating_duration_since(*at) < JOIN_WITHIN
+            // What was cut off by another speaker stays apart from what they said.
+            && said.last().is_some_and(|w| ends_sentence(w))
+            && *l == lang
+            && chars(said) + chars(&words) <= CAPTION_CHARS
+        {
+            said.extend(words);
+            *at = now;
+            let grown = Out::Sentence {
+                id: *id,
+                text: said.join(" "),
+                lang,
+            };
+            // Grown twice in one go: only the last is worth translating.
+            match out.last_mut() {
+                Some(Out::Sentence { id: last, .. }) if last == id => {
+                    *out.last_mut().unwrap() = grown
+                }
+                _ => out.push(grown),
+            }
+            return;
+        }
         self.next_id += 1;
         out.push(Out::Sentence {
             id: self.next_id,
-            text,
-            lang,
+            text: words.join(" ").trim().to_string(),
+            lang: lang.clone(),
         });
+        self.last_caption = Some((self.next_id, words, now, lang));
     }
 }
 
@@ -278,7 +363,10 @@ mod tests {
     #[test]
     fn partials_emit_stable_sentences() {
         let t = Instant::now();
-        let mut a = Assembler::default();
+        let mut a = Assembler {
+            separate: true,
+            ..Default::default()
+        };
         let o = a.partial(1, w("Hello there. How"), "en", t);
         assert!(sentences(&o).is_empty(), "nothing stable yet");
         assert_eq!(live(&o), Some("Hello there. How"));
@@ -295,20 +383,103 @@ mod tests {
     }
 
     #[test]
-    fn sentences_stable_at_once_are_captions_of_their_own() {
+    fn sentences_that_follow_closely_share_a_caption() {
         let t = Instant::now();
         let mut a = Assembler::default();
         a.finish(1, Some((w("and then"), "en".into())), t);
         a.partial(2, w("we left. Go. Now! What"), "en", t);
         let o = a.partial(2, w("we left. Go. Now! What is"), "en", t);
-        assert_eq!(sentences(&o), ["and then we left.", "Go.", "Now!"]);
+        assert_eq!(sentences(&o), ["and then we left. Go. Now!"]);
         assert_eq!(live(&o), Some("What is"));
+        // One that follows soon joins them, under the same id.
+        let soon = t + Duration::from_secs(1);
         let o = a.finish(
             2,
             Some((w("we left. Go. Now! What is it?"), "en".into())),
+            soon,
+        );
+        assert_eq!(sentences(&o), ["and then we left. Go. Now! What is it?"]);
+        assert!(matches!(&o[0], Out::Sentence { id: 1, .. }));
+        // Not one that would make the caption too long, nor one that comes later.
+        let long = "This one sentence is long enough to fill a line of its own, word by word.";
+        let o = a.finish(3, Some((w(long), "en".into())), soon);
+        assert!(matches!(&o[0], Out::Sentence { id: 2, .. }));
+        let o = a.finish(4, Some((w("Ok."), "en".into())), soon);
+        assert_eq!(sentences(&o), [format!("{long} Ok.")]);
+        let o = a.finish(5, Some((w("Right."), "en".into())), soon + JOIN_WITHIN);
+        assert_eq!(sentences(&o), ["Right."]);
+        // Nor when captions are read aloud.
+        a.separate = true;
+        let o = a.finish(6, Some((w("Fine."), "en".into())), soon + JOIN_WITHIN);
+        assert_eq!(sentences(&o), ["Fine."]);
+    }
+
+    #[test]
+    fn the_sentence_the_audio_ends_in_waits() {
+        let t = Instant::now();
+        let mut a = Assembler::default();
+        a.partial(1, w("You know, this is real."), "en", t);
+        let o = a.partial(1, w("You know, this is real."), "en", t);
+        assert!(sentences(&o).is_empty());
+        assert_eq!(live(&o), Some("You know, this is real."));
+        let o = a.finish(
+            1,
+            Some((w("You know, this is real nice, Dad."), "en".into())),
             t,
         );
-        assert_eq!(sentences(&o), ["What is it?"]);
+        assert_eq!(sentences(&o), ["You know, this is real nice, Dad."]);
+
+        // Said again and again with nothing added, it is over.
+        let later = t + Duration::from_secs(10);
+        a.partial(2, w("Good times."), "en", later);
+        assert!(sentences(&a.partial(2, w("Good times."), "en", later)).is_empty());
+        let o = a.partial(2, w("Good times."), "en", later);
+        assert_eq!(sentences(&o), ["Good times."]);
+        assert_eq!(live(&o), Some(""));
+    }
+
+    #[test]
+    fn a_new_speaker_ends_the_unfinished_sentence() {
+        let t = Instant::now();
+        let mut a = Assembler::default();
+        a.finish(1, Some((w("Do something for a change"), "en".into())), t);
+        let o = a.finish(2, Some((w("Man, you know what?"), "en".into())), t);
+        assert_eq!(
+            sentences(&o),
+            ["Do something for a change", "Man, you know what?"]
+        );
+        // Carried on: lower case, "I", a comma before, the boundary word heard twice, German.
+        for (lang, first, second, joined) in [
+            ("en", "we went to", "the store.", "we went to the store."),
+            ("en", "and then", "I left.", "and then I left."),
+            ("en", "Well,", "Lamar did it.", "Well, Lamar did it."),
+            (
+                "en",
+                "we put the",
+                "The whole thing.",
+                "we put the whole thing.",
+            ),
+            (
+                "de",
+                "ich habe",
+                "Hunger gehabt.",
+                "ich habe Hunger gehabt.",
+            ),
+        ] {
+            let mut a = Assembler::default();
+            a.finish(1, Some((w(first), lang.into())), t);
+            let o = a.finish(2, Some((w(second), lang.into())), t);
+            assert_eq!(sentences(&o), [joined]);
+        }
+        // From partials too, once the start of the next sentence is stable.
+        let mut a = Assembler::default();
+        a.finish(1, Some((w("I bet you know some shit"), "en".into())), t);
+        a.partial(2, w("You wouldn't believe it. Yeah"), "en", t);
+        let o = a.partial(2, w("You wouldn't believe it. Yeah,"), "en", t);
+        assert_eq!(
+            sentences(&o),
+            ["I bet you know some shit", "You wouldn't believe it."]
+        );
     }
 
     #[test]

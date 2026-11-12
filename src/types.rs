@@ -148,6 +148,8 @@ pub struct TranslateRequest {
     pub context: Vec<(String, String)>,
     /// `Settings::hint`: names to keep as they are.
     pub hint: String,
+    /// When the caption was made; one that waited too long goes out untranslated.
+    pub at: std::time::Instant,
 }
 
 pub enum TranslatorEvent {

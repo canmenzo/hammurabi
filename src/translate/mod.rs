@@ -14,8 +14,9 @@ use crate::models::{self, ModelId};
 use crate::settings::TranslatorChoice;
 use crate::types::{Progress, ProgressPhase, Translate, TranslateRequest, TranslatorEvent};
 
-/// Requests waiting beyond this are answered untranslated.
-const MAX_QUEUE: usize = 3;
+/// A caption that has waited this long for its turn is answered untranslated: by the time it
+/// was translated, later ones would be late too.
+const MAX_WAIT: Duration = Duration::from_secs(4);
 /// This many failed translations in a row pause the translator for `RETRY_AFTER`.
 const MAX_FAILURES: u32 = 3;
 const RETRY_AFTER: Duration = Duration::from_secs(15);
@@ -82,9 +83,7 @@ fn serve(
     while let Ok(req) = rx.recv() {
         let text = if req.source == req.target {
             Some(req.text)
-        } else if rx.len() >= MAX_QUEUE {
-            // Falling behind: skip the oldest so translations stay current (the caption
-            // is already shown untranslated).
+        } else if req.at.elapsed() > MAX_WAIT {
             log::info!("translation backlog, skipped #{}", req.id);
             None
         } else if paused_until.is_some_and(|t| Instant::now() < t) {
@@ -286,6 +285,7 @@ mod tests {
             target: "tr".into(),
             context: vec![],
             hint: String::new(),
+            at: Instant::now(),
         });
         let mut ready = false;
         loop {
@@ -321,6 +321,7 @@ mod tests {
                 target: target.into(),
                 context: vec![],
                 hint: String::new(),
+                at: Instant::now(),
             })
             .unwrap();
         }
@@ -358,16 +359,21 @@ mod tests {
             target: "tr".into(),
             context: vec![],
             hint: String::new(),
+            at: Instant::now(),
         }
     }
 
     #[test]
-    fn backlog_skips_oldest_and_failures_disable() {
+    fn stale_requests_are_skipped_and_failures_pause() {
         let (tx, rx) = crossbeam_channel::unbounded();
         let (ev_tx, ev) = crossbeam_channel::unbounded();
-        // 5 queued at once: the 2 oldest are skipped, the other 3 translated.
+        // 2 that have waited too long are skipped, the 3 after them translated.
         for id in 1..=5 {
-            tx.send(req(id)).unwrap();
+            let mut r = req(id);
+            if id <= 2 {
+                r.at -= MAX_WAIT + Duration::from_secs(1);
+            }
+            tx.send(r).unwrap();
         }
         drop(tx);
         let fake = Fake((0..3).map(|i| Ok(format!("t{i}"))).collect());

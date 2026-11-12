@@ -15,7 +15,9 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - Speech is found by a voice detector instead of by loudness. Talk under music, engines and gunfire is now captioned, and loud sound that is not speech is left alone. Sound too loud for the detector to make out is still recognized, and kept only when it reads as speech.
 - Speech is recognized in longer stretches, with the quiet end of each word kept, so fewer words are cut or misheard.
-- On a GPU, captions come about a third sooner, and each sentence is a caption of its own.
+- On a GPU, captions come about a third sooner.
+- Each sentence is a caption of its own, and one that follows within a second and a half joins the caption before it instead of pushing it away (not while captions are read aloud). A speaker cutting in ends the other's unfinished sentence.
+- A translation that has waited four seconds for its turn is skipped; before, the third in line was, however fast the translator.
 - With Show original text off, captions show translations only. The original no longer flashes first.
 - The speech model is warmed up while it loads, so the first captions are not late.
 

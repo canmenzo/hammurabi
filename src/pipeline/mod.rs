@@ -52,6 +52,11 @@ const ASR_STUCK: Duration = Duration::from_secs(30);
 /// A speech model that failed to load is tried again this many times, this far apart.
 const ASR_RETRIES: u32 = 3;
 const ASR_RETRY_AFTER: Duration = Duration::from_secs(5);
+/// The Large speech model taking this long a run on average, over this many runs, is not getting
+/// the GPU it needs (captions run seconds late by then): Turbo takes over. Large alone averages
+/// under 350 ms over any such stretch, also beside a three-way stream.
+const ASR_SLOW_MS: u32 = 450;
+const ASR_SLOW_RUNS: usize = 40;
 /// How often a lost audio device is looked for.
 const REOPEN_EVERY: Duration = Duration::from_secs(2);
 /// The recognizer reads noise and music as words it is unsure of: text below this mean token log
@@ -804,6 +809,10 @@ pub struct Engine {
     /// The audio device is gone and is being waited for.
     capture_lost: bool,
     asr_errors: u32,
+    /// How long the Large model's last runs took.
+    asr_took: VecDeque<u32>,
+    /// Large was too slow here and Turbo stands in for it until another model is chosen.
+    asr_stand_in: bool,
     /// When the speech worker took the job it is on.
     asr_busy: Option<Instant>,
     asr_retries: u32,
@@ -867,6 +876,8 @@ impl Engine {
                     reopen_at: now,
                     capture_lost: false,
                     asr_errors: 0,
+                    asr_took: VecDeque::new(),
+                    asr_stand_in: false,
                     asr_busy: None,
                     asr_retries: ASR_RETRIES,
                     asr_retry_at: None,
@@ -1232,6 +1243,28 @@ impl Engine {
         }
     }
 
+    fn large_took(&mut self, ms: u32) {
+        self.asr_took.push_back(ms);
+        if self.asr_took.len() > ASR_SLOW_RUNS {
+            self.asr_took.pop_front();
+        }
+        if self.asr_took.len() < ASR_SLOW_RUNS
+            || self.asr_took.iter().sum::<u32>() <= ASR_SLOW_MS * ASR_SLOW_RUNS as u32
+            || !models::is_cached(ModelId::WhisperTurbo)
+        {
+            return;
+        }
+        self.asr_took.clear();
+        self.asr_stand_in = true;
+        log::warn!("the Large speech model is too slow here, Turbo takes over");
+        self.events().status(
+            StatusLevel::Warning,
+            "Large speech model is too slow here, using Turbo".into(),
+            Some(Duration::from_secs(8)),
+        );
+        self.ensure_workers();
+    }
+
     fn restart_asr(&mut self, why: &str) {
         log::error!("{why}");
         self.asr = None;
@@ -1309,9 +1342,16 @@ impl Engine {
 
     /// Workers survive Stop/Start; they are rebuilt only when their model changes.
     fn ensure_workers(&mut self) {
-        let key = (self.core.settings.model, self.core.settings.trim_audio);
+        let mut model = self.core.settings.model;
+        if model != ModelChoice::Large {
+            self.asr_stand_in = false;
+        } else if self.asr_stand_in {
+            model = ModelChoice::Turbo;
+        }
+        let key = (model, self.core.settings.trim_audio);
         if !self.lc_active() && self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
             self.asr = Some((key, AsrWorker::spawn(key.0, key.1)));
+            self.asr_took.clear();
             self.asr_downloading = false;
             self.asr_busy = None;
             self.core.reset();
@@ -1365,6 +1405,8 @@ impl Engine {
                 });
                 if self.asr_errors >= ASR_MAX_ERRORS {
                     self.restart_asr("Speech model keeps failing, reloading");
+                } else if self.asr.as_ref().is_some_and(|(k, _)| k.0 == ModelChoice::Large) {
+                    self.large_took(ms);
                 }
             }
             AsrEvent::Error(e) => {

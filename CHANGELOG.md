@@ -10,7 +10,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Captions as a web page, for streams: turn it on in Settings > Captions and add `http://127.0.0.1:7460` to OBS as a Browser source. The caption window itself is not part of a captured game or capture card.
 - Lock in place (Settings > Captions): captions cannot be dragged, so a click on one always reaches the game under it.
 - Words to expect (Settings > Listen): names and unusual words, so they are heard and spelled right.
-- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about 0.4 s later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download).
+- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about 0.4 s later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download). When the graphics card is too busy for it and captions fall behind, Turbo takes over until another model is chosen.
 
 ### Changed
 

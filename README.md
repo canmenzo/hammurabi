@@ -37,6 +37,8 @@ To put captions on a stream, turn on **Settings > Captions > Captions as a web p
 
 For games and films, pick the **Natural** translator in Settings > Translate (Windows, needs a graphics card): it reads slang and tone where the fast one translates word for word.
 
+Where every word counts and the graphics card has room, pick the **Large** speech model in Settings > Listen: it hears fast, slangy talk noticeably better, about a third of a second later.
+
 For a console on a capture card, set **Settings > Listen** to Microphone and pick the card, so that Hammurabi hears the game itself and not what the PC plays.
 
 Captions follow speech by a bit over half a second. A stream can hide that: delay the game in OBS by as much (a Render Delay filter on its video, Sync Offset under Advanced Audio Properties for its sound), and viewers get each caption as the line is said. Start Hammurabi before going live, since loading its models is the one moment it can cost a stream a few frames.

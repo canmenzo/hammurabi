@@ -685,6 +685,7 @@ fn speech(
                         ModelChoice::Base,
                         ModelChoice::Small,
                         ModelChoice::Turbo,
+                        ModelChoice::Large,
                     ] {
                         *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
                     }

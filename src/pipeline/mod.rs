@@ -58,6 +58,8 @@ const REOPEN_EVERY: Duration = Duration::from_secs(2);
 /// probability is dropped. Sound that may not be speech at all (`Segment::unsure`) has to do better.
 const LOGPROB_MIN: f32 = -1.2;
 const UNSURE_LOGPROB_MIN: f32 = -0.8;
+/// Text at or above this mean token log probability passes the recognizer's other scores.
+const SURE_LOGPROB: f32 = -0.5;
 
 #[cfg(not(all(windows, feature = "win-livecaptions")))]
 enum LcEvent {}
@@ -343,10 +345,19 @@ impl Core {
                 } else {
                     LOGPROB_MIN
                 };
+                // The recognizer's scores for "no speech" and for the language are taken at its
+                // first step, before it has read anything, and are often wrong about speech over
+                // music or noise (the full large-v3's about most speech). What it is this sure
+                // of token by token is speech whatever those say.
+                let (no_speech, lang_conf) = if r.avg_logprob >= SURE_LOGPROB {
+                    (0.0, 1.0)
+                } else {
+                    (r.no_speech, r.lang_conf)
+                };
                 let text = if r.avg_logprob < floor {
                     String::new()
                 } else {
-                    text::clean(&r.text, &r.language, r.no_speech, r.lang_conf)
+                    text::clean(&r.text, &r.language, no_speech, lang_conf)
                 };
                 let words: Vec<String> = text.split_whitespace().map(String::from).collect();
                 log::debug!(

@@ -64,6 +64,7 @@ pub enum ModelChoice {
     Base,
     Small,
     Turbo,
+    Large,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -15,6 +15,9 @@ pub enum ModelId {
     WhisperBase,
     WhisperSmall,
     WhisperTurbo,
+    /// The full large-v3: hears a third fewer words wrong than Turbo in fast, slangy speech, at
+    /// four times the time and twice the graphics memory.
+    WhisperLarge,
     Madlad3bQ4k,
     /// The language models of the Natural translator, as GGUF for llama.cpp.
     Gemma12b,
@@ -32,6 +35,7 @@ impl ModelId {
         Self::WhisperBase,
         Self::WhisperSmall,
         Self::WhisperTurbo,
+        Self::WhisperLarge,
         Self::Madlad3bQ4k,
         Self::Gemma12b,
         Self::GemmaE4b,
@@ -57,6 +61,7 @@ impl ModelId {
             ModelChoice::Base => Self::WhisperBase,
             ModelChoice::Small => Self::WhisperSmall,
             ModelChoice::Turbo => Self::WhisperTurbo,
+            ModelChoice::Large => Self::WhisperLarge,
         }
     }
 }
@@ -148,6 +153,19 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
         mirror: None,
         approx_bytes: 1_620 * MB,
         label: "Turbo",
+    };
+    static LARGE: ModelSpec = ModelSpec {
+        repo: "openai/whisper-large-v3",
+        revision: "06f233fe06e710322aca913c1bc4249a0d71fce1",
+        files: SAFETENSORS,
+        sha256: &[
+            "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95",
+            "ad0e8d1e46f4d01f7861a21509e5d0f977d6cc1f367a370603c92541d819807b",
+            "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+        ],
+        mirror: None,
+        approx_bytes: 3_090 * MB,
+        label: "Large",
     };
     static MADLAD: ModelSpec = ModelSpec {
         repo: "jbochi/madlad400-3b-mt",
@@ -252,6 +270,7 @@ pub fn spec(id: ModelId) -> &'static ModelSpec {
         ModelId::WhisperBase => &BASE,
         ModelId::WhisperSmall => &SMALL,
         ModelId::WhisperTurbo => &TURBO,
+        ModelId::WhisperLarge => &LARGE,
         ModelId::Madlad3bQ4k => &MADLAD,
         ModelId::Gemma12b => &GEMMA_12B,
         ModelId::GemmaE4b => &GEMMA_E4B,

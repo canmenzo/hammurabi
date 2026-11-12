@@ -10,6 +10,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Captions as a web page, for streams: turn it on in Settings > Captions and add `http://127.0.0.1:7460` to OBS as a Browser source. The caption window itself is not part of a captured game or capture card.
 - Lock in place (Settings > Captions): captions cannot be dragged, so a click on one always reaches the game under it.
 - Words to expect (Settings > Listen): names and unusual words, so they are heard and spelled right.
+- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about a third of a second later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download).
 
 ### Changed
 
@@ -23,6 +24,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - A translation that has waited four seconds for its turn is skipped; before, the third in line was, however fast the translator.
 - With Show original text off, captions show translations only. The original no longer flashes first.
 - The speech model is warmed up while it loads, so the first captions are not late.
+- Speech the recognizer is sure of word by word is kept even when its first impression was "no speech" or another language, which it often is over music.
 - On NVIDIA cards the speech model runs in half precision: it takes 2 GB of graphics memory instead of 4, and is faster.
 
 ### Fixed

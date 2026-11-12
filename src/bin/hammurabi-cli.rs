@@ -201,6 +201,7 @@ enum Model {
     Base,
     Small,
     Turbo,
+    Large,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -209,6 +210,7 @@ enum DownloadModel {
     Base,
     Small,
     Turbo,
+    Large,
     Madlad,
     /// The language model of the Natural translator.
     Gemma12b,
@@ -257,6 +259,7 @@ fn main() -> anyhow::Result<()> {
                 Model::Base => ModelChoice::Base,
                 Model::Small => ModelChoice::Small,
                 Model::Turbo => ModelChoice::Turbo,
+                Model::Large => ModelChoice::Large,
             };
             let settings = Settings {
                 model,
@@ -301,6 +304,7 @@ fn main() -> anyhow::Result<()> {
                 DownloadModel::Base => ModelId::WhisperBase,
                 DownloadModel::Small => ModelId::WhisperSmall,
                 DownloadModel::Turbo => ModelId::WhisperTurbo,
+                DownloadModel::Large => ModelId::WhisperLarge,
                 DownloadModel::Madlad => ModelId::Madlad3bQ4k,
                 DownloadModel::Gemma12b => ModelId::Gemma12b,
                 DownloadModel::GemmaE4b => ModelId::GemmaE4b,

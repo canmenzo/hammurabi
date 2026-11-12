@@ -36,6 +36,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - With the Natural translator or a local LLM, on NVIDIA cards, Hammurabi took half a gigabyte more memory for every hour of captions.
 - While a caption faded in or out, its window could be painted thousands of times a second, which kept a processor core busy.
 - A few words said twice in a row ("he don't wanna be a gangster, he wanna be a gangster") were taken for the recognizer going in circles, and the rest of what was said until the next pause was lost.
+- In long talk without a pause, a whole stretch of speech could go missing now and then, more often on a busy graphics card.
 - Speech cut into two stretches could show the sentences around the cut twice, and so could a recognizer that started a stretch over.
 
 ## [0.5.0] - 2026-11-09

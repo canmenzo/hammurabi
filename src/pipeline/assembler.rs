@@ -57,6 +57,9 @@ struct SegText {
     emitted: Vec<String>,
     /// The same words as they were shown.
     shown: Vec<String>,
+    /// Words the segment before this one showed of this one's audio (`Assembler::finish`), as
+    /// compared, until this segment has heard that much itself.
+    handed: Vec<String>,
     /// The sentences each of the last `HEARD` partials had, as their words compared.
     heard: std::collections::VecDeque<Vec<String>>,
 }
@@ -105,6 +108,40 @@ fn rerun(words: &[String], start: usize, emitted: &[String]) -> Option<usize> {
     (0..said.len().saturating_sub(RERUN - 1))
         .find(|&i| emitted.windows(RERUN).any(|w| w == &said[i..i + RERUN]))
         .map(|i| start + i)
+}
+
+impl SegText {
+    /// Takes what was handed down for shown if `words`, this segment's own, begin with it, and
+    /// forgets it if they do not: it may be something Whisper made up at the end of the segment
+    /// before, and a run started from words that are not in its audio writes nothing at all.
+    /// True while there are too few words to tell (`last`: there will be no more).
+    fn take_over(&mut self, words: &[String], last: bool) -> bool {
+        if self.handed.is_empty() {
+            return false;
+        }
+        if words.len() <= self.handed.len() {
+            if !last {
+                return true;
+            }
+            // No more than was handed down: nothing new if it is the start of that.
+            let same = words
+                .iter()
+                .zip(&self.handed)
+                .take_while(|(a, b)| norm(a) == **b)
+                .count();
+            let handed = std::mem::take(&mut self.handed);
+            if same + 1 >= words.len() {
+                self.emitted = handed;
+            }
+            return false;
+        }
+        let handed = std::mem::take(&mut self.handed);
+        if let Some(end) = resume(words, &handed).filter(|end| end.abs_diff(handed.len()) <= 2) {
+            self.shown = words[..end].to_vec();
+            self.emitted = handed;
+        }
+        false
+    }
 }
 
 /// Words that say something: Whisper marks a change of speaker with a dash of its own, which
@@ -203,6 +240,10 @@ impl Assembler {
     /// away instead of waiting for the pause that closes the segment.
     pub fn partial(&mut self, seg: u64, words: Vec<String>, lang: &str, now: Instant) -> Vec<Out> {
         let mut words = spoken(words);
+        let waiting = self
+            .segs
+            .get_mut(&seg)
+            .is_some_and(|st| st.take_over(&words, false));
         if let Some(st) = self.segs.get(&seg)
             && let Some(start) = resume(&words, &st.emitted)
             && let Some(at) = rerun(&words, start, &st.emitted)
@@ -241,7 +282,7 @@ impl Assembler {
         }
         // A partial that is other speech than what was shown (it heard only the end of the audio)
         // is not taken for new yet: the next one, or the final, will have it all.
-        let emitted = resume(&words, &st.emitted);
+        let emitted = resume(&words, &st.emitted).filter(|_| !waiting);
         let mut start = emitted.unwrap_or(words.len());
         // A sentence two of the last few runs heard word for word is over, and so is all before
         // it, however differently each run words that: Whisper keeps rewording the start of long
@@ -295,21 +336,24 @@ impl Assembler {
         if self.prev_partial.as_ref().is_some_and(|(id, _)| *id == seg) {
             self.prev_partial = None;
         }
-        let st = self.segs.remove(&seg).unwrap_or_default();
-        let cut = std::mem::take(&mut self.cut) && result.is_some();
+        let mut st = self.segs.remove(&seg).unwrap_or_default();
+        let result_given = result.is_some();
+        let cut = std::mem::take(&mut self.cut) && result_given;
         let (words, lang) = match result {
             Some((w, l)) => (spoken(w), Some(l)),
             None if !st.words.is_empty() => (st.words.clone(), st.language.clone()),
             None => return Vec::new(),
         };
+        if result_given {
+            st.take_over(&words, true);
+        }
         // A segment is cut at a quiet moment a little before its end, and its partials heard the
-        // audio after that too. What they showed of it is how the next segment begins: it
-        // starts from there, and does not show it again.
+        // audio after that too. What they showed of it is how the next segment begins, which
+        // does not show it again once it has heard it too (`SegText::take_over`).
         let said: Vec<String> = words.iter().map(|w| norm(w)).collect();
         if cut && let Some(end) = resume(&st.shown, &said).filter(|end| *end < st.shown.len()) {
-            let next = self.segs.entry(seg + 1).or_default();
-            next.shown = st.shown[end..].to_vec();
-            next.emitted = next.shown.iter().map(|w| norm(w)).collect();
+            self.segs.entry(seg + 1).or_default().handed =
+                st.shown[end..].iter().map(|w| norm(w)).collect();
         }
         // Skip what partials already showed; a final that is other speech altogether is all new.
         let skip = resume(&words, &st.emitted).unwrap_or(0);
@@ -538,11 +582,52 @@ mod tests {
         a.cut = true;
         let o = a.finish(1, Some((w("One two three. Four"), "en".into())), t);
         assert!(sentences(&o).is_empty());
-        // The next one begins with the rest.
-        assert_eq!(a.shown(2), "five six.");
+        // The next one begins with the rest, and starts from it once it has heard it too.
+        assert_eq!(a.shown(2), "");
+        assert!(sentences(&a.partial(2, w("five"), "en", t)).is_empty());
+        assert_eq!(a.shown(2), "");
         a.partial(2, w("five six. Seven eight nine. Ten"), "en", t);
+        assert_eq!(a.shown(2), "five six.");
         let o = a.partial(2, w("five six. Seven eight nine. Ten eleven"), "en", t);
         assert_eq!(sentences(&o), ["Seven eight nine."]);
+
+        // What the segment before made up is not held against this one: Whisper said its last
+        // sentence twice, and the second was taken for the start of the next segment.
+        let mut a = Assembler {
+            separate: true,
+            ..Default::default()
+        };
+        a.partial(
+            1,
+            w("I say left, you say right. I say left, you say right. I"),
+            "en",
+            t,
+        );
+        a.partial(
+            1,
+            w("I say left, you say right. I say left, you say right. I say"),
+            "en",
+            t,
+        );
+        a.cut = true;
+        a.finish(1, Some((w("I say left, you say right."), "en".into())), t);
+        a.partial(
+            2,
+            w("I say become a doctor. You say become a patient. I"),
+            "en",
+            t,
+        );
+        assert_eq!(a.shown(2), "");
+        let o = a.partial(
+            2,
+            w("I say become a doctor. You say become a patient. I say"),
+            "en",
+            t,
+        );
+        assert_eq!(
+            sentences(&o),
+            ["I say become a doctor.", "You say become a patient."]
+        );
 
         // A segment that ended leaves nothing to the next.
         let mut a = Assembler::default();

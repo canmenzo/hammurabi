@@ -41,7 +41,7 @@ Where every word counts and the graphics card has room, pick the **Large** speec
 
 For a console on a capture card, set **Settings > Listen** to Microphone and pick the card, so that Hammurabi hears the game itself and not what the PC plays.
 
-Captions share the graphics card with the stream's encoders. One NVENC encode, even at the slowest preset with two passes, costs them nothing. Several at once with look-ahead or adaptive quantization on (both run on the card's compute engine, like the speech model) made captions two to four times later in our tests and cost the stream frames, so send one encode to every site where the streaming app can, and leave those two options off on any extra ones.
+Captions share the graphics card with the stream's encoders. A stream to three sites from OBS (its own NVENC encode at the slowest preset with two passes, and two more from a multistream plugin with look-ahead and adaptive quantization on) cost them nothing in our tests, and four more plain encodes on top of that a tenth of a second. Six extra encodes that all had look-ahead and adaptive quantization on, which run on the card's compute engine like the speech model, made captions two to four times later and cost the stream frames.
 
 Captions follow speech by a bit over half a second. A stream can hide that: delay the game in OBS by as much (a Render Delay filter on its video, Sync Offset under Advanced Audio Properties for its sound), and viewers get each caption as the line is said. Start Hammurabi before going live, since loading its models is the one moment it can cost a stream a few frames.
 

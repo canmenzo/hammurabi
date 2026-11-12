@@ -33,7 +33,7 @@ The first start downloads a speech model (up to about 1.6 GB). Translation downl
 
 ## 🎥 Streaming
 
-To put captions on a stream, turn on **Settings > Captions > Captions as a web page** and add `http://127.0.0.1:7460` to OBS as a Browser source. Add `?scale=1.5` to the address to make them larger.
+To put captions on a stream, turn on **Settings > Captions > Captions as a web page** and add `http://127.0.0.1:7460` to OBS as a Browser source. Add `?scale=1.5` to the address to make them larger, and `&bottom=15` to lift them above a game's own subtitles.
 
 For games and films, pick the **Natural** translator in Settings > Translate (Windows, needs a graphics card): it reads slang and tone where the fast one translates word for word.
 

@@ -1,6 +1,8 @@
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::Context;
+use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::settings::lang_name;
@@ -248,14 +250,34 @@ impl Translate for LlmTranslator {
             .context("LLM response has no content")?;
         let out = clean(content);
         check(text, &out, target)?;
-        Ok(SLUR.replace_all(&out, "o kelime").into_owned())
+        Ok(scrub(&out, target))
     }
 }
 
 /// The model keeps the N-word as it is when it is talked about rather than used ("you can't say
-/// ..."). A stream cannot show it, and "o kelime" (that word) is better than it in any language.
-static SLUR: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)\bnigg(?:a|er)s?\b").unwrap());
+/// ..."), and in Turkish it may name it ("zenci kelimesi") or fall back on "zenci" for a person.
+/// A stream cannot show the first, and "siyahi" is the word for the last that offends no one.
+fn scrub(out: &str, target: &str) -> String {
+    static SLUR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bnigg(?:a|er)s?\b").unwrap());
+    static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bzenci kelimesi").unwrap());
+    static ZENCI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bzenci").unwrap());
+    // "That word", capitalized where what it replaces was.
+    let that = |c: &regex::Captures| {
+        let upper = c[0].starts_with(char::is_uppercase);
+        if upper { "O kelime" } else { "o kelime" }.to_string()
+    };
+    let out = SLUR.replace_all(out, that);
+    if target != "tr" {
+        return out.into_owned();
+    }
+    let out = NAMED.replace_all(&out, that);
+    ZENCI
+        .replace_all(&out, |c: &regex::Captures| {
+            let upper = c[0].starts_with(char::is_uppercase);
+            if upper { "Siyahi" } else { "siyahi" }.to_string()
+        })
+        .into_owned()
+}
 
 /// Languages written in the Latin alphabet, among the translation targets.
 const LATIN: [&str; 15] = [
@@ -327,10 +349,21 @@ mod tests {
             clean("\"Ben kaçtım\" dedi ve gitti."),
             "\"Ben kaçtım\" dedi ve gitti."
         );
+    }
+
+    #[test]
+    fn words_a_stream_cannot_show_are_replaced() {
         assert_eq!(
-            SLUR.replace_all("Yayında nigga diyemezsin.", "o kelime"),
+            scrub("Yayında nigga diyemezsin.", "tr"),
             "Yayında o kelime diyemezsin."
         );
+        assert_eq!(
+            scrub("Zenci kelimesi. Bu hiç hoş değil, kanka.", "tr"),
+            "O kelime. Bu hiç hoş değil, kanka."
+        );
+        assert_eq!(scrub("İki zenciyi gördüm.", "tr"), "İki siyahiyi gördüm.");
+        assert_eq!(scrub("Niggas, bitte.", "de"), "O kelime, bitte.");
+        assert_eq!(scrub("Kanka, naber?", "tr"), "Kanka, naber?");
     }
 
     #[test]

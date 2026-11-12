@@ -18,9 +18,12 @@
 </style>
 <div id="box"></div>
 <script>
-// Add ?scale=1.5 to the address to make everything larger or smaller.
-const scale = parseFloat(new URLSearchParams(location.search).get('scale')) || 1;
+// Add ?scale=1.5 to the address to make everything larger or smaller, and &bottom=15 to keep the
+// captions that many percent of the height up from the bottom (above a game's own subtitles).
+const params = new URLSearchParams(location.search);
+const scale = parseFloat(params.get('scale')) || 1;
 const box = document.getElementById('box');
+if (params.get('bottom')) box.style.bottom = parseFloat(params.get('bottom')) + '%';
 let st = {
   trans_size: 30, orig_size: 20, trans_color: '#ffffff', orig_color: '#ffe066', bg: 0.75,
   show_original: true, original_first: false, cues: 2, hold: 4, edge: 'Shadow',

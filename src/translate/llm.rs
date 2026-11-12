@@ -153,7 +153,8 @@ fn system(src: &str, tgt: &str, hint: &str) -> String {
 
 const TURKISH: &str = "\
 - Address words like homie, dog, dawg, bro, cuz and the N-word become kanka, moruk, birader or lan \
-(never köpek). Never render the N-word as a racial word.
+(never köpek). Never render the N-word as a racial word. Where the word itself is what is talked \
+about (who you calling a nigga, don't say nigga), it is \"o kelime\": kime o kelimeyi diyorsun lan.
 - Keep profanity at natural Turkish strength: fuck = siktir / amına koyayım, motherfucker = orospu \
 çocuğu, bitch = kaltak / şerefsiz, asshole = pislik / göt herif, shit = siktir / bok. Avoid tame \
 words like \"lanet olası\". \"The fuck\" as an intensifier (calm the fuck down, what the fuck) is \

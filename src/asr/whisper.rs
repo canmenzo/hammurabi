@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use anyhow::{Context, anyhow};
 use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
-use candle_transformers::models::whisper::{self as m, Config, model, quantized_model};
+use candle_transformers::models::whisper::{self as m, Config, quantized_model};
 use candle_transformers::quantized_var_builder;
 use tokenizers::Tokenizer;
 
 use super::languages::LANGUAGES;
 use super::mel;
+use super::model;
 use crate::models::ModelPaths;
 use crate::types::{Recognizer, Transcript};
 
@@ -17,8 +18,8 @@ const PRIOR_FLOOR: f32 = 0.01;
 const HINT_TOKENS: usize = 120;
 
 enum Model {
-    Normal(model::Whisper),
-    Quantized(quantized_model::Whisper),
+    Normal(Box<model::Whisper>),
+    Quantized(Box<quantized_model::Whisper>),
 }
 
 impl Model {
@@ -63,6 +64,8 @@ pub struct WhisperEngine {
     tokenizer: Tokenizer,
     mel: mel::Mel,
     device: Device,
+    /// What the weights are loaded as, and so what the audio features have to be.
+    dtype: DType,
     sot: u32,
     transcribe: u32,
     no_timestamps: u32,
@@ -86,15 +89,24 @@ impl WhisperEngine {
         )?;
         let tokenizer =
             Tokenizer::from_file(&paths.tokenizer).map_err(|e| anyhow!("tokenizer: {e}"))?;
+        // Half precision on CUDA: the weights are stored that way, and as f32 the largest model
+        // takes twice the graphics memory (3.2 GB) for the same captions.
+        let dtype = if device.is_cuda() && !paths.quantized {
+            DType::F16
+        } else {
+            m::DTYPE
+        };
         let model = if paths.quantized {
             let vb = quantized_var_builder::VarBuilder::from_gguf(&paths.weights, device)?;
-            Model::Quantized(quantized_model::Whisper::load(&vb, config.clone())?)
+            Model::Quantized(Box::new(quantized_model::Whisper::load(
+                &vb,
+                config.clone(),
+            )?))
         } else {
             // SAFETY: the weights file is only read; it is not modified while mapped.
-            let vb = unsafe {
-                VarBuilder::from_mmaped_safetensors(&[&paths.weights], m::DTYPE, device)?
-            };
-            Model::Normal(model::Whisper::load(&vb, config.clone())?)
+            let vb =
+                unsafe { VarBuilder::from_mmaped_safetensors(&[&paths.weights], dtype, device)? };
+            Model::Normal(Box::new(model::Whisper::load(&vb, config.clone())?))
         };
 
         let token = |s: &str| {
@@ -135,6 +147,7 @@ impl WhisperEngine {
             model,
             tokenizer,
             device: device.clone(),
+            dtype,
             sot,
             transcribe,
             no_timestamps,
@@ -198,7 +211,7 @@ impl Recognizer for WhisperEngine {
         language: Option<&str>,
         prior: &HashMap<String, f32>,
     ) -> anyhow::Result<Transcript> {
-        let mel = self.mel.tensor(audio, self.trim)?;
+        let mel = self.mel.tensor(audio, self.trim)?.to_dtype(self.dtype)?;
         self.model.reset_kv_cache();
         let features = self.model.encoder_forward(&mel, true)?;
 

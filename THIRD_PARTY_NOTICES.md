@@ -33,6 +33,13 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+## src/asr/model.rs
+
+The Whisper model code, copied from candle-transformers 0.11.1
+(https://github.com/huggingface/candle, candle-transformers/src/models/whisper/model.rs) and
+changed as its header says. candle is dual-licensed under MIT or Apache-2.0; used here under the
+MIT license above.
+
 ## assets/icons/subtitles-fill.svg and assets/icons/*.rgba
 
 The tray icon is the Phosphor Icons "subtitles" glyph (fill weight) from

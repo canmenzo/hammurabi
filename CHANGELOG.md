@@ -20,6 +20,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - A translation that has waited four seconds for its turn is skipped; before, the third in line was, however fast the translator.
 - With Show original text off, captions show translations only. The original no longer flashes first.
 - The speech model is warmed up while it loads, so the first captions are not late.
+- On NVIDIA cards the speech model runs in half precision: it takes 2 GB of graphics memory instead of 4, and is faster.
 
 ### Fixed
 

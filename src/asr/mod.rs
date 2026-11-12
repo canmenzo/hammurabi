@@ -2,6 +2,7 @@ pub mod languages;
 #[cfg(all(windows, feature = "win-livecaptions"))]
 pub mod livecaptions;
 pub mod mel;
+mod model;
 pub mod whisper;
 
 use std::sync::Arc;

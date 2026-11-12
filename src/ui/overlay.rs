@@ -11,6 +11,9 @@ use crate::types::{CaptionUpdate, Status, StatusLevel};
 
 const FADE: Duration = Duration::from_millis(250);
 const FADE_IN: Duration = Duration::from_millis(120);
+/// How often a fade is painted. Asking for the next frame at once leaves the pace to the driver,
+/// which without vertical sync paints thousands of frames a second.
+const FADE_FRAME: Duration = Duration::from_millis(16);
 const SAMPLE_ORIGINAL: &str = "This is how captions will look.";
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 8.0;
@@ -295,7 +298,7 @@ impl OverlayState {
         }
 
         if fading {
-            ui.ctx().request_repaint();
+            ui.ctx().request_repaint_after(FADE_FRAME);
         } else if let Some(d) = self.next_deadline() {
             ui.ctx()
                 .request_repaint_after(d.saturating_duration_since(now));

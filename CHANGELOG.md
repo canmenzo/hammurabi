@@ -15,7 +15,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - Speech is found by a voice detector instead of by loudness. Talk under music, engines and gunfire is now captioned, and loud sound that is not speech is left alone. Sound too loud for the detector to make out is still recognized, and kept only when it reads as speech.
 - Speech is recognized in longer stretches, with the quiet end of each word kept, so fewer words are cut or misheard.
-- On a GPU, captions come about a third sooner.
+- On a GPU, captions come sooner, by a tenth to a quarter of a second on a fast card. The open sentence is listened to up to ten times a second instead of twice, a run starts from what is already shown instead of hearing it again, and a fifth of a second of quiet is enough to end a sentence that two runs agree on.
+- A caption comes with its translation instead of a moment before it, a third of a second sooner in all: a sentence is translated while it is still being said, and the translator gives up one that was heard differently since.
+- A caption that grows keeps the translation it has. Only the sentence added is translated, so what is on the screen is not worded anew.
+- The Natural translator lets everything else on the graphics card go first: speech recognition, which ran three to five times slower while a translation was written, a game, a stream being encoded. When that leaves it nothing, it takes its turn like before.
 - Each sentence is a caption of its own, and one that follows within a second and a half joins the caption before it instead of pushing it away (not while captions are read aloud). A speaker cutting in ends the other's unfinished sentence.
 - A translation that has waited four seconds for its turn is skipped; before, the third in line was, however fast the translator.
 - With Show original text off, captions show translations only. The original no longer flashes first.
@@ -26,6 +29,9 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - Captions could stop for good without saying so. Now the speech model is loaded again when it fails or stops answering, a lost audio device is waited for instead of giving up or switching to the microphone, and a failing translator is tried again after a pause instead of staying off.
 - A translation that arrives after its caption left no longer pops up out of order.
+- A sentence shown and then heard differently could hold back every caption after it until the speaker paused, and then show them all at once, some for the second time.
+- Words on both sides of a trailed-off sentence ("maybe... ...Tanisha") ran together.
+- Speech cut into two stretches could show the sentences around the cut twice, and so could a recognizer that started a stretch over.
 
 ## [0.5.0] - 2026-11-09
 

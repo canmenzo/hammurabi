@@ -1,3 +1,4 @@
+use std::io::{BufRead, BufReader};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -204,6 +205,18 @@ impl Translate for LlmTranslator {
         target: &str,
         context: &[(String, String)],
     ) -> anyhow::Result<String> {
+        self.translate_unless(text, source, target, context, &|| false)?
+            .context("translation given up")
+    }
+
+    fn translate_unless(
+        &mut self,
+        text: &str,
+        source: &str,
+        target: &str,
+        context: &[(String, String)],
+        stop: &dyn Fn() -> bool,
+    ) -> anyhow::Result<Option<String>> {
         let (src, tgt) = (lang_name(source), lang_name(target));
         let mut messages = vec![json!({"role": "system", "content": system(src, tgt, &self.hint)})];
         let shots = shots(src, tgt).iter().copied();
@@ -218,7 +231,8 @@ impl Translate for LlmTranslator {
         let mut body = json!({
             "model": self.model,
             "messages": messages,
-            "stream": false,
+            // Our own server is read as it writes, so that it can be cut short.
+            "stream": self.own,
             "temperature": 0,
             "max_tokens": MAX_TOKENS,
         });
@@ -239,18 +253,41 @@ impl Translate for LlmTranslator {
             .send(body.to_string())
             .context("LLM request failed")?;
         let status = resp.status();
-        let raw = resp
-            .body_mut()
-            .read_to_string()
-            .context("LLM response unreadable")?;
-        anyhow::ensure!(status.is_success(), "LLM returned {status}: {raw}");
-        let v: Value = serde_json::from_str(&raw).context("LLM response is not JSON")?;
-        let content = v["choices"][0]["message"]["content"]
-            .as_str()
-            .context("LLM response has no content")?;
-        let out = clean(content);
+        let content = if self.own && status.is_success() {
+            let mut content = String::new();
+            for line in BufReader::new(resp.body_mut().as_reader()).lines() {
+                let line = line.context("LLM response unreadable")?;
+                // Leaving closes the connection, at which the server stops writing.
+                if stop() {
+                    return Ok(None);
+                }
+                let Some(data) = line.strip_prefix("data: ") else {
+                    continue;
+                };
+                if data == "[DONE]" {
+                    break;
+                }
+                let v: Value = serde_json::from_str(data).context("LLM response is not JSON")?;
+                if let Some(piece) = v["choices"][0]["delta"]["content"].as_str() {
+                    content.push_str(piece);
+                }
+            }
+            content
+        } else {
+            let raw = resp
+                .body_mut()
+                .read_to_string()
+                .context("LLM response unreadable")?;
+            anyhow::ensure!(status.is_success(), "LLM returned {status}: {raw}");
+            let v: Value = serde_json::from_str(&raw).context("LLM response is not JSON")?;
+            v["choices"][0]["message"]["content"]
+                .as_str()
+                .context("LLM response has no content")?
+                .to_string()
+        };
+        let out = clean(&content);
         check(text, &out, target)?;
-        Ok(scrub(&out, target))
+        Ok(Some(scrub(&out, target)))
     }
 }
 

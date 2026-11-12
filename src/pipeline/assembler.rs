@@ -17,13 +17,18 @@ const DEDUPE_WINDOW: Duration = Duration::from_secs(5);
 /// off the screen by it before it is read.
 const JOIN_WITHIN: Duration = Duration::from_millis(1500);
 const CAPTION_CHARS: usize = 84;
-/// Partials that repeat the one before them before the sentence they end in counts as over.
-const SETTLED: u32 = 2;
+/// The sentence the audio so far ends in counts as over once partials have said the same for
+/// this long. Less, and more words cut in half by the end of the audio become captions.
+const SETTLE: Duration = Duration::from_millis(400);
+/// Partials a sentence is looked for in.
+const HEARD: usize = 4;
+/// This many words in a row that were shown already are Whisper starting over.
+const RERUN: usize = 5;
 
 static TERMINATOR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"[.!?…。！？]["'”’)\]]*$"#).unwrap());
 
-fn ends_sentence(w: &str) -> bool {
+pub(super) fn ends_sentence(w: &str) -> bool {
     TERMINATOR.is_match(w)
 }
 
@@ -34,24 +39,88 @@ pub enum Out {
         text: String,
         lang: Option<String>,
     },
-    /// Empty text clears the live line.
-    Live { text: String, lang: Option<String> },
+    /// Empty text clears the live line. `whole`: the sentences in it that have ended, which are
+    /// captions next if nothing about them changes, so that they can be translated before then.
+    Live {
+        text: String,
+        lang: Option<String>,
+        whole: Vec<String>,
+    },
 }
 
 #[derive(Default)]
 struct SegText {
     words: Vec<String>,
     language: Option<String>,
-    emitted: usize,
-    last_emitted: String,
+    /// The words of this segment shown as captions so far, as `norm` leaves them.
+    emitted: Vec<String>,
+    /// The same words as they were shown.
+    shown: Vec<String>,
+    /// The sentences each of the last `HEARD` partials had, as their words compared.
+    heard: std::collections::VecDeque<Vec<String>>,
+}
+
+/// A word as it is compared: Whisper writes the same audio as "that." one time and "That" the next.
+fn norm(w: &str) -> String {
+    w.to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '\'')
+        .collect()
+}
+
+/// Where in `words` what was not shown yet begins, given the words shown so far: after the place
+/// their last three (or two, or the last one near where it should be) are found. Counting words
+/// is not enough, since a transcript of more audio may word the start differently: put a dash
+/// before it, drop a stutter, or leave the start out. When they are not found, the same few
+/// words heard differently hold nothing new (the end), and other speech gives None.
+fn resume(words: &[String], emitted: &[String]) -> Option<usize> {
+    if emitted.is_empty() {
+        return Some(0);
+    }
+    let said: Vec<String> = words.iter().map(|w| norm(w)).collect();
+    for k in (1..=emitted.len().min(3)).rev() {
+        let tail = &emitted[emitted.len() - k..];
+        let end = (k..=said.len())
+            .filter(|&end| said[end - k..end] == *tail)
+            .min_by_key(|end| end.abs_diff(emitted.len()));
+        if let Some(end) = end.filter(|end| k > 1 || end.abs_diff(emitted.len()) <= 3) {
+            return Some(end);
+        }
+    }
+    // The same from the start but for its last words: those were heard another way this time.
+    let same = said.iter().zip(emitted).take_while(|(a, b)| a == b).count();
+    if same > 0 && same + 3 >= emitted.len() && 2 * same >= emitted.len() {
+        return Some(emitted.len().min(said.len()));
+    }
+    let known = said.iter().filter(|w| emitted.contains(w)).count();
+    (said.len() <= emitted.len() + 1 && 2 * known >= said.len()).then_some(said.len())
+}
+
+/// Where in `words`, from `start` on, Whisper starts over: thrown by a hard stretch, it goes back
+/// and says again what was shown already ("Hey, let's go. Do something about the thing. I ain't
+/// talking to you. Hey, let's go do something about the thing.").
+fn rerun(words: &[String], start: usize, emitted: &[String]) -> Option<usize> {
+    let said: Vec<String> = words[start..].iter().map(|w| norm(w)).collect();
+    (0..said.len().saturating_sub(RERUN - 1))
+        .find(|&i| emitted.windows(RERUN).any(|w| w == &said[i..i + RERUN]))
+        .map(|i| start + i)
+}
+
+/// Words that say something: Whisper marks a change of speaker with a dash of its own, which
+/// comes and goes between transcripts of the same audio.
+fn spoken(words: Vec<String>) -> Vec<String> {
+    words
+        .into_iter()
+        .filter(|w| w.chars().any(char::is_alphanumeric))
+        .collect()
 }
 
 #[derive(Default)]
 pub struct Assembler {
     segs: HashMap<u64, SegText>,
     prev_partial: Option<(u64, Vec<String>)>,
-    /// Partials in a row that said exactly what the one before said.
-    same: u32,
+    /// Since when partials have said exactly what the last one said.
+    unchanged: Option<Instant>,
     /// Finished audio whose sentence has not ended yet.
     carry: Vec<String>,
     carry_lang: Option<String>,
@@ -61,6 +130,10 @@ pub struct Assembler {
     last_caption: Option<(u64, Vec<String>, Instant, Option<String>)>,
     /// Captions are read aloud as they come, so one must not come again with more in it.
     pub separate: bool,
+    /// The partial given next is of audio that ends in quiet.
+    pub paused: bool,
+    /// The final given next is of a segment that was cut, not ended: the next one goes on.
+    pub cut: bool,
     next_id: u64,
 }
 
@@ -87,12 +160,6 @@ impl Assembler {
 
     /// A word cut in half at a segment boundary is heard by both segments ("input the" + "The whole").
     fn join_carry(&self, words: &[String]) -> Vec<String> {
-        let norm = |w: &str| {
-            w.to_lowercase()
-                .chars()
-                .filter(|c| c.is_alphanumeric() || *c == '\'')
-                .collect::<String>()
-        };
         let dup =
             matches!((self.carry.last(), words.first()), (Some(a), Some(b)) if norm(a) == norm(b));
         let mut out = self.carry.clone();
@@ -123,46 +190,95 @@ impl Assembler {
         self.emit(out, carry, lang, now);
     }
 
-    /// Words two consecutive partials agree on are stable; complete sentences inside them are
-    /// shown right away instead of waiting for the pause that closes the segment.
+    /// What captions show of segment `seg` so far: its next run starts from there. Not from the
+    /// words after that which runs agree on, too: held to those, Whisper says more things twice.
+    pub fn shown(&self, seg: u64) -> String {
+        self.segs
+            .get(&seg)
+            .map_or_else(String::new, |s| s.shown.join(" "))
+    }
+
+    /// Transcript of a segment still open. Complete sentences that runs agree on are shown right
+    /// away instead of waiting for the pause that closes the segment.
     pub fn partial(&mut self, seg: u64, words: Vec<String>, lang: &str, now: Instant) -> Vec<Out> {
+        let mut words = spoken(words);
+        if let Some(st) = self.segs.get(&seg)
+            && let Some(start) = resume(&words, &st.emitted)
+            && let Some(at) = rerun(&words, start, &st.emitted)
+        {
+            words.truncate(at);
+        }
         let mut out = Vec::new();
-        let prev = match self.prev_partial.take() {
-            Some((id, w)) if id == seg => w,
-            _ => Vec::new(),
-        };
-        let stable = words.iter().zip(&prev).take_while(|(a, b)| a == b).count();
-        self.same = if prev == words { self.same + 1 } else { 0 };
+        let same = self
+            .prev_partial
+            .take()
+            .is_some_and(|p| p == (seg, words.clone()));
+        let since = *self.unchanged.get_or_insert(now);
+        if !same {
+            self.unchanged = Some(now);
+        }
+        // Quiet after it is as good as time passing.
+        let paused = std::mem::take(&mut self.paused);
+        let settled = paused || (same && now.saturating_duration_since(since) >= SETTLE);
         let st = self.segs.entry(seg).or_default();
         st.words = words.clone();
         st.language = Some(lang.to_string());
-        let emitted = st.emitted;
-        // Not the sentence the audio so far ends in, until nothing has been added to it for a
-        // while: Whisper closes whatever it has with a full stop ("This is real." before "This
-        // is real nice, Dad.").
-        let mut start = emitted;
-        let ended = if self.same >= SETTLED {
-            stable
-        } else {
-            stable.min(words.len().saturating_sub(1))
-        };
-        for end in (emitted..ended).filter(|&i| ends_sentence(&words[i])) {
+        // Each sentence in this run, by the index of its last word and its words as compared.
+        let mut sentences = Vec::new();
+        let mut first = 0;
+        for (i, w) in words.iter().enumerate() {
+            if ends_sentence(w) {
+                let key: Vec<String> = words[first..=i].iter().map(|w| norm(w)).collect();
+                sentences.push((i, key.join(" ")));
+                first = i + 1;
+            }
+        }
+        st.heard
+            .push_back(sentences.iter().map(|(_, k)| k.clone()).collect());
+        if st.heard.len() > HEARD {
+            st.heard.pop_front();
+        }
+        // A partial that is other speech than what was shown (it heard only the end of the audio)
+        // is not taken for new yet: the next one, or the final, will have it all.
+        let emitted = resume(&words, &st.emitted);
+        let mut start = emitted.unwrap_or(words.len());
+        // A sentence two of the last few runs heard word for word is over, and so is all before
+        // it, however differently each run words that: Whisper keeps rewording the start of long
+        // audio ("homebolly yo" / "homeboy, yo." / "homeboley-o") without settling, and what
+        // follows would wait on it for seconds. Not the sentence the audio so far ends in, until
+        // nothing has been added for a while: Whisper closes whatever it has with a full stop
+        // ("This is real." before "This is real nice, Dad.").
+        let last = words.len().saturating_sub(1);
+        let upto = sentences
+            .iter()
+            .filter(|(end, key)| {
+                *end >= start
+                    && (*end < last || settled)
+                    && st.heard.iter().filter(|h| h.contains(key)).count() >= 2
+            })
+            .map(|(end, _)| *end)
+            .next_back();
+        let from = start;
+        for &(end, _) in sentences
+            .iter()
+            .filter(|(end, _)| *end >= from && Some(*end) <= upto)
+        {
             self.end_carry(&mut out, words.get(start), lang, now);
             let joined = self.join_carry(&words[start..=end]);
             self.emit(&mut out, joined, Some(lang.to_string()), now);
             self.carry.clear();
+            let st = self.segs.get_mut(&seg).unwrap();
+            st.emitted
+                .extend(words[start..=end].iter().map(|w| norm(w)));
+            st.shown = words[..=end].to_vec();
             start = end + 1;
         }
-        if start > emitted {
-            let st = self.segs.get_mut(&seg).unwrap();
-            st.last_emitted = words[start - 1].clone();
-            st.emitted = start;
-        }
         self.flush_at = None;
-        // A newer partial can be shorter than what earlier ones already showed.
-        let emitted = self.segs[&seg].emitted;
-        let live = self.join_carry(words.get(emitted..).unwrap_or_default());
-        out.push(live_line(&live, Some(lang.to_string())));
+        let live = match emitted {
+            Some(_) => self.join_carry(&words[start..]),
+            None => words.clone(),
+        };
+        out.push(self.live_line(&live, Some(lang.to_string())));
         self.prev_partial = Some((seg, words));
         out
     }
@@ -179,22 +295,25 @@ impl Assembler {
             self.prev_partial = None;
         }
         let st = self.segs.remove(&seg).unwrap_or_default();
+        let cut = std::mem::take(&mut self.cut) && result.is_some();
         let (words, lang) = match result {
-            Some((w, l)) => (w, Some(l)),
+            Some((w, l)) => (spoken(w), Some(l)),
             None if !st.words.is_empty() => (st.words.clone(), st.language.clone()),
             None => return Vec::new(),
         };
-        // Skip what partials already emitted; the final may word it slightly differently, so
-        // look for the last emitted word near where it should be.
-        let mut skip = st.emitted;
-        if st.emitted > 0 {
-            let lo = st.emitted.saturating_sub(3);
-            let near = words.get(lo..words.len().min(st.emitted + 3));
-            if let Some(j) = near.and_then(|n| n.iter().rposition(|w| *w == st.last_emitted)) {
-                skip = lo + j + 1;
-            }
+        // A segment is cut at a quiet moment a little before its end, and its partials heard the
+        // audio after that too. What they showed of it is how the next segment begins: it
+        // starts from there, and does not show it again.
+        let said: Vec<String> = words.iter().map(|w| norm(w)).collect();
+        if cut && let Some(end) = resume(&st.shown, &said).filter(|end| *end < st.shown.len()) {
+            let next = self.segs.entry(seg + 1).or_default();
+            next.shown = st.shown[end..].to_vec();
+            next.emitted = next.shown.iter().map(|w| norm(w)).collect();
         }
-        let rest = &words[skip.min(words.len())..];
+        // Skip what partials already showed; a final that is other speech altogether is all new.
+        let skip = resume(&words, &st.emitted).unwrap_or(0);
+        let end = rerun(&words, skip, &st.emitted).unwrap_or(words.len());
+        let rest = &words[skip..end];
         let mut out = Vec::new();
         self.end_carry(
             &mut out,
@@ -218,7 +337,7 @@ impl Assembler {
             out.extend(self.flush(now));
             return out;
         }
-        out.push(live_line(&self.carry, self.carry_lang.clone()));
+        out.push(self.live_line(&self.carry, self.carry_lang.clone()));
         self.flush_at = (!self.carry.is_empty()).then(|| now + FLUSH_AFTER);
         out
     }
@@ -231,7 +350,7 @@ impl Assembler {
         if !carry.is_empty() {
             self.emit(&mut out, carry, lang, now);
         }
-        out.push(live_line(&[], None));
+        out.push(self.live_line(&[], None));
         out
     }
 
@@ -252,6 +371,7 @@ impl Assembler {
             out.push(Out::Live {
                 text: t,
                 lang: Some(lang.to_string()),
+                whole: Vec::new(),
             });
         }
         out
@@ -273,33 +393,50 @@ impl Assembler {
         true
     }
 
+    /// Whether `words` shown now would join the last caption instead of starting one.
+    fn joins(&self, words: &[String], lang: &Option<String>, now: Instant) -> bool {
+        let chars = |w: &[String]| w.iter().map(|w| w.chars().count() + 1).sum::<usize>();
+        self.last_caption.as_ref().is_some_and(|(_, said, at, l)| {
+            !self.separate
+                && now.saturating_duration_since(*at) < JOIN_WITHIN
+                // What was cut off by another speaker stays apart from what they said.
+                && said.last().is_some_and(|w| ends_sentence(w))
+                && l == lang
+                && chars(said) + chars(words) <= CAPTION_CHARS
+        })
+    }
+
+    fn live_line(&self, words: &[String], lang: Option<String>) -> Out {
+        let mut whole = Vec::new();
+        let mut start = 0;
+        for (i, w) in words.iter().enumerate() {
+            if ends_sentence(w) {
+                whole.push(words[start..=i].join(" "));
+                start = i + 1;
+            }
+        }
+        Out::Live {
+            text: words.join(" ").trim().to_string(),
+            lang,
+            whole,
+        }
+    }
+
     fn emit(&mut self, out: &mut Vec<Out>, words: Vec<String>, lang: Option<String>, now: Instant) {
         if !self.fresh(&words, now) {
             return;
         }
-        let chars = |w: &[String]| w.iter().map(|w| w.chars().count() + 1).sum::<usize>();
-        if let Some((id, said, at, l)) = &mut self.last_caption
-            && !self.separate
-            && now.saturating_duration_since(*at) < JOIN_WITHIN
-            // What was cut off by another speaker stays apart from what they said.
-            && said.last().is_some_and(|w| ends_sentence(w))
-            && *l == lang
-            && chars(said) + chars(&words) <= CAPTION_CHARS
+        if self.joins(&words, &lang, now)
+            && let Some((id, said, at, _)) = &mut self.last_caption
         {
             said.extend(words);
             *at = now;
-            let grown = Out::Sentence {
+            // Once for each sentence added: each is translated by itself.
+            out.push(Out::Sentence {
                 id: *id,
                 text: said.join(" "),
                 lang,
-            };
-            // Grown twice in one go: only the last is worth translating.
-            match out.last_mut() {
-                Some(Out::Sentence { id: last, .. }) if last == id => {
-                    *out.last_mut().unwrap() = grown
-                }
-                _ => out.push(grown),
-            }
+            });
             return;
         }
         self.next_id += 1;
@@ -309,13 +446,6 @@ impl Assembler {
             lang: lang.clone(),
         });
         self.last_caption = Some((self.next_id, words, now, lang));
-    }
-}
-
-fn live_line(words: &[String], lang: Option<String>) -> Out {
-    Out::Live {
-        text: words.join(" ").trim().to_string(),
-        lang,
     }
 }
 
@@ -383,13 +513,130 @@ mod tests {
     }
 
     #[test]
+    fn what_was_shown_is_not_shown_again_when_its_end_is_heard_another_way() {
+        let n = |s: &str| -> Vec<String> { s.split(' ').map(norm).collect() };
+        let shown = n("man fuck you i see you at work better yet maybe");
+        let words = w("Man, fuck you. I see you at work. Better yet, maybe...Tanisha will call.");
+        // "maybe" is not there as a word of its own any more.
+        assert_eq!(resume(&words, &shown), Some(11));
+        // Other speech stays other speech.
+        assert_eq!(resume(&w("Look at this guy over there."), &shown), None);
+    }
+
+    #[test]
+    fn what_was_shown_past_a_cut_is_not_shown_again() {
+        let t = Instant::now();
+        let mut a = Assembler {
+            separate: true,
+            ..Default::default()
+        };
+        a.partial(1, w("One two three. Four five six. Seven"), "en", t);
+        let o = a.partial(1, w("One two three. Four five six. Seven eight"), "en", t);
+        assert_eq!(sentences(&o), ["One two three.", "Four five six."]);
+        // The segment is cut after "Four": its final has less than was shown.
+        a.cut = true;
+        let o = a.finish(1, Some((w("One two three. Four"), "en".into())), t);
+        assert!(sentences(&o).is_empty());
+        // The next one begins with the rest.
+        assert_eq!(a.shown(2), "five six.");
+        a.partial(2, w("five six. Seven eight nine. Ten"), "en", t);
+        let o = a.partial(2, w("five six. Seven eight nine. Ten eleven"), "en", t);
+        assert_eq!(sentences(&o), ["Seven eight nine."]);
+
+        // A segment that ended leaves nothing to the next.
+        let mut a = Assembler::default();
+        a.partial(1, w("One two three. Four"), "en", t);
+        a.partial(1, w("One two three. Four five"), "en", t);
+        a.finish(1, Some((w("One two"), "en".into())), t);
+        assert_eq!(a.shown(2), "");
+    }
+
+    #[test]
+    fn what_whisper_says_again_is_left_out() {
+        let shown: Vec<String> = "i'm the king of things i ain't talking to you hey let's go"
+            .split(' ')
+            .map(norm)
+            .collect();
+        let words = w(
+            "I'm the king of things. I ain't talking to you. Hey, let's go. Do \
+            something about it. I ain't talking to you. Hey, let's go do it.",
+        );
+        let start = resume(&words, &shown).unwrap();
+        assert_eq!(start, 13);
+        assert_eq!(rerun(&words, start, &shown), Some(17));
+        // A few words said again are just that.
+        let words = w(
+            "I'm the king of things. I ain't talking to you. Hey, let's go. I ain't \
+            talking, man.",
+        );
+        assert_eq!(rerun(&words, 13, &shown), None);
+
+        let t = Instant::now();
+        let mut a = Assembler {
+            separate: true,
+            ..Default::default()
+        };
+        a.partial(1, w("I ain't talking to you now. Hey"), "en", t);
+        a.partial(1, w("I ain't talking to you now. Hey man"), "en", t);
+        let o = a.finish(
+            1,
+            Some((
+                w("I ain't talking to you now. Hey man. I ain't talking to you now. Hey man."),
+                "en".into(),
+            )),
+            t,
+        );
+        assert_eq!(sentences(&o), ["Hey man."]);
+    }
+
+    #[test]
+    fn quiet_after_a_sentence_ends_it_without_the_wait() {
+        let t = Instant::now();
+        let mut a = Assembler::default();
+        a.partial(1, w("Good times."), "en", t);
+        // Heard again at once, it may yet go on.
+        assert!(sentences(&a.partial(1, w("Good times."), "en", t)).is_empty());
+        a.paused = true;
+        let o = a.partial(1, w("Good times."), "en", t);
+        assert_eq!(sentences(&o), ["Good times."]);
+        // The next run of the segment starts from what is shown.
+        assert_eq!(a.shown(1), "Good times.");
+        assert_eq!(a.shown(2), "");
+
+        // Quiet is not enough for what was heard only once.
+        let mut a = Assembler {
+            paused: true,
+            ..Default::default()
+        };
+        assert!(sentences(&a.partial(1, w("Good times."), "en", t)).is_empty());
+    }
+
+    #[test]
+    fn the_live_line_says_which_of_its_sentences_are_whole() {
+        let t = Instant::now();
+        let mut a = Assembler::default();
+        let o = a.partial(1, w("Hey. How are you? I was"), "en", t);
+        assert!(
+            matches!(o.last(), Some(Out::Live { whole, .. }) if whole == &["Hey.", "How are you?"])
+        );
+    }
+
+    #[test]
     fn sentences_that_follow_closely_share_a_caption() {
         let t = Instant::now();
         let mut a = Assembler::default();
         a.finish(1, Some((w("and then"), "en".into())), t);
         a.partial(2, w("we left. Go. Now! What"), "en", t);
         let o = a.partial(2, w("we left. Go. Now! What is"), "en", t);
-        assert_eq!(sentences(&o), ["and then we left. Go. Now!"]);
+        // Once for each sentence, growing.
+        assert_eq!(
+            sentences(&o),
+            [
+                "and then we left.",
+                "and then we left. Go.",
+                "and then we left. Go. Now!"
+            ]
+        );
         assert_eq!(live(&o), Some("What is"));
         // One that follows soon joins them, under the same id.
         let soon = t + Duration::from_secs(1);
@@ -429,13 +676,109 @@ mod tests {
         );
         assert_eq!(sentences(&o), ["You know, this is real nice, Dad."]);
 
-        // Said again and again with nothing added, it is over.
+        // Said again and again with nothing added for a while, it is over.
         let later = t + Duration::from_secs(10);
         a.partial(2, w("Good times."), "en", later);
-        assert!(sentences(&a.partial(2, w("Good times."), "en", later)).is_empty());
-        let o = a.partial(2, w("Good times."), "en", later);
+        let soon = later + Duration::from_millis(200);
+        assert!(sentences(&a.partial(2, w("Good times."), "en", soon)).is_empty());
+        let o = a.partial(2, w("Good times."), "en", later + SETTLE);
         assert_eq!(sentences(&o), ["Good times."]);
         assert_eq!(live(&o), Some(""));
+    }
+
+    #[test]
+    fn what_was_shown_is_found_again_however_the_start_is_worded() {
+        let t = Instant::now();
+        let mut a = Assembler {
+            separate: true,
+            ..Default::default()
+        };
+        let shown = "N-word. That's not cool, man. I don't see that.";
+        a.partial(1, w(&format!("{shown} You're")), "en", t);
+        let o = a.partial(1, w(&format!("{shown} You're right")), "en", t);
+        assert_eq!(sentences(&o).len(), 3);
+        // A dash before it, another before the next speaker, and a different mark after a word.
+        let dashed = "- N-word! That's not cool, man. I don't see that. - You're right and";
+        a.partial(1, w(dashed), "en", t);
+        let o = a.partial(1, w(dashed), "en", t);
+        assert!(sentences(&o).is_empty());
+        assert_eq!(live(&o), Some("You're right and"));
+        // Only the end of the audio, heard on its own: nothing of it is taken for new yet.
+        a.partial(1, w("You're right. And you"), "en", t);
+        let o = a.partial(1, w("You're right. And you"), "en", t);
+        assert!(sentences(&o).is_empty());
+        // The final has it all.
+        let o = a.finish(
+            1,
+            Some((
+                w(&format!("{shown} You're right, and you know it.")),
+                "en".into(),
+            )),
+            t,
+        );
+        assert_eq!(sentences(&o), ["You're right, and you know it."]);
+
+        // A final that words the little that was shown differently repeats nothing; one that
+        // is other speech altogether is all new.
+        for (last, new) in [
+            ("I don't say that.", vec![]),
+            ("Get in the car now.", vec!["Get in the car now."]),
+        ] {
+            let mut a = Assembler {
+                separate: true,
+                ..Default::default()
+            };
+            a.partial(1, w("I don't see that. So"), "en", t);
+            a.partial(1, w("I don't see that. So"), "en", t);
+            let o = a.finish(1, Some((w(last), "en".into())), t);
+            assert_eq!(sentences(&o), new);
+        }
+    }
+
+    #[test]
+    fn a_sentence_heard_twice_takes_what_came_before_with_it() {
+        let t = Instant::now();
+        let mut a = Assembler {
+            separate: true,
+            ..Default::default()
+        };
+        // The first sentence is worded differently every time; the second is not.
+        let o = a.partial(
+            1,
+            w("Like you know it homebolly yo. You ain't been there. Hang"),
+            "en",
+            t,
+        );
+        assert!(sentences(&o).is_empty());
+        let o = a.partial(
+            1,
+            w("Like you know it home ball. Yo, you ain't been there hanging"),
+            "en",
+            t,
+        );
+        assert!(sentences(&o).is_empty());
+        let o = a.partial(
+            1,
+            w("Like you know it, homeboy-o. You ain't been there. Hanging out"),
+            "en",
+            t,
+        );
+        assert_eq!(
+            sentences(&o),
+            ["Like you know it, homeboy-o.", "You ain't been there."]
+        );
+        assert_eq!(live(&o), Some("Hanging out"));
+        // Too long ago does not count.
+        for text in [
+            "One. Two",
+            "Three four",
+            "Three four five",
+            "Three four five six",
+            "Seven",
+        ] {
+            assert!(sentences(&a.partial(2, w(text), "en", t)).is_empty());
+        }
+        assert!(sentences(&a.partial(2, w("One. Two three"), "en", t)).is_empty());
     }
 
     #[test]

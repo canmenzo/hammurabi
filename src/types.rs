@@ -86,7 +86,8 @@ pub struct Progress {
 }
 
 pub enum CaptionUpdate {
-    /// Sent twice: without, then with translation.
+    /// Sent again when it grows, and when more of its translation is in: `translated` is that
+    /// of as much of `original` as has one.
     Final {
         id: u64,
         original: String,
@@ -120,6 +121,8 @@ pub struct AsrRequest {
     pub prior: HashMap<String, f32>,
     /// `Settings::hint`.
     pub hint: String,
+    /// What the audio begins with, as captions already show it.
+    pub prefix: String,
 }
 
 pub struct AsrResult {
@@ -168,6 +171,10 @@ pub trait Recognizer: Send {
     /// Words to expect (`Settings::hint`), for recognizers that can use them.
     fn set_hint(&mut self, _hint: &str) {}
 
+    /// What the next audio begins with, for recognizers that can go on from there: they need
+    /// not hear it again, and cannot word it another way than it was shown.
+    fn set_prefix(&mut self, _prefix: &str) {}
+
     fn transcribe(
         &mut self,
         audio: &[f32],
@@ -196,4 +203,17 @@ pub trait Translate: Send {
         target: &str,
         context: &[(String, String)],
     ) -> anyhow::Result<String>;
+
+    /// The same, given up (None) once `stop` says the translation is no longer wanted, by
+    /// translators that can tell before they are done.
+    fn translate_unless(
+        &mut self,
+        text: &str,
+        source: &str,
+        target: &str,
+        context: &[(String, String)],
+        _stop: &dyn Fn() -> bool,
+    ) -> anyhow::Result<Option<String>> {
+        self.translate(text, source, target, context).map(Some)
+    }
 }

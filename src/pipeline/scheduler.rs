@@ -16,6 +16,10 @@ pub struct Job {
     pub is_final: bool,
     /// The segment may hold no speech at all (`Segment::unsure`).
     pub unsure: bool,
+    /// A partial of audio that ends in quiet.
+    pub paused: bool,
+    /// The final of a segment that was cut (`Segment::cut`).
+    pub cut: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -65,11 +69,11 @@ impl Scheduler {
         if !self.ready || self.in_flight.is_some() {
             return None;
         }
-        let (segment, is_final, unsure, audio) = match self.finals.pop_front() {
-            Some(s) => (s.id, true, s.unsure, s.audio()),
+        let (segment, is_final, unsure, paused, cut, audio) = match self.finals.pop_front() {
+            Some(s) => (s.id, true, s.unsure, false, s.cut, s.audio()),
             None => {
-                let (id, audio) = seg.probe()?;
-                (id, false, false, audio)
+                let (id, audio, paused) = seg.probe()?;
+                (id, false, false, paused, false, audio)
             }
         };
         self.next_job += 1;
@@ -78,6 +82,8 @@ impl Scheduler {
             segment,
             is_final,
             unsure,
+            paused,
+            cut,
         };
         self.in_flight = Some((job, false));
         Some((job, audio))

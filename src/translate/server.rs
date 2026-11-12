@@ -103,6 +103,34 @@ fn tie_to_us(child: &Child) -> windows::core::Result<()> {
     }
 }
 
+/// Puts the child behind everything else on the GPU, or back among it. Windows shares a GPU out
+/// in turns, and the speech model, which takes many short ones, ran three to five times slower
+/// whenever a translation was being written; a stream being encoded or a game being drawn must
+/// not wait for one either. Behind them all, a translation takes what they leave.
+fn yield_gpu(child: &Child, on: bool) {
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "gdi32")]
+    unsafe extern "system" {
+        fn D3DKMTSetProcessSchedulingPriorityClass(
+            process: *mut std::ffi::c_void,
+            class: i32,
+        ) -> i32;
+    }
+    const IDLE: i32 = 0;
+    const NORMAL: i32 = 2;
+    // SAFETY: the handle is the live child's.
+    let status = unsafe {
+        D3DKMTSetProcessSchedulingPriorityClass(
+            child.as_raw_handle(),
+            if on { IDLE } else { NORMAL },
+        )
+    };
+    if status != 0 {
+        log::warn!("llama.cpp keeps its turn on the GPU: status {status:#x}");
+    }
+}
+
 impl Server {
     /// Starts the server with the GGUF `model` fully on the GPU, and waits until it answers.
     /// `progress` reports the download of the server itself, the first time.
@@ -142,6 +170,7 @@ impl Server {
         }
         let mut server = Server { child, port };
         server.wait_ready(cancel, &log)?;
+        server.yield_gpu(true);
         Ok(server)
     }
 
@@ -177,6 +206,11 @@ impl Server {
             );
             std::thread::sleep(Duration::from_millis(250));
         }
+    }
+
+    /// Whether the server lets everything else on the GPU go first.
+    pub fn yield_gpu(&self, on: bool) {
+        yield_gpu(&self.child, on);
     }
 
     pub fn base_url(&self) -> String {

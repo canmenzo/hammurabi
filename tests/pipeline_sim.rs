@@ -153,10 +153,10 @@ fn captions_end_to_end_with_translation() {
     assert_eq!(
         finals,
         vec![
-            f(1, "Hello world.", None),
+            // Whole sentences are translated while still on the live line, so their captions
+            // come translated.
             f(1, "Hello world.", Some("HELLO WORLD.")),
             // The next sentence follows closely, so the caption grows.
-            f(1, "Hello world. How are you today?", None),
             f(
                 1,
                 "Hello world. How are you today?",
@@ -198,9 +198,9 @@ fn same_language_and_no_translator() {
         &settings("en", true),
         false,
     ));
-    assert_eq!(finals[0], f(1, "Hello world.", None));
-    assert_eq!(finals[1], f(1, "Hello world.", Some("Hello world.")));
-    assert_eq!(finals.len(), 6);
+    // What is in the language asked for already is its own translation.
+    assert_eq!(finals[0], f(1, "Hello world.", Some("Hello world.")));
+    assert_eq!(finals.len(), 3);
 
     // No translator loaded yet: captions go out untranslated, once each.
     let mut asr = FakeAsr::default();

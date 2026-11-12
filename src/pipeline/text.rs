@@ -26,6 +26,9 @@ static FILLER_TR: LazyLock<Regex> =
 static FILLER_OTHER: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^(?:h+m+|m{2,})$"));
 static COMMA_BEFORE_END: LazyLock<Regex> = LazyLock::new(|| re(r",+([.!?…])"));
 static SPACE_BEFORE_PUNCT: LazyLock<Regex> = LazyLock::new(|| re(r"\s+([,.!?…])"));
+/// Dots a word begins with: Whisper picks a sentence that trailed off back up with them
+/// ("maybe... ...Tanisha").
+static DOTS_BEFORE_WORD: LazyLock<Regex> = LazyLock::new(|| re(r"(\s)[.…]+(\p{L})"));
 static LEADING_PUNCT: LazyLock<Regex> = LazyLock::new(|| re(r"^[\s,.!?…]+"));
 static HALLUCINATIONS: LazyLock<[Regex; 4]> = LazyLock::new(|| {
     [
@@ -84,6 +87,7 @@ pub fn clean(text: &str, language: &str, no_speech: f32, lang_conf: f32) -> Stri
         out.push_str(w);
     }
     let t = COMMA_BEFORE_END.replace_all(&out, "$1");
+    let t = DOTS_BEFORE_WORD.replace_all(&t, "$1$2");
     let t = SPACE_BEFORE_PUNCT.replace_all(&t, "$1");
     let t = LEADING_PUNCT.replace(&t, "");
     let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -124,6 +128,15 @@ mod tests {
             "Hello there my friend."
         );
         assert_eq!(c("Hello there."), "Hello there.");
+    }
+
+    #[test]
+    fn a_sentence_picked_up_again_keeps_its_words_apart() {
+        assert_eq!(
+            c("Better yet, maybe... ...Tanisha will call."),
+            "Better yet, maybe... Tanisha will call."
+        );
+        assert_eq!(c("Wait ... what?"), "Wait... what?");
     }
 
     #[test]

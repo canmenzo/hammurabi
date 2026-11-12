@@ -222,7 +222,9 @@ enum DownloadModel {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let level = if cli.verbose { "info" } else { "warn" };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
+        .format_timestamp_millis()
+        .init();
     match cli.cmd {
         Cmd::Devices => devices(),
         Cmd::Record {
@@ -731,6 +733,10 @@ impl<T: Recognizer> Recognizer for Timed<T> {
         self.inner.set_hint(hint);
     }
 
+    fn set_prefix(&mut self, prefix: &str) {
+        self.inner.set_prefix(prefix);
+    }
+
     fn transcribe(
         &mut self,
         audio: &[f32],
@@ -761,6 +767,22 @@ impl Translate for Timed<Box<dyn Translate>> {
         self.timing.add(t.elapsed());
         r
     }
+
+    fn translate_unless(
+        &mut self,
+        text: &str,
+        source: &str,
+        target: &str,
+        context: &[(String, String)],
+        stop: &dyn Fn() -> bool,
+    ) -> anyhow::Result<Option<String>> {
+        let t = Instant::now();
+        let r = self
+            .inner
+            .translate_unless(text, source, target, context, stop);
+        self.timing.add(t.elapsed());
+        r
+    }
 }
 
 fn frames_16k(rate: u32, pcm: Vec<f32>) -> Vec<Vec<f32>> {
@@ -782,19 +804,25 @@ fn frames_16k(rate: u32, pcm: Vec<f32>) -> Vec<Vec<f32>> {
 }
 
 fn print_caption(c: &CaptionUpdate, at: Option<f32>, live: bool) {
-    let t = at.map(|s| format!("[{s:6.1}s] ")).unwrap_or_default();
+    /// The caption printed last: its translation, or one that comes translated, says it again.
+    static PRINTED: std::sync::Mutex<(u64, String)> = std::sync::Mutex::new((0, String::new()));
+    let t = at.map(|s| format!("[{s:7.2}s] ")).unwrap_or_default();
     match c {
         CaptionUpdate::Final {
             id,
             original,
-            translated: None,
+            translated,
             lang,
-        } => println!("{t}#{id} ({lang}) {original}"),
-        CaptionUpdate::Final {
-            id,
-            translated: Some(tr),
-            ..
-        } => println!("{t}#{id}   => {tr}"),
+        } => {
+            let mut printed = PRINTED.lock().unwrap();
+            if (printed.0, printed.1.as_str()) != (*id, original.as_str()) {
+                println!("{t}#{id} ({lang}) {original}");
+                *printed = (*id, original.clone());
+            }
+            if let Some(tr) = translated {
+                println!("{t}#{id}   => {tr}");
+            }
+        }
         CaptionUpdate::Live {
             original,
             translated,
@@ -931,6 +959,7 @@ fn transcribe_realtime(
     let chunk = rate as usize / 10;
     let secs = pcm.len() as f32 / rate as f32;
     let t0 = Instant::now();
+    log::info!("feed starts");
     let mut shown = HashMap::new();
     let mut handle = |e: EngineEvent, t0: Instant| {
         let at = t0.elapsed().as_secs_f32();
@@ -951,15 +980,16 @@ fn transcribe_realtime(
         }
     };
     for (i, c) in pcm.chunks(chunk).enumerate() {
+        // A chunk is heard once it has played.
+        let next = t0 + Duration::from_millis(100 * (i as u64 + 1));
+        while let Some(e) = engine.recv_timeout(next.saturating_duration_since(Instant::now())) {
+            handle(e, t0);
+        }
         let _ = feed.send(AudioChunk {
             source: SourceKind::System,
             samples: c.to_vec(),
             sample_rate: rate,
         });
-        let next = t0 + Duration::from_millis(100 * (i as u64 + 1));
-        while let Some(e) = engine.recv_timeout(next.saturating_duration_since(Instant::now())) {
-            handle(e, t0);
-        }
     }
     // Stop feeding (the engine pads silence) and wait until captions settle.
     while let Some(e) = engine.recv_timeout(Duration::from_secs(5)) {

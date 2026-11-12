@@ -12,6 +12,9 @@ use crate::types::FRAME_SAMPLES;
 const MIN_FINAL: usize = 8;
 /// 0.3 s of quiet closes the segment.
 const PAUSE: usize = 3;
+/// After 0.2 s of quiet the open segment is re-run at once: whoever spoke may be done, and what
+/// that run ends in need not wait for the pause to be a whole one.
+const EARLY: usize = 2;
 /// Hard cut so continuous talk still finalizes: at 5 s, or at 12 s on a GPU, which is fast enough
 /// to re-run that much for every partial and hears whole sentences better than halves.
 const MAX_SEG: usize = 50;
@@ -20,10 +23,11 @@ const MAX_SEG_GPU: usize = 120;
 const TAIL: usize = 3;
 /// On a hard cut, split at the quietest frame within the last 1.5 s.
 const CUT_SEARCH: usize = 15;
-/// Re-run the open segment every 0.6 s of new audio, or every 0.4 s on a GPU: a sentence is shown
-/// once two runs agree on it, so this is most of how late captions are.
+/// Re-run the open segment every 0.6 s of new audio at first, then as often as the recognizer
+/// can do in two fifths of its time, down to every 0.1 s: a sentence is shown once two runs
+/// agree on it, so this is most of how late captions are.
 const PARTIAL_EVERY: usize = 6;
-const PARTIAL_EVERY_GPU: usize = 4;
+const PARTIAL_EVERY_MIN: usize = 1;
 /// Segments with fewer loud frames are dropped (Whisper hallucinates on silence).
 pub const MIN_SPEECH: usize = 3;
 /// Quiet frames kept before speech onset so the first syllable is not clipped.
@@ -53,10 +57,14 @@ pub struct Segment {
     pub speech: usize,
     /// No speech was detected in it, but it is loud enough to hold some.
     pub unsure: bool,
+    /// It did not end: it was cut, and the next segment goes on from there.
+    pub cut: bool,
     quiet: usize,
     /// Frames at the end that are not even audible.
     silent: usize,
     since_probe: usize,
+    /// Re-run since it went quiet.
+    probed_quiet: bool,
 }
 
 impl Segment {
@@ -82,6 +90,7 @@ pub struct Segmenter {
     pub last_loud: bool,
     max_seg: usize,
     partial_every: usize,
+    asr_ms: f32,
 }
 
 impl Default for Segmenter {
@@ -109,6 +118,7 @@ impl Segmenter {
             last_loud: false,
             max_seg: MAX_SEG,
             partial_every: PARTIAL_EVERY,
+            asr_ms: 0.0,
         }
     }
 
@@ -117,17 +127,28 @@ impl Segmenter {
         let vad = Vad::new()
             .inspect_err(|e| log::error!("voice detector unavailable, using loudness: {e:#}"))
             .ok();
-        let (max_seg, partial_every) = if crate::device::label() == "CPU" {
-            (MAX_SEG, PARTIAL_EVERY)
+        let max_seg = if crate::device::label() == "CPU" {
+            MAX_SEG
         } else {
-            (MAX_SEG_GPU, PARTIAL_EVERY_GPU)
+            MAX_SEG_GPU
         };
         Self {
             vad,
             max_seg,
-            partial_every,
             ..Self::new()
         }
+    }
+
+    /// How long the recognizer took over its last run: sets how often partials are run.
+    pub fn pace(&mut self, ms: u32) {
+        // Smoothed, so that one slow run does not slow the captions.
+        self.asr_ms = if self.asr_ms == 0.0 {
+            ms as f32
+        } else {
+            0.8 * self.asr_ms + 0.2 * ms as f32
+        };
+        let frames = (self.asr_ms * 2.5 / 100.0).ceil() as usize;
+        self.partial_every = frames.clamp(PARTIAL_EVERY_MIN, PARTIAL_EVERY);
     }
 
     /// Drops the open segment; ids keep counting.
@@ -172,8 +193,10 @@ impl Segmenter {
             speech: loud.iter().filter(|&&l| l).count(),
             loud,
             unsure: false,
+            cut: false,
             quiet: 0,
             silent: 0,
+            probed_quiet: false,
         }
     }
 
@@ -240,6 +263,7 @@ impl Segmenter {
         if loud {
             seg.speech += 1;
             seg.quiet = 0;
+            seg.probed_quiet = false;
         } else {
             seg.quiet += 1;
         }
@@ -285,24 +309,43 @@ impl Segmenter {
         if loud.contains(&true) || (keep && !rest.is_empty()) {
             let start = closed.start + end as u64;
             self.open = Some(self.new_segment(start, rest, level, rms, loud));
+            closed.cut = true;
         }
         closed
     }
 
-    /// Audio of the open segment when a partial re-run is due.
-    pub fn probe(&mut self) -> Option<(u64, Vec<f32>)> {
+    /// Audio of the open segment when a partial re-run is due, and whether it ends in quiet.
+    pub fn probe(&mut self) -> Option<(u64, Vec<f32>, bool)> {
         let seg = self.open.as_mut()?;
-        if seg.speech < MIN_SPEECH || seg.since_probe < self.partial_every {
+        let paused = seg.quiet >= EARLY;
+        let due = seg.since_probe >= self.partial_every
+            || (paused && !seg.probed_quiet && seg.since_probe > 0);
+        if seg.speech < MIN_SPEECH || !due {
             return None;
         }
         seg.since_probe = 0;
-        Some((seg.id, seg.audio()))
+        seg.probed_quiet = paused;
+        Some((seg.id, seg.audio(), paused))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_brings_a_partial_forward() {
+        let mut s = Segmenter::new();
+        for _ in 0..6 {
+            s.push(tone(0.3));
+        }
+        assert!(matches!(s.probe(), Some((_, _, false))));
+        s.push(tone(0.0));
+        assert!(s.probe().is_none(), "a tenth of a second is no pause");
+        s.push(tone(0.0));
+        assert!(matches!(s.probe(), Some((_, _, true))));
+        assert!(s.probe().is_none(), "once");
+    }
 
     fn tone(amp: f32) -> Vec<f32> {
         (0..FRAME_SAMPLES)
@@ -401,7 +444,7 @@ mod tests {
         run(&mut s, &[(0.3, 2)]);
         assert!(s.probe().is_none(), "needs 3 speech frames");
         run(&mut s, &[(0.3, 4)]);
-        let (id, audio) = s.probe().unwrap();
+        let (id, audio, _) = s.probe().unwrap();
         assert_eq!((id, audio.len()), (1, 6 * FRAME_SAMPLES));
         run(&mut s, &[(0.3, 5)]);
         assert!(s.probe().is_none());

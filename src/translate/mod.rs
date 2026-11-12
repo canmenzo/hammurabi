@@ -3,7 +3,7 @@ pub mod madlad;
 #[cfg(windows)]
 pub mod server;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,8 @@ pub struct TranslatorWorker {
     pub events: Receiver<TranslatorEvent>,
     tx: Sender<TranslateRequest>,
     cancel: Arc<AtomicBool>,
+    /// The request no longer wanted (`give_up`).
+    given_up: Arc<AtomicU64>,
 }
 
 impl TranslatorWorker {
@@ -33,12 +35,24 @@ impl TranslatorWorker {
         let (ev_tx, events) = crossbeam_channel::unbounded();
         let (tx, rx) = crossbeam_channel::unbounded();
         let cancel = Arc::new(AtomicBool::new(false));
-        let c = cancel.clone();
+        let given_up = Arc::new(AtomicU64::new(0));
+        let (c, g) = (cancel.clone(), given_up.clone());
         std::thread::Builder::new()
             .name("hm-tr".into())
-            .spawn(move || run(choice, rx, ev_tx, &c))
+            .spawn(move || run(choice, rx, ev_tx, &c, &g))
             .expect("spawn hm-tr");
-        TranslatorWorker { events, tx, cancel }
+        TranslatorWorker {
+            events,
+            tx,
+            cancel,
+            given_up,
+        }
+    }
+
+    /// Request `id` is no longer wanted: it is answered with nothing, at once if the translator
+    /// can stop in the middle. Only the request named last is given up.
+    pub fn give_up(&self, id: u64) {
+        self.given_up.store(id, Ordering::Relaxed);
     }
 
     pub fn submit(&self, req: TranslateRequest) {
@@ -57,6 +71,7 @@ fn run(
     rx: Receiver<TranslateRequest>,
     ev: Sender<TranslatorEvent>,
     cancel: &AtomicBool,
+    given_up: &AtomicU64,
 ) {
     let tr = match load(choice, &ev, cancel) {
         Ok(t) => {
@@ -69,20 +84,24 @@ fn run(
             None
         }
     };
-    serve(tr, rx, ev);
+    serve(tr, rx, ev, given_up);
 }
 
 fn serve(
     mut tr: Option<Box<dyn Translate>>,
     rx: Receiver<TranslateRequest>,
     ev: Sender<TranslatorEvent>,
+    given_up: &AtomicU64,
 ) {
     let mut failures = 0;
     let mut paused_until = None;
     // Without a translator every request still gets an (empty) answer.
     while let Ok(req) = rx.recv() {
+        let stop = || given_up.load(Ordering::Relaxed) == req.id;
         let text = if req.source == req.target {
             Some(req.text)
+        } else if stop() {
+            None
         } else if req.at.elapsed() > MAX_WAIT {
             log::info!("translation backlog, skipped #{}", req.id);
             None
@@ -90,8 +109,25 @@ fn serve(
             None
         } else if let Some(t) = tr.as_mut() {
             t.set_hint(&req.hint);
-            match t.translate(&req.text, &req.source, &req.target, &req.context) {
-                Ok(text) => {
+            let waited = req.at.elapsed();
+            let started = Instant::now();
+            match t.translate_unless(&req.text, &req.source, &req.target, &req.context, &stop) {
+                Ok(None) => {
+                    log::debug!(
+                        "gave up #{} after {} ms",
+                        req.id,
+                        started.elapsed().as_millis()
+                    );
+                    None
+                }
+                Ok(Some(text)) => {
+                    log::debug!(
+                        "translated #{} in {} ms after {} ms: {:?}",
+                        req.id,
+                        started.elapsed().as_millis(),
+                        waited.as_millis(),
+                        req.text
+                    );
                     failures = 0;
                     Some(text)
                 }
@@ -180,6 +216,12 @@ fn load(
     }
 }
 
+/// A translation this slow, this many times in a row, is one that is not getting the GPU.
+#[cfg(windows)]
+const SLOW: Duration = Duration::from_millis(1500);
+#[cfg(windows)]
+const SLOW_RUN: u32 = 3;
+
 /// The LLM translator on a llama.cpp server of our own, which is started again if it dies.
 #[cfg(windows)]
 struct Natural {
@@ -187,6 +229,8 @@ struct Natural {
     server: server::Server,
     llm: llm::LlmTranslator,
     hint: String,
+    /// Translations in a row that took longer than `SLOW`.
+    slow: u32,
 }
 
 #[cfg(windows)]
@@ -202,6 +246,7 @@ impl Natural {
             server,
             llm,
             hint: String::new(),
+            slow: 0,
         })
     }
 }
@@ -225,8 +270,31 @@ impl Translate for Natural {
         target: &str,
         context: &[(String, String)],
     ) -> anyhow::Result<String> {
+        use anyhow::Context;
+        self.translate_unless(text, source, target, context, &|| false)?
+            .context("translation given up")
+    }
+
+    fn translate_unless(
+        &mut self,
+        text: &str,
+        source: &str,
+        target: &str,
+        context: &[(String, String)],
+        stop: &dyn Fn() -> bool,
+    ) -> anyhow::Result<Option<String>> {
         self.llm.set_hint(&self.hint);
-        let r = self.llm.translate(text, source, target, context);
+        let t = Instant::now();
+        let r = self
+            .llm
+            .translate_unless(text, source, target, context, stop);
+        // The server lets all else on the GPU go first (`Server::yield_gpu`). Where something
+        // leaves it nothing, a game that takes all there is, it has to take its turn after all.
+        self.slow = if t.elapsed() > SLOW { self.slow + 1 } else { 0 };
+        if self.slow == SLOW_RUN {
+            log::warn!("translations are slow: the GPU is busy, the language model stops waiting");
+            self.server.yield_gpu(false);
+        }
         if r.is_err() && !self.server.alive() {
             log::error!("llama.cpp stopped, starting it again");
             *self = Self::start(self.model.clone(), &AtomicBool::new(false))?;
@@ -312,7 +380,9 @@ mod tests {
             base_url: "http://127.0.0.1:9".into(),
             model: "x".into(),
         };
-        let h = std::thread::spawn(move || run(llm, rx, ev_tx, &AtomicBool::new(false)));
+        let h = std::thread::spawn(move || {
+            run(llm, rx, ev_tx, &AtomicBool::new(false), &AtomicU64::new(0))
+        });
         for (id, target) in [(1, "en"), (2, "tr")] {
             tx.send(TranslateRequest {
                 id,
@@ -377,7 +447,7 @@ mod tests {
         }
         drop(tx);
         let fake = Fake((0..3).map(|i| Ok(format!("t{i}"))).collect());
-        serve(Some(Box::new(fake)), rx, ev_tx);
+        serve(Some(Box::new(fake)), rx, ev_tx, &AtomicU64::new(0));
         let got: Vec<_> = ev.try_iter().collect();
         assert!(matches!(
             &got[..],
@@ -404,7 +474,7 @@ mod tests {
         let (ev_tx, ev) = crossbeam_channel::unbounded();
         let h = std::thread::spawn(move || {
             let fake = Fake((0..3).map(|_| Err(anyhow::anyhow!("down"))).collect());
-            serve(Some(Box::new(fake)), rx, ev_tx)
+            serve(Some(Box::new(fake)), rx, ev_tx, &AtomicU64::new(0))
         });
         for id in 1..=4 {
             tx.send(req(id)).unwrap();

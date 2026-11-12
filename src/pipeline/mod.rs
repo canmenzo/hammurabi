@@ -37,7 +37,9 @@ use segmenter::Segmenter;
 const FRAME: Duration = Duration::from_millis(100);
 /// WASAPI loopback sends nothing while nothing plays; after this gap silence is injected.
 const SILENCE_AFTER: Duration = Duration::from_millis(300);
-const CONTEXT_PAIRS: usize = 3;
+const CONTEXT_PAIRS: usize = 4;
+/// Captions whose translations may still come.
+const CAPTIONS: usize = 4;
 /// Live Captions does not report what it hears (its language is set in Windows); English is
 /// its default, and the translators read the source text itself either way.
 const LC_LANG: &str = "en";
@@ -78,14 +80,38 @@ impl Events {
 }
 
 enum Pending {
+    /// Part `part` of caption `id`.
     Final {
         id: u64,
-        original: String,
-        lang: String,
+        part: usize,
     },
     Live {
         version: u64,
     },
+    /// Asked for before its sentence was a caption (`Core::ahead`).
+    Ahead,
+}
+
+/// How far the translation of a part of a caption is.
+enum Translation {
+    Asked,
+    Done(String),
+    /// None is coming: the part reads as it was said.
+    Plain,
+}
+
+/// A caption and what was added to it each time it grew. Each part is translated by itself, so
+/// that what is on the screen is not worded anew when more is added, and only that is translated.
+struct Shown {
+    id: u64,
+    lang: String,
+    parts: Vec<(String, Translation)>,
+}
+
+/// A sentence still on the live line that is translated already, or being translated.
+struct Ahead {
+    text: String,
+    translation: Option<String>,
 }
 
 /// Everything between frames and captions, independent of threads and real workers.
@@ -103,9 +129,16 @@ struct Core {
     next_tr: u64,
     pending: HashMap<u64, Pending>,
     context: VecDeque<(String, String)>,
-    /// The caption translated last and the request for it: a caption that grew is translated
-    /// again, and the answer for what it was before is of no use.
-    last_final: (u64, u64),
+    /// The last few captions, oldest first.
+    captions: VecDeque<Shown>,
+    /// Sentences the live line has whole are translated before they are captions, so that a
+    /// caption comes with its translation instead of a fifth of a second before it. In the
+    /// order they were said.
+    ahead: Vec<Ahead>,
+    /// The request for the one of them being translated: one at a time.
+    ahead_out: Option<u64>,
+    /// A request the translator need not finish, for the caller to tell it.
+    tr_drop: Option<u64>,
     /// Current live line; only its latest version is translated, one request at a time.
     live: (u64, String, Option<String>),
     live_in_flight: bool,
@@ -146,7 +179,10 @@ impl Core {
             next_tr: 0,
             pending: HashMap::new(),
             context: VecDeque::new(),
-            last_final: (0, 0),
+            captions: VecDeque::new(),
+            ahead: Vec::new(),
+            ahead_out: None,
+            tr_drop: None,
             live: (0, String::new(), None),
             live_in_flight: false,
             asr_out: Vec::new(),
@@ -189,6 +225,22 @@ impl Core {
         self.tr_ready = ready;
         self.pending.clear();
         self.live_in_flight = false;
+        self.ahead.clear();
+        self.ahead_out = None;
+        // What was asked of the old one is not coming.
+        let mut waiting = Vec::new();
+        for c in &mut self.captions {
+            for p in &mut c.parts {
+                if matches!(p.1, Translation::Asked) {
+                    p.1 = Translation::Plain;
+                    waiting.push(c.id);
+                }
+            }
+        }
+        waiting.dedup();
+        for id in waiting {
+            self.show(id);
+        }
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -264,6 +316,7 @@ impl Core {
                 language: self.settings.spoken_language.clone(),
                 prior: self.prior.clone(),
                 hint: self.settings.hint.clone(),
+                prefix: self.asm.shown(job.segment),
             });
         }
     }
@@ -275,6 +328,9 @@ impl Core {
 
     fn asr_result(&mut self, r: AsrResult, now: Instant) {
         if let Some(job) = self.sched.complete(r.id) {
+            if r.error.is_none() {
+                self.seg.pace(r.ms);
+            }
             let out = if r.error.is_some() {
                 if job.is_final {
                     self.asm.finish(job.segment, None, now)
@@ -293,6 +349,11 @@ impl Core {
                     text::clean(&r.text, &r.language, r.no_speech, r.lang_conf)
                 };
                 let words: Vec<String> = text.split_whitespace().map(String::from).collect();
+                log::debug!(
+                    "segment {} {}: {text:?}",
+                    job.segment,
+                    if job.is_final { "final" } else { "partial" }
+                );
                 if job.is_final {
                     #[cfg(omnivoice)]
                     if let Some(v) = self.voice.final_text(job.segment, &words.join(" "), now) {
@@ -302,9 +363,11 @@ impl Core {
                         self.prior.values_mut().for_each(|v| *v *= 0.7);
                         *self.prior.entry(r.language.clone()).or_default() += 0.3;
                     }
+                    self.asm.cut = job.cut;
                     self.asm.finish(job.segment, Some((words, r.language)), now)
                 } else if !words.is_empty() && self.seg.open_id() == Some(job.segment) {
                     // A partial that finishes after its segment closed may hold the next one's audio.
+                    self.asm.paused = job.paused;
                     self.asm.partial(job.segment, words, &r.language, now)
                 } else {
                     Vec::new()
@@ -344,42 +407,79 @@ impl Core {
         for o in out {
             match o {
                 Out::Sentence { id, text, lang } => {
+                    log::debug!("caption #{id}: {text:?}");
                     let lang = lang.unwrap_or_default();
-                    let p = Pending::Final {
-                        id,
-                        original: text.clone(),
-                        lang: lang.clone(),
-                    };
-                    let before = self.next_tr;
-                    let same = self.request(&text, &lang, p);
-                    if self.next_tr != before {
-                        self.last_final = (id, self.next_tr);
-                    }
-                    // With the original hidden, a caption waits for its translation.
-                    if self.next_tr == before || !self.translation_only() {
-                        self.caption(CaptionUpdate::Final {
+                    if self.captions.back().is_none_or(|c| c.id != id) {
+                        self.captions.push_back(Shown {
                             id,
-                            original: text.clone(),
-                            translated: None,
                             lang: lang.clone(),
+                            parts: Vec::new(),
                         });
-                    }
-                    if let Some(t) = same {
-                        // Already in the target language: it is heard as it is.
-                        if self.settings.speak_same_lang {
-                            self.speak(&t, &lang);
+                        if self.captions.len() > CAPTIONS {
+                            self.captions.pop_front();
                         }
-                        self.caption(CaptionUpdate::Final {
-                            id,
-                            original: text,
-                            translated: Some(t),
-                            lang,
-                        });
-                    } else if self.next_tr == before {
-                        self.speak(&text, &lang);
+                    }
+                    // What this adds to the caption.
+                    let c = self.captions.back_mut().unwrap();
+                    let had: Vec<&str> = c.parts.iter().map(|p| p.0.as_str()).collect();
+                    let new = match text.strip_prefix(had.join(" ").as_str()) {
+                        Some(new) => new.trim().to_string(),
+                        None => {
+                            c.parts.clear();
+                            text.clone()
+                        }
+                    };
+                    let part = c.parts.len();
+                    c.parts.push((new.clone(), Translation::Asked));
+                    let p = Pending::Final { id, part };
+                    // Translated ahead, or being translated: no second request.
+                    let ahead = self.ahead.iter().position(|a| a.text == new);
+                    log::debug!(
+                        "ahead: {:?} {}",
+                        new,
+                        match ahead {
+                            Some(i) if self.ahead[i].translation.is_some() => "in",
+                            Some(_) => "out",
+                            None => "not asked",
+                        }
+                    );
+                    let before = self.next_tr;
+                    match ahead.map(|i| self.ahead.remove(i)) {
+                        Some(Ahead {
+                            translation: Some(t),
+                            ..
+                        }) => self.translated(id, part, Some(t)),
+                        Some(_) if self.ahead_out.is_some() => {
+                            let request = self.ahead_out.take().unwrap();
+                            self.pending.insert(request, p);
+                            self.show(id);
+                        }
+                        _ => {
+                            // A caption does not wait for a sentence that is none yet.
+                            if let Some(request) = self.ahead_out.take() {
+                                self.tr_drop = Some(request);
+                                self.ahead.retain(|a| a.translation.is_some());
+                            }
+                            match self.request(&new, &lang, p) {
+                                Some(same) => {
+                                    // Already in the target language: it is heard as it is.
+                                    if self.settings.speak_same_lang {
+                                        self.speak(&same, &lang);
+                                    }
+                                    self.set_part(id, part, Translation::Done(same));
+                                }
+                                None if self.next_tr == before => {
+                                    self.speak(&new, &lang);
+                                    self.set_part(id, part, Translation::Plain);
+                                }
+                                None => {}
+                            }
+                            self.show(id);
+                        }
                     }
                 }
-                Out::Live { text, lang } => {
+                Out::Live { text, lang, whole } => {
+                    self.translate_ahead(whole, lang.as_deref());
                     self.live = (self.live.0 + 1, text.clone(), lang.clone());
                     // Unfinished speech in another language is the original, too.
                     let hidden = self.translation_only()
@@ -401,6 +501,110 @@ impl Core {
     /// Captions show translations alone, not what was said.
     fn translation_only(&self) -> bool {
         self.settings.translate && !self.settings.caption.show_original
+    }
+
+    /// Asks for the translation of the first of `whole`, the sentences the live line has whole,
+    /// that has none yet. One at a time, and not while a caption waits for its own: the
+    /// translator takes them in turn.
+    fn translate_ahead(&mut self, whole: Vec<String>, lang: Option<&str>) {
+        // What the live line no longer says is of no use, the one being translated too.
+        self.ahead.retain(|a| whole.contains(&a.text));
+        if self.ahead_out.is_some() && self.ahead.iter().all(|a| a.translation.is_some()) {
+            self.tr_drop = self.ahead_out.take();
+        }
+        let Some(lang) = lang else { return };
+        let busy = self.ahead_out.is_some()
+            || self
+                .pending
+                .values()
+                .any(|p| matches!(p, Pending::Final { .. }));
+        // In instant mode the live line is translated as it is.
+        if busy || self.settings.instant {
+            return;
+        }
+        let Some(text) = whole
+            .into_iter()
+            .find(|s| !self.ahead.iter().any(|a| a.text == *s))
+        else {
+            return;
+        };
+        let before = self.next_tr;
+        self.request(&text, lang, Pending::Ahead);
+        if self.next_tr != before {
+            self.ahead_out = Some(self.next_tr);
+            self.ahead.push(Ahead {
+                text,
+                translation: None,
+            });
+        }
+    }
+
+    fn set_part(&mut self, id: u64, part: usize, t: Translation) {
+        if let Some(p) = self
+            .captions
+            .iter_mut()
+            .find(|c| c.id == id)
+            .and_then(|c| c.parts.get_mut(part))
+        {
+            p.1 = t;
+        }
+    }
+
+    /// The translation of a part of a caption is in, or (None) is not coming: read, kept as
+    /// context for the next, and shown.
+    fn translated(&mut self, id: u64, part: usize, t: Option<String>) {
+        let Some(c) = self.captions.iter().find(|c| c.id == id) else {
+            return;
+        };
+        let Some((original, lang)) = c.parts.get(part).map(|p| (p.0.clone(), c.lang.clone()))
+        else {
+            return;
+        };
+        match t {
+            Some(t) => {
+                let target = self.settings.target_language.clone();
+                self.speak(&t, &target);
+                self.context.push_back((original, t.clone()));
+                if self.context.len() > CONTEXT_PAIRS {
+                    self.context.pop_front();
+                }
+                self.set_part(id, part, Translation::Done(t));
+            }
+            None => {
+                self.speak(&original, &lang);
+                self.set_part(id, part, Translation::Plain);
+            }
+        }
+        self.show(id);
+    }
+
+    /// Sends caption `id` as it stands: all of what was said, and the translation as far as it
+    /// has come.
+    fn show(&self, id: u64) {
+        let Some(c) = self.captions.iter().find(|c| c.id == id) else {
+            return;
+        };
+        // With the original hidden, a caption waits for the first of its translation.
+        if self.translation_only() && matches!(c.parts.first(), Some((_, Translation::Asked))) {
+            return;
+        }
+        let original: Vec<&str> = c.parts.iter().map(|p| p.0.as_str()).collect();
+        let translated: Vec<&str> = c
+            .parts
+            .iter()
+            .map_while(|p| match &p.1 {
+                Translation::Done(t) => Some(t.as_str()),
+                Translation::Plain => Some(p.0.as_str()),
+                Translation::Asked => None,
+            })
+            .collect();
+        let any = c.parts.iter().any(|p| matches!(p.1, Translation::Done(_)));
+        self.caption(CaptionUpdate::Final {
+            id,
+            original: original.join(" "),
+            translated: (any && !translated.is_empty()).then(|| translated.join(" ")),
+            lang: c.lang.clone(),
+        });
     }
 
     /// Translated only in instant mode, since translating a half sentence reorders words on
@@ -430,34 +634,20 @@ impl Core {
         };
         let request = id;
         match p {
-            Pending::Final { id, .. }
-                if self.last_final.0 == id && self.last_final.1 != request => {}
-            Pending::Final { id, original, lang } => {
-                let Some(t) = text else {
-                    self.speak(&original, &lang);
-                    // Not translated after all: better the original than nothing.
-                    if self.translation_only() {
-                        self.caption(CaptionUpdate::Final {
-                            id,
-                            original,
-                            translated: None,
-                            lang,
-                        });
+            // Not translated after all: better the original than nothing.
+            Pending::Final { id, part } => self.translated(id, part, text),
+            Pending::Ahead => {
+                // The one asked for last is the one out. A sentence that became a caption
+                // meanwhile took the request over as its own.
+                if self.ahead_out.take_if(|r| *r == request).is_some() {
+                    match (
+                        self.ahead.iter_mut().rfind(|a| a.translation.is_none()),
+                        text,
+                    ) {
+                        (Some(a), Some(t)) => a.translation = Some(t),
+                        _ => self.ahead.retain(|a| a.translation.is_some()),
                     }
-                    return;
-                };
-                let target = self.settings.target_language.clone();
-                self.speak(&t, &target);
-                self.context.push_back((original.clone(), t.clone()));
-                if self.context.len() > CONTEXT_PAIRS {
-                    self.context.pop_front();
                 }
-                self.caption(CaptionUpdate::Final {
-                    id,
-                    original,
-                    translated: Some(t),
-                    lang,
-                });
             }
             Pending::Live { version } => {
                 self.live_in_flight = false;
@@ -539,6 +729,7 @@ fn drain(
         for req in asr {
             let started = Instant::now();
             rec.set_hint(&req.hint);
+            rec.set_prefix(&req.prefix);
             let r = rec.transcribe(&req.audio, req.language.as_deref(), &req.prior);
             let ms = started.elapsed().as_millis() as u32;
             let r = match r {
@@ -764,6 +955,9 @@ impl Engine {
                 w.submit(req);
                 self.asr_busy = Some(Instant::now());
             }
+        }
+        if let (Some(id), Some((_, w))) = (self.core.tr_drop.take(), &self.tr) {
+            w.give_up(id);
         }
         for req in std::mem::take(&mut self.core.tr_out) {
             match &self.tr {
@@ -1461,6 +1655,131 @@ mod tests {
         // The paused tail became a sentence of its own.
         assert!(captions.iter().any(|c| matches!(c,
             CaptionUpdate::Final { original, translated: None, .. } if original == "How are")));
+    }
+
+    #[test]
+    fn sentences_are_translated_ahead_and_one_by_one() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let settings = Settings {
+            translate: true,
+            target_language: "tr".into(),
+            ..Settings::default()
+        };
+        let mut c = Core::new(
+            settings,
+            Events {
+                tx,
+                notify: Arc::new(|| {}),
+            },
+            false,
+        );
+        c.tr_ready = true;
+        let live = |text: &str, whole: &[&str]| Out::Live {
+            text: text.into(),
+            lang: Some("en".into()),
+            whole: whole.iter().map(|s| s.to_string()).collect(),
+        };
+        let sentence = |text: &str| Out::Sentence {
+            id: 1,
+            text: text.into(),
+            lang: Some("en".into()),
+        };
+        let finals = || -> Vec<(String, Option<String>)> {
+            rx.try_iter()
+                .filter_map(|e| match e {
+                    EngineEvent::Caption(CaptionUpdate::Final {
+                        original,
+                        translated,
+                        ..
+                    }) => Some((original, translated)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let f = |o: &str, t: &str| (o.to_string(), Some(t.to_string()));
+
+        // A sentence whole on the live line is translated before it is a caption,
+        c.apply(vec![live("Hello there.", &["Hello there."])]);
+        assert_eq!(c.tr_out.len(), 1);
+        assert_eq!(c.tr_out[0].text, "Hello there.");
+        c.translation(c.tr_out[0].id, Some("Merhaba.".into()));
+        // so that the caption comes translated, and is not asked for again.
+        c.apply(vec![sentence("Hello there.")]);
+        assert_eq!(c.tr_out.len(), 1);
+        assert_eq!(finals(), [f("Hello there.", "Merhaba.")]);
+
+        // One being translated when the live line words it another way is given up.
+        c.apply(vec![live("How is it.", &["How is it."])]);
+        let stale = c.tr_out[1].id;
+        c.apply(vec![live("How are you? I", &["How are you?"])]);
+        assert_eq!(c.tr_drop, Some(stale));
+        assert_eq!(c.tr_out[2].text, "How are you?");
+        assert_eq!(
+            c.tr_out[2].context,
+            [("Hello there.".to_string(), "Merhaba.".to_string())]
+        );
+        c.translation(stale, None);
+
+        // The caption grows while that is out: the request is its own now, only what was added
+        // is translated, and what was on the screen stays as it was.
+        c.apply(vec![sentence("Hello there. How are you?")]);
+        assert_eq!(c.tr_out.len(), 3);
+        assert_eq!(finals(), [f("Hello there. How are you?", "Merhaba.")]);
+        c.translation(c.tr_out[2].id, Some("Nasılsın?".into()));
+        assert_eq!(
+            finals(),
+            [f("Hello there. How are you?", "Merhaba. Nasılsın?")]
+        );
+
+        // A caption does not wait behind a sentence that is none yet.
+        c.apply(vec![live("See you. Bye", &["See you."])]);
+        let ahead = c.tr_out[3].id;
+        c.apply(vec![sentence("Hello there. How are you? Go.")]);
+        assert_eq!(c.tr_drop, Some(ahead));
+        assert_eq!(c.tr_out[4].text, "Go.");
+    }
+
+    #[test]
+    fn with_the_original_hidden_a_caption_shows_as_much_as_is_translated() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut settings = Settings {
+            translate: true,
+            target_language: "tr".into(),
+            ..Settings::default()
+        };
+        settings.caption.show_original = false;
+        let mut c = Core::new(
+            settings,
+            Events {
+                tx,
+                notify: Arc::new(|| {}),
+            },
+            false,
+        );
+        c.tr_ready = true;
+        let sentence = |text: &str| Out::Sentence {
+            id: 1,
+            text: text.into(),
+            lang: Some("en".into()),
+        };
+        let translated = || -> Vec<Option<String>> {
+            rx.try_iter()
+                .filter_map(|e| match e {
+                    EngineEvent::Caption(CaptionUpdate::Final { translated, .. }) => {
+                        Some(translated)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        c.apply(vec![sentence("Hello there.")]);
+        c.apply(vec![sentence("Hello there. Go.")]);
+        assert!(translated().is_empty(), "nothing to show yet");
+        c.translation(c.tr_out[0].id, Some("Merhaba.".into()));
+        assert_eq!(translated(), [Some("Merhaba.".to_string())]);
+        // One that fails is shown as it was said.
+        c.translation(c.tr_out[1].id, None);
+        assert_eq!(translated(), [Some("Merhaba. Go.".to_string())]);
     }
 
     #[test]

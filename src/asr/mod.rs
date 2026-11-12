@@ -128,6 +128,7 @@ fn run(
         let r = match engine.as_mut() {
             Some(e) => {
                 e.set_hint(&req.hint);
+                e.set_prefix(&req.prefix);
                 e.transcribe(&req.audio, req.language.as_deref(), &req.prior)
             }
             None => Err(anyhow::anyhow!("speech model not loaded")),

@@ -31,6 +31,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - A translation that arrives after its caption left no longer pops up out of order.
 - A sentence shown and then heard differently could hold back every caption after it until the speaker paused, and then show them all at once, some for the second time.
 - Words on both sides of a trailed-off sentence ("maybe... ...Tanisha") ran together.
+- With the Natural translator or a local LLM, on NVIDIA cards, Hammurabi took half a gigabyte more memory for every hour of captions.
 - While a caption faded in or out, its window could be painted thousands of times a second, which kept a processor core busy.
 - Speech cut into two stretches could show the sentences around the cut twice, and so could a recognizer that started a stretch over.
 

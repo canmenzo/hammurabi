@@ -29,9 +29,17 @@ pub struct LlmTranslator {
     hint: String,
 }
 
+/// `timeout` for each step of a request, and none for looking the host up (the system has its
+/// own). With one for the request as a whole, the client starts a thread to look the host up for
+/// every connection it makes, and NVIDIA's OpenGL driver keeps memory for every thread a process
+/// with a window ever had: half a gigabyte for an hour of captions.
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
+        .timeout_connect(Some(timeout))
+        .timeout_send_request(Some(timeout))
+        .timeout_send_body(Some(timeout))
+        .timeout_recv_response(Some(timeout))
+        .timeout_recv_body(Some(timeout))
         .http_status_as_error(false)
         .build()
         .into()

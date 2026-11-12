@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::{Context, anyhow};
-use candle_core::{DType, Device, IndexOp, Tensor};
+use candle_core::{D, DType, Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::whisper::{self as m, Config, quantized_model};
 use candle_transformers::quantized_var_builder;
@@ -18,6 +18,8 @@ const PRIOR_FLOOR: f32 = 0.01;
 const HINT_TOKENS: usize = 120;
 /// The most tokens decoding is started from. 12 s of fast talk is about 80.
 const PREFIX_TOKENS: usize = 160;
+/// How many tokens of the last run's text are tried in one go.
+const GUESS_TOKENS: usize = 64;
 
 enum Model {
     Normal(Box<model::Whisper>),
@@ -78,6 +80,12 @@ pub struct WhisperEngine {
     langs: Vec<(&'static str, u32)>,
     /// -inf for config.suppress_tokens and every special token after EOT (timestamps, no-speech, ...).
     suppress: Vec<f32>,
+    /// `suppress` on the device.
+    suppress_dev: Tensor,
+    /// What the last run wrote. The next one mostly writes the same again from a little more
+    /// audio, so these tokens are shown to the decoder as a guess: every one it would have
+    /// picked itself is a step it does not have to take.
+    last: Vec<u32>,
     sot_prev: Option<u32>,
     /// Words to expect, as text and tokens. Whisper is told they came before the audio, which
     /// steers what it hears and how it spells it.
@@ -160,7 +168,9 @@ impl WhisperEngine {
             no_speech,
             blank,
             langs,
+            suppress_dev: Tensor::new(suppress.as_slice(), device)?,
             suppress,
+            last: Vec::new(),
         })
     }
 
@@ -179,6 +189,34 @@ impl WhisperEngine {
             .i(0)?
             .i(0)?;
         Ok(logits.to_dtype(DType::F32)?.to_vec1()?)
+    }
+
+    /// Runs the decoder over `tokens` and then `guess`. Gives the logits after `tokens`, and for
+    /// each guessed token what the decoder picks after it, with its log probability: right as
+    /// long as every guessed token before it is what the decoder picked too.
+    #[allow(clippy::type_complexity)]
+    fn step(
+        &mut self,
+        tokens: &[u32],
+        guess: &[u32],
+        audio: &Tensor,
+    ) -> anyhow::Result<(Vec<f32>, Vec<(u32, f32)>)> {
+        let all = [tokens, guess].concat();
+        let t = Tensor::new(all.as_slice(), &self.device)?.unsqueeze(0)?;
+        let ys = self.model.decoder_forward(&t, audio, false)?;
+        let logits = self
+            .model
+            .final_linear(&ys.i((..1, tokens.len() - 1..))?)?
+            .i(0)?
+            .to_dtype(DType::F32)?;
+        let first = logits.i(0)?.to_vec1()?;
+        if guess.is_empty() {
+            return Ok((first, Vec::new()));
+        }
+        let rest = logits.i(1..)?.broadcast_add(&self.suppress_dev)?;
+        let top = rest.argmax(D::Minus1)?.to_vec1::<u32>()?;
+        let logp = (rest.max(D::Minus1)? - rest.log_sum_exp(D::Minus1)?)?.to_vec1::<f32>()?;
+        Ok((first, top.into_iter().zip(logp).collect()))
     }
 
     fn lang_id(&self, code: &str) -> Option<u32> {
@@ -288,28 +326,55 @@ impl Recognizer for WhisperEngine {
         let t1 = std::time::Instant::now();
         let secs = audio.len() as f32 / m::SAMPLE_RATE as f32;
         let max_new = 128.min((secs * 7.0).ceil() as usize + 8);
+        let draft = if self.last.starts_with(&self.prefix.1[..forced]) {
+            self.last[forced..].to_vec()
+        } else {
+            Vec::new()
+        };
+        // Where in the draft decoding is, and the steps to come that the last one answered.
+        let mut at = 0;
+        let mut known = VecDeque::new();
+        let mut steps = 0;
         for i in 0..max_new {
-            let mut logits = self.last_logits(&tokens, &features, false)?;
-            for (l, s) in logits.iter_mut().zip(&self.suppress) {
-                *l += s;
-            }
-            if i == 0 && forced == 0 {
-                logits[self.eot as usize] = f32::NEG_INFINITY;
-                if let Some(b) = self.blank {
-                    logits[b as usize] = f32::NEG_INFINITY;
+            let (next, logp) = match known.pop_front() {
+                Some(k) => k,
+                None => {
+                    let guess = &draft[at.min(draft.len())..];
+                    let guess = &guess[..guess.len().min(GUESS_TOKENS)];
+                    let (mut logits, rest) = self.step(&tokens, guess, &features)?;
+                    steps += 1;
+                    known.extend(rest);
+                    for (l, s) in logits.iter_mut().zip(&self.suppress) {
+                        *l += s;
+                    }
+                    if i == 0 && forced == 0 {
+                        logits[self.eot as usize] = f32::NEG_INFINITY;
+                        if let Some(b) = self.blank {
+                            logits[b as usize] = f32::NEG_INFINITY;
+                        }
+                    }
+                    let next = logits
+                        .iter()
+                        .enumerate()
+                        .max_by(|a, b| a.1.total_cmp(b.1))
+                        .map_or(self.eot, |(i, _)| i as u32);
+                    let max = logits[next as usize];
+                    (next, -logits.iter().map(|v| (v - max).exp()).sum::<f32>().ln())
                 }
-            }
-            let next = logits
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.total_cmp(b.1))
-                .map_or(self.eot, |(i, _)| i as u32);
+            };
             if next == self.eot {
                 break;
             }
-            let max = logits[next as usize];
-            logprob -= logits.iter().map(|v| (v - max).exp()).sum::<f32>().ln();
+            logprob += logp;
             tokens.push(next);
+            if draft.get(at) == Some(&next) {
+                at += 1;
+            } else {
+                known.clear();
+                // A word heard differently mostly leaves the ones after it as they were.
+                let ahead = draft[at.min(draft.len())..].iter().take(4);
+                at += ahead.clone().position(|&t| t == next).unwrap_or(0) + 1;
+            }
             if let Some(extra) = repeated_tail(&tokens[prompt_len..]) {
                 tokens.truncate(tokens.len() - extra);
                 break;
@@ -317,6 +382,7 @@ impl Recognizer for WhisperEngine {
         }
         let period = loop_period(&tokens[prompt_len..]);
         tokens.truncate(prompt_len + period);
+        self.last = tokens[prompt_len..].to_vec();
         let text = self
             .tokenizer
             .decode(&tokens[prompt_len..], true)
@@ -325,7 +391,7 @@ impl Recognizer for WhisperEngine {
         // What decoding started from counts as certain.
         let n = (tokens.len() - prompt_len).max(1) as f32;
         log::debug!(
-            "asr {secs:.1}s enc {}ms dec {}ms/{n} ({forced} given) logprob {:.2} conf {lang_conf:.2}: {}",
+            "asr {secs:.1}s enc {}ms dec {}ms/{n} ({forced} given, {steps} steps) logprob {:.2} conf {lang_conf:.2}: {}",
             (t1 - t0).as_millis(),
             t1.elapsed().as_millis(),
             logprob / n,

@@ -10,13 +10,14 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Captions as a web page, for streams: turn it on in Settings > Captions and add `http://127.0.0.1:7460` to OBS as a Browser source. The caption window itself is not part of a captured game or capture card.
 - Lock in place (Settings > Captions): captions cannot be dragged, so a click on one always reaches the game under it.
 - Words to expect (Settings > Listen): names and unusual words, so they are heard and spelled right.
-- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about 0.4 s later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download). When the graphics card is too busy for it and captions fall behind, Turbo takes over until another model is chosen.
+- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about a quarter of a second later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download). When the graphics card is too busy for it and captions fall behind, Turbo takes over until another model is chosen.
 
 ### Changed
 
 - Speech is found by a voice detector instead of by loudness. Talk under music, engines and gunfire is now captioned, and loud sound that is not speech is left alone. Sound too loud for the detector to make out is still recognized, and kept only when it reads as speech.
 - Speech is recognized in longer stretches, with the quiet end of each word kept, so fewer words are cut or misheard.
 - On a GPU, captions come sooner, by a tenth to a quarter of a second on a fast card. The open sentence is listened to up to ten times a second instead of twice, a run starts from what is already shown instead of hearing it again, and a fifth of a second of quiet is enough to end a sentence that two runs agree on.
+- The recognizer no longer writes out again what it wrote a moment ago. It is shown the last run's words as a guess and takes a step only where it now hears something else, so a run takes a third to a half of the time for the same words: captions come up to 0.1 s sooner with Turbo and 0.2 to 0.3 s sooner with Large.
 - A caption comes with its translation instead of a moment before it, a third of a second sooner in all: a sentence is translated while it is still being said, and the translator gives up one that was heard differently since.
 - A caption that grows keeps the translation it has. Only the sentence added is translated, so what is on the screen is not worded anew.
 - The Natural translator lets everything else on the graphics card go first: speech recognition, which ran three to five times slower while a translation was written, a game, a stream being encoded. When that leaves it nothing, it takes its turn like before.

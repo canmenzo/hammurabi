@@ -37,7 +37,7 @@ To put captions on a stream, turn on **Settings > Captions > Captions as a web p
 
 For games and films, pick the **Natural** translator in Settings > Translate (Windows, needs a graphics card): it reads slang and tone where the fast one translates word for word.
 
-Where every word counts and the graphics card has room, pick the **Large** speech model in Settings > Listen: it hears fast, slangy talk noticeably better, about a third of a second later.
+Where every word counts and the graphics card has room, pick the **Large** speech model in Settings > Listen: it hears fast, slangy talk noticeably better, about 0.4 s later.
 
 For a console on a capture card, set **Settings > Listen** to Microphone and pick the card, so that Hammurabi hears the game itself and not what the PC plays.
 

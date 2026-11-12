@@ -10,7 +10,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Captions as a web page, for streams: turn it on in Settings > Captions and add `http://127.0.0.1:7460` to OBS as a Browser source. The caption window itself is not part of a captured game or capture card.
 - Lock in place (Settings > Captions): captions cannot be dragged, so a click on one always reaches the game under it.
 - Words to expect (Settings > Listen): names and unusual words, so they are heard and spelled right.
-- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about a third of a second later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download).
+- A Large speech model (Settings > Listen): the full Whisper large-v3. In fast, slangy speech it hears about a third fewer words wrong than Turbo. Captions come about 0.4 s later with it, and it takes 3.5 GB of graphics memory instead of 2 (a 3 GB download).
 
 ### Changed
 
@@ -35,6 +35,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 - Words on both sides of a trailed-off sentence ("maybe... ...Tanisha") ran together.
 - With the Natural translator or a local LLM, on NVIDIA cards, Hammurabi took half a gigabyte more memory for every hour of captions.
 - While a caption faded in or out, its window could be painted thousands of times a second, which kept a processor core busy.
+- A few words said twice in a row ("he don't wanna be a gangster, he wanna be a gangster") were taken for the recognizer going in circles, and the rest of what was said until the next pause was lost.
 - Speech cut into two stretches could show the sentences around the cut twice, and so could a recognizer that started a stretch over.
 
 ## [0.5.0] - 2026-11-09

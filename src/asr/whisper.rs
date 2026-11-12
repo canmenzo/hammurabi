@@ -310,8 +310,8 @@ impl Recognizer for WhisperEngine {
             let max = logits[next as usize];
             logprob -= logits.iter().map(|v| (v - max).exp()).sum::<f32>().ln();
             tokens.push(next);
-            if let Some(n) = repeated_tail(&tokens[prompt_len..]) {
-                tokens.truncate(tokens.len() - n);
+            if let Some(extra) = repeated_tail(&tokens[prompt_len..]) {
+                tokens.truncate(tokens.len() - extra);
                 break;
             }
         }
@@ -342,9 +342,25 @@ impl Recognizer for WhisperEngine {
     }
 }
 
-/// Length of a run of 3+ tokens that the sequence just repeated back to back (a decoding loop).
+/// A run this long said twice back to back is a decoding loop; a shorter one has to come three
+/// times, since people do say a few words twice ("he don't wanna be a gangster, he wanna be a
+/// gangster", after which the rest of what was said used to be lost).
+const LOOP_LONG: usize = 10;
+
+/// How many tokens at the end of the sequence are a decoding loop's copies of the run before
+/// them: a run of 3+ tokens repeated back to back.
 fn repeated_tail(t: &[u32]) -> Option<usize> {
-    (3..=t.len() / 2).find(|&n| t[t.len() - n..] == t[t.len() - 2 * n..t.len() - n])
+    let copies = |n: usize, k: usize| {
+        t.len() >= (k + 1) * n
+            && (1..=k).all(|i| t[t.len() - n..] == t[t.len() - (i + 1) * n..t.len() - i * n])
+    };
+    (3..=t.len() / 2).find_map(|n| {
+        if n >= LOOP_LONG && copies(n, 1) {
+            Some(n)
+        } else {
+            copies(n, 2).then_some(2 * n)
+        }
+    })
 }
 
 /// Whisper loops back to its first word when it runs out of audio ("A B C. A B"): the
@@ -360,8 +376,13 @@ mod tests {
     #[test]
     fn repeated_tail() {
         use super::repeated_tail;
-        assert_eq!(repeated_tail(&[1, 2, 3, 4, 2, 3, 4]), Some(3));
-        assert_eq!(repeated_tail(&[9, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5]), Some(5));
+        // A few tokens said twice are speech; three times, a loop, of which one copy stays.
+        assert_eq!(repeated_tail(&[1, 2, 3, 4, 2, 3, 4]), None);
+        assert_eq!(repeated_tail(&[1, 2, 3, 4, 2, 3, 4, 2, 3, 4]), Some(6));
+        assert_eq!(repeated_tail(&[9, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5]), None);
+        // A long run twice is one.
+        let long: Vec<u32> = (0..12).chain(0..12).collect();
+        assert_eq!(repeated_tail(&long), Some(12));
         assert_eq!(repeated_tail(&[1, 1, 1, 1]), None);
         assert_eq!(repeated_tail(&[1, 2, 3, 4, 5, 6]), None);
     }

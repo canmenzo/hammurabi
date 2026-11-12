@@ -22,8 +22,9 @@ const CAPTION_CHARS: usize = 84;
 const SETTLE: Duration = Duration::from_millis(400);
 /// Partials a sentence is looked for in.
 const HEARD: usize = 4;
-/// This many words in a row that were shown already are Whisper starting over.
-const RERUN: usize = 5;
+/// This many words in a row that were shown already are Whisper starting over. Fewer are
+/// people saying a thing twice.
+const RERUN: usize = 8;
 
 static TERMINATOR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"[.!?…。！？]["'”’)\]]*$"#).unwrap());
@@ -567,7 +568,7 @@ mod tests {
         // A few words said again are just that.
         let words = w(
             "I'm the king of things. I ain't talking to you. Hey, let's go. I ain't \
-            talking, man.",
+            talking to you, man.",
         );
         assert_eq!(rerun(&words, 13, &shown), None);
 
@@ -576,12 +577,20 @@ mod tests {
             separate: true,
             ..Default::default()
         };
-        a.partial(1, w("I ain't talking to you now. Hey"), "en", t);
-        a.partial(1, w("I ain't talking to you now. Hey man"), "en", t);
+        a.partial(1, w("I ain't talking to you right now, okay? Hey"), "en", t);
+        a.partial(
+            1,
+            w("I ain't talking to you right now, okay? Hey man"),
+            "en",
+            t,
+        );
         let o = a.finish(
             1,
             Some((
-                w("I ain't talking to you now. Hey man. I ain't talking to you now. Hey man."),
+                w(
+                    "I ain't talking to you right now, okay? Hey man. I ain't talking to you \
+                    right now, okay? Hey man.",
+                ),
                 "en".into(),
             )),
             t,

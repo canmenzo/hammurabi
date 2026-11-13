@@ -165,7 +165,11 @@ fn sim(a: &[char], b: &[char]) -> f32 {
 fn pick(lines: &[Line], w: f32) -> Option<Block> {
     let mut lines: Vec<&Line> = lines
         .iter()
-        .filter(|l| (H_MIN * w..=H_MAX * w).contains(&(l.y1 - l.y0)) && !key(&l.text).is_empty())
+        .filter(|l| {
+            // A subtitle has a letter: a lone digit or dash is something else on the screen.
+            (H_MIN * w..=H_MAX * w).contains(&(l.y1 - l.y0))
+                && l.text.chars().any(char::is_alphabetic)
+        })
         .collect();
     lines.sort_by(|a, b| (a.y0 + a.y1).total_cmp(&(b.y0 + b.y1)));
     let mut rows: Vec<Line> = Vec::new();

@@ -5,7 +5,7 @@ use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible,
+    IsWindowVisible, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
 };
 use windows::core::BOOL;
 
@@ -46,6 +46,27 @@ pub fn find(part: &str) -> Option<HWND> {
             title.to_lowercase().contains(&part) && !unsafe { IsIconic(*w) }.as_bool()
         })
         .map(|(w, _)| w)
+}
+
+/// Keeps Hammurabi's own windows out of pictures taken of a display, or lets them in again:
+/// its captions are white text at the bottom of a display too, and would be read as a game's
+/// subtitles. They stay on the display itself. (Not before Windows 10 2004, where this fails
+/// and they are in the picture.)
+pub fn keep_own_out(out: bool) {
+    unsafe extern "system" fn each(w: HWND, out: LPARAM) -> BOOL {
+        let mut process = 0u32;
+        unsafe { GetWindowThreadProcessId(w, Some(&mut process)) };
+        if process == std::process::id() {
+            let affinity = if out.0 != 0 {
+                WDA_EXCLUDEFROMCAPTURE
+            } else {
+                WDA_NONE
+            };
+            let _ = unsafe { SetWindowDisplayAffinity(w, affinity) };
+        }
+        true.into()
+    }
+    let _ = unsafe { EnumWindows(Some(each), LPARAM(isize::from(out))) };
 }
 
 pub fn primary_display() -> HMONITOR {

@@ -86,7 +86,16 @@ mod source {
         tx: &Sender<ScreenEvent>,
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
-        let (target, name) = if window.is_empty() {
+        let display = window.is_empty();
+        // Lets Hammurabi's windows into pictures of the display again when reading ends.
+        struct Own;
+        impl Drop for Own {
+            fn drop(&mut self) {
+                windows::keep_own_out(false);
+            }
+        }
+        let _own = display.then_some(Own);
+        let (target, name) = if display {
             (
                 Target::Display(windows::primary_display()),
                 "the main display".to_string(),
@@ -106,8 +115,14 @@ mod source {
         // The prepared picture read last and the lines in it: a picture that stands still is
         // read once.
         let mut read = (Vec::new(), Vec::new());
+        let mut pictures = 0u32;
         while !stop.load(Ordering::Relaxed) {
             let t = Instant::now();
+            // Once a second, for the windows opened since.
+            if display && pictures.is_multiple_of(10) {
+                windows::keep_own_out(true);
+            }
+            pictures += 1;
             match capture.band(band.0, band.1)? {
                 Some(new) => image = Some(new),
                 None if capture.alive() => {}

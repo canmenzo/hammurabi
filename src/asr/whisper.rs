@@ -359,7 +359,10 @@ impl Recognizer for WhisperEngine {
                         .max_by(|a, b| a.1.total_cmp(b.1))
                         .map_or(self.eot, |(i, _)| i as u32);
                     let max = logits[next as usize];
-                    (next, -logits.iter().map(|v| (v - max).exp()).sum::<f32>().ln())
+                    (
+                        next,
+                        -logits.iter().map(|v| (v - max).exp()).sum::<f32>().ln(),
+                    )
                 }
             };
             if next == self.eot {

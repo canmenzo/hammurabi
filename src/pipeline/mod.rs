@@ -1405,7 +1405,11 @@ impl Engine {
                 });
                 if self.asr_errors >= ASR_MAX_ERRORS {
                     self.restart_asr("Speech model keeps failing, reloading");
-                } else if self.asr.as_ref().is_some_and(|(k, _)| k.0 == ModelChoice::Large) {
+                } else if self
+                    .asr
+                    .as_ref()
+                    .is_some_and(|(k, _)| k.0 == ModelChoice::Large)
+                {
                     self.large_took(ms);
                 }
             }

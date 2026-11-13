@@ -477,15 +477,17 @@ impl Assembler {
             return None;
         }
         let key = |w: &[String]| -> Vec<String> {
-            w.iter().map(|w| norm(w)).filter(|w| !w.is_empty()).collect()
+            w.iter()
+                .map(|w| norm(w))
+                .filter(|w| !w.is_empty())
+                .collect()
         };
         let from = said[..said.len().saturating_sub(1)]
             .iter()
             .rposition(|w| ends_sentence(w))
             .map_or(0, |i| i + 1);
         let (short, whole) = (key(&said[from..]), key(words));
-        (short.len() >= 2 && whole.len() > short.len() && whole.starts_with(&short))
-            .then_some(from)
+        (short.len() >= 2 && whole.len() > short.len() && whole.starts_with(&short)).then_some(from)
     }
 
     fn emit(&mut self, out: &mut Vec<Out>, words: Vec<String>, lang: Option<String>, now: Instant) {
@@ -805,7 +807,11 @@ mod tests {
         assert_eq!(sentences(&o2), ["No. No way, man."]);
         a.separate = true;
         a.finish(5, Some((w("Get out."), "en".into())), t + 3 * JOIN_WITHIN);
-        let o = a.finish(6, Some((w("Get out of here."), "en".into())), t + 3 * JOIN_WITHIN);
+        let o = a.finish(
+            6,
+            Some((w("Get out of here."), "en".into())),
+            t + 3 * JOIN_WITHIN,
+        );
         assert_eq!(sentences(&o), ["Get out of here."]);
         assert!(matches!(&o[0], Out::Sentence { id: 4, .. }));
     }

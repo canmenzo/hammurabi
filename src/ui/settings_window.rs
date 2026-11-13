@@ -601,17 +601,17 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     ui.label("Subtitle area");
     ui.horizontal(|ui| {
         let (mut top, mut bottom) = (s.screen_top * 100.0, s.screen_bottom * 100.0);
+        ui.label("from");
         let a = ui.add(
             egui::Slider::new(&mut top, 0.0..=95.0)
                 .fixed_decimals(0)
-                .suffix("%")
-                .text("from"),
+                .suffix("%"),
         );
+        ui.label("to");
         let b = ui.add(
             egui::Slider::new(&mut bottom, 5.0..=100.0)
                 .fixed_decimals(0)
-                .suffix("%")
-                .text("to"),
+                .suffix("%"),
         );
         if a.changed() || b.changed() {
             s.screen_top = (top / 100.0).min(0.95);

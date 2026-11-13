@@ -1,18 +1,30 @@
 //! The windows and displays there are to read from.
 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT};
+use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsIconic, IsWindowVisible,
+    EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible,
 };
 use windows::core::BOOL;
 
-/// Every visible window with a title, front to back.
+/// Every window with a title that can be seen, front to back: not Hammurabi's own, and not
+/// the ones Windows keeps cloaked (its input panel, apps on another desktop).
 pub fn list() -> Vec<(HWND, String)> {
     unsafe extern "system" fn each(w: HWND, out: LPARAM) -> BOOL {
         let out = unsafe { &mut *(out.0 as *mut Vec<(HWND, String)>) };
         let n = unsafe { GetWindowTextLengthW(w) };
-        if n > 0 && unsafe { IsWindowVisible(w) }.as_bool() {
+        let (mut process, mut cloaked) = (0u32, 0u32);
+        unsafe {
+            GetWindowThreadProcessId(w, Some(&mut process));
+            let _ = DwmGetWindowAttribute(w, DWMWA_CLOAKED, (&raw mut cloaked).cast(), 4);
+        }
+        if n > 0
+            && unsafe { IsWindowVisible(w) }.as_bool()
+            && process != std::process::id()
+            && cloaked == 0
+        {
             let mut buf = vec![0u16; n as usize + 1];
             let n = unsafe { GetWindowTextW(w, &mut buf) };
             out.push((w, String::from_utf16_lossy(&buf[..n.max(0) as usize])));

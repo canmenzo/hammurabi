@@ -194,9 +194,13 @@ fn pick(lines: &[Line], w: f32) -> Option<Block> {
     let mut lines: Vec<&Line> = lines
         .iter()
         .filter(|l| {
-            // A subtitle has a letter: a lone digit or dash is something else on the screen.
+            // A subtitle has a word of letters: a lone digit, a dash or a number plate
+            // ("FC1988") is something else on the screen.
             (H_MIN * w..=H_MAX * w).contains(&(l.y1 - l.y0))
-                && l.text.chars().any(char::is_alphabetic)
+                && l.text.split_whitespace().any(|word| {
+                    let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+                    !word.is_empty() && !word.chars().any(|c| c.is_numeric())
+                })
         })
         .collect();
     lines.sort_by(|a, b| (a.y0 + a.y1).total_cmp(&(b.y0 + b.y1)));
@@ -788,6 +792,16 @@ mod tests {
     fn a_full_stop_before_a_small_letter_is_a_comma() {
         assert_eq!(commas("Man. get in. Now."), "Man, get in. Now.");
         assert_eq!(commas("I... mean... no. I do."), "I... mean... no. I do.");
+    }
+
+    #[test]
+    fn a_number_plate_is_not_a_subtitle() {
+        assert_eq!(picked(&[line("FC1988")]), None);
+        assert_eq!(picked(&[line("- 7")]), None);
+        assert_eq!(
+            picked(&[line("I... I got 5 of 'em.")]).as_deref(),
+            Some("I... I got 5 of 'em.")
+        );
     }
 
     #[test]

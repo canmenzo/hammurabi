@@ -10,6 +10,12 @@ use crate::types::Translate;
 const USER_AGENT: &str = "OpenAI File Downloader, XaiImageApiFetch/1.0";
 /// The longest caption translates to about half of this; more is a model that will not stop.
 const MAX_TOKENS: u32 = 64;
+/// What our own server gets to answer a line of up to `OWN_CHARS` characters, and how much more
+/// for each character over that: it writes some forty characters a second while a stream is encoded
+/// beside it.
+const OWN_TIMEOUT: Duration = Duration::from_secs(3);
+const OWN_CHARS: usize = 60;
+const OWN_PER_CHAR: Duration = Duration::from_millis(30);
 const HINT_CHARS: usize = 600;
 /// For targets in the Latin alphabet, our own server may only write Latin letters, punctuation
 /// and symbols. Once in thousands of lines the model ends a word in East Asian punctuation.
@@ -58,7 +64,7 @@ impl LlmTranslator {
     /// graphics memory is full; the caption goes out untranslated instead of that late.
     pub fn own(base_url: &str) -> Self {
         Self {
-            agent: agent(Duration::from_secs(3)),
+            agent: agent(OWN_TIMEOUT),
             own: true,
             ..Self::new(base_url, "")
         }
@@ -254,11 +260,20 @@ impl Translate for LlmTranslator {
                 body["grammar"] = json!(LATIN_GRAMMAR);
             }
         }
-        let mut resp = self
+        let mut request = self
             .agent
             .post(&format!("{}/chat/completions", self.base_url))
             .header("User-Agent", USER_AGENT)
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+        if self.own {
+            // A long line takes longer to write than the time a short one is given.
+            let over = text.chars().count().saturating_sub(OWN_CHARS) as u32;
+            request = request
+                .config()
+                .timeout_recv_body(Some(OWN_TIMEOUT + OWN_PER_CHAR * over))
+                .build();
+        }
+        let mut resp = request
             .send(body.to_string())
             .context("LLM request failed")?;
         let status = resp.status();

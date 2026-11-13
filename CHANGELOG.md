@@ -8,6 +8,11 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - The Natural translator says what the speaker said. It used to turn the N-word into a friendly form of address or "that word", and a filter replaced it wherever the model had kept it; both are gone. Profanity and slurs keep their strength, nothing is softened or swapped for a politer word, and the N-word stays in the caption as it was said.
 
+### Fixed
+
+- Subtitles on screen: a subtitle of two full rows came out untranslated beside a stream, because the language model takes longer over that many words than a line was given. A long subtitle is now translated sentence by sentence, the first shown while the rest is written, and a long sentence is given more time.
+- Subtitles on screen no longer takes a number plate in the middle of the picture ("FC1988") for a subtitle: a line has to have a word made of letters.
+
 ## [0.7.1] - 2026-11-13
 
 ### Changed

@@ -41,6 +41,11 @@ const FRAME: Duration = Duration::from_millis(100);
 /// WASAPI loopback sends nothing while nothing plays; after this gap silence is injected.
 const SILENCE_AFTER: Duration = Duration::from_millis(300);
 const CONTEXT_PAIRS: usize = 4;
+/// A subtitle longer than this is translated sentence by sentence: two full rows take the
+/// language model seconds, which the first sentence need not wait for.
+const SPLIT_CHARS: usize = 60;
+/// A sentence shorter than this ("W...") stays with what follows it.
+const PIECE_CHARS: usize = 12;
 /// Captions whose translations may still come.
 const CAPTIONS: usize = 4;
 /// Live Captions does not report what it hears (its language is set in Windows); English is
@@ -279,12 +284,12 @@ impl Core {
         self.rolling.reseed(text, now);
     }
 
-    /// A subtitle read off the screen: a caption as it stands.
+    /// A subtitle read off the screen: a caption as it stands, a long one sentence by sentence.
     fn screen_line(&mut self, text: String, now: Instant) {
         let lang = self.settings.spoken_language.clone();
         let out = self
             .asm
-            .external(vec![text], None, lang.as_deref().unwrap_or("en"), now);
+            .external(pieces(&text), None, lang.as_deref().unwrap_or("en"), now);
         self.apply(out);
     }
 
@@ -1777,9 +1782,55 @@ impl EngineHandle {
     }
 }
 
+/// The sentences of a subtitle longer than `SPLIT_CHARS`; a shorter one whole.
+fn pieces(text: &str) -> Vec<String> {
+    if text.chars().count() <= SPLIT_CHARS {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for w in text.split_whitespace() {
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(w);
+        if assembler::ends_sentence(w) && cur.chars().count() >= PIECE_CHARS {
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    match out.last_mut() {
+        Some(last) if !cur.is_empty() && cur.chars().count() < PIECE_CHARS => {
+            last.push(' ');
+            last.push_str(&cur);
+        }
+        _ if !cur.is_empty() => out.push(cur),
+        _ => {}
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_subtitle_goes_on_sentence_by_sentence() {
+        assert_eq!(pieces("W... wait a second."), ["W... wait a second."]);
+        assert_eq!(
+            pieces(
+                "This chump change. How am I gonna knock a bad bitch, if I don't got a fat pocket?"
+            ),
+            [
+                "This chump change.",
+                "How am I gonna knock a bad bitch, if I don't got a fat pocket?"
+            ]
+        );
+        // Sentences too short to translate alone stay with their neighbours.
+        assert_eq!(
+            pieces("No. No, I'm not calling anybody that, I would never say such a thing. Ever."),
+            ["No. No, I'm not calling anybody that, I would never say such a thing. Ever."]
+        );
+    }
 
     #[test]
     fn ending_the_engine_is_noticed_and_wakes_the_ui() {

@@ -7,6 +7,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 ### Changed
 
 - The Natural translator says what the speaker said. It used to turn the N-word into a friendly form of address or "that word", and a filter replaced it wherever the model had kept it; both are gone. Profanity and slurs keep their strength, nothing is softened or swapped for a politer word, and the N-word stays in the caption as it was said.
+- Subtitles on screen says so when the window it reads is minimized, where it used to go quiet: a minimized window is not drawn, so nothing can be read from it until it is brought back.
 
 ### Fixed
 

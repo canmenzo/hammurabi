@@ -1550,6 +1550,15 @@ impl Engine {
                     );
                 }
             }
+            ScreenEvent::Minimized(from) => {
+                if self.running {
+                    self.events().status(
+                        StatusLevel::Warning,
+                        format!("The window {from} is minimized: bring it back to have its subtitles read"),
+                        None,
+                    );
+                }
+            }
             ScreenEvent::Line(text) => {
                 if self.running {
                     self.core.screen_line(text, Instant::now());

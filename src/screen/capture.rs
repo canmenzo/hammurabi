@@ -22,7 +22,7 @@ use windows::Win32::System::WinRT::Direct3D11::{
     CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow};
 use windows::core::{Interface, factory};
 
 /// Rows of pixels, four bytes each: blue, green, red, alpha.
@@ -201,6 +201,12 @@ impl Capture {
     pub fn alive(&self) -> bool {
         self.window
             .is_none_or(|w| unsafe { IsWindow(Some(w)) }.as_bool())
+    }
+
+    /// A minimized window is not drawn, so no picture of it comes.
+    pub fn minimized(&self) -> bool {
+        self.window
+            .is_some_and(|w| unsafe { IsIconic(w) }.as_bool())
     }
 }
 

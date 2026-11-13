@@ -17,6 +17,8 @@ pub enum ScreenEvent {
     Ready(String),
     /// The window to read is not open, or was closed: it is looked for until it is.
     Waiting(String),
+    /// The window to read is minimized: nothing can be read until it is brought back.
+    Minimized(String),
     /// A subtitle, once.
     Line(String),
     Error(String),
@@ -102,7 +104,7 @@ mod source {
             let _own = Own;
             let capture = Capture::start(&Target::Display(windows::primary_display()))?;
             let _ = tx.send(ScreenEvent::Ready("the main display".into()));
-            return read(capture, true, band, &ocr, tx, stop);
+            return read(capture, None, band, &ocr, tx, stop);
         }
         // A window comes and goes (a game restarted, a projector closed by mistake): it is
         // read whenever it is there.
@@ -113,7 +115,7 @@ mod source {
                 Some(Ok(capture)) => {
                     let _ = tx.send(ScreenEvent::Ready(name.clone()));
                     waiting = false;
-                    read(capture, false, band, &ocr, tx, stop)?;
+                    read(capture, Some(&name), band, &ocr, tx, stop)?;
                     continue;
                 }
                 Some(Err(e)) => log::debug!("screen: {name} cannot be captured: {e:#}"),
@@ -128,10 +130,11 @@ mod source {
         Ok(())
     }
 
-    /// Reads what is captured until told to stop, or until a window is gone.
+    /// Reads what is captured, a display or the `window` of that name, until told to stop or
+    /// until the window is gone.
     fn read(
         mut capture: Capture,
-        display: bool,
+        window: Option<&str>,
         band: (f32, f32),
         ocr: &Ocr,
         tx: &Sender<ScreenEvent>,
@@ -145,6 +148,8 @@ mod source {
         // read once.
         let mut read = [(Vec::new(), Vec::new()), (Vec::new(), Vec::new())];
         let mut pictures = 0u32;
+        let display = window.is_none();
+        let mut minimized = false;
         while !stop.load(Ordering::Relaxed) {
             let t = Instant::now();
             // Once a second, for the windows opened since.
@@ -152,6 +157,16 @@ mod source {
                 windows::keep_own_out(true);
             }
             pictures += 1;
+            if let Some(name) = window
+                && capture.minimized() != minimized
+            {
+                minimized = !minimized;
+                let _ = tx.send(if minimized {
+                    ScreenEvent::Minimized(name.to_string())
+                } else {
+                    ScreenEvent::Ready(name.to_string())
+                });
+            }
             match capture.band(band.0, band.1) {
                 Ok(Some(new)) => image = Some(new),
                 Ok(None) if capture.alive() => {}

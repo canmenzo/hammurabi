@@ -141,9 +141,9 @@ mod source {
         // The newest picture: Windows gives one only when something was drawn.
         let mut image = None;
         let mut reader: Option<(usize, usize, Reader)> = None;
-        // The prepared picture read last and the lines in it: a picture that stands still is
+        // The two pictures read last and the lines in them: a picture that stands still is
         // read once.
-        let mut read = (Vec::new(), Vec::new());
+        let mut read = [(Vec::new(), Vec::new()), (Vec::new(), Vec::new())];
         let mut pictures = 0u32;
         while !stop.load(Ordering::Relaxed) {
             let t = Instant::now();
@@ -169,11 +169,14 @@ mod source {
                     slot => &mut slot.insert((size.0, size.1, Reader::new(size.0, size.1))).2,
                 };
                 let (w, h) = reader.size();
-                let grey = reader.prepare(&image.bgra);
-                if grey != read.0 {
-                    read = (grey.to_vec(), ocr.read(grey, w, h)?);
+                let (prepared, plain) = reader.prepare(&image.bgra);
+                for (picture, read) in [prepared, plain].into_iter().zip(&mut read) {
+                    if picture != read.0 {
+                        *read = (picture.to_vec(), ocr.read(picture, w, h)?);
+                    }
                 }
-                if let Some((_, line)) = reader.read((t - t0).as_secs_f64(), &read.1) {
+                let at = (t - t0).as_secs_f64();
+                if let Some((_, line)) = reader.read(at, &read[0].1, &read[1].1) {
                     log::debug!("screen: {line:?}");
                     if tx.send(ScreenEvent::Line(line)).is_err() {
                         break;

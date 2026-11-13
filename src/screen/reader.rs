@@ -71,6 +71,9 @@ const LATE_N: usize = 4;
 const LATE_FRAC: f32 = 0.5;
 /// Readings kept of one subtitle.
 const READS_MAX: usize = 64;
+/// Letters less white than this (`Prep::whiteness`) are read in the plain picture: white
+/// subtitles measure 0.45 to 1, a game's thin off-white ones 0.1 to 0.25.
+const WHITE_MIN: f32 = 0.35;
 
 /// The width the band is read at. What counts as white and how the text recognition reads
 /// were set on pictures this wide; a smaller window's band is enlarged to it first, which
@@ -85,6 +88,10 @@ pub struct Reader {
     height: usize,
     resize: Option<Resize>,
     prep: Prep,
+    /// The band as it is, one byte a pixel.
+    plain: Vec<u8>,
+    /// How white the letters read lately were (`Prep::whiteness`); None before any were.
+    white: Option<f32>,
     tracker: Tracker,
 }
 
@@ -102,29 +109,50 @@ impl Reader {
             height: to.1,
             resize: (to != (width, height)).then(|| Resize::new((width, height), to)),
             prep: Prep::new(to.0, to.1),
+            plain: vec![0; to.0 * to.1],
+            white: None,
             tracker: Tracker::default(),
         }
     }
 
-    /// The width and height of the picture `prepare` gives.
+    /// The width and height of the pictures `prepare` gives.
     pub fn size(&self) -> (usize, usize) {
         (self.width, self.height)
     }
 
-    /// The band (four bytes a pixel: blue, green, red, alpha) as the picture the text
-    /// recognition is to read: one byte a pixel.
-    pub fn prepare(&mut self, bgra: &[u8]) -> &[u8] {
-        match &mut self.resize {
-            Some(resize) => self.prep.prepare(resize.run(bgra)),
-            None => self.prep.prepare(bgra),
+    /// The band (four bytes a pixel: blue, green, red, alpha) as the two pictures the text
+    /// recognition is to read, one byte a pixel: prepared, with only what is white, thin and
+    /// still as ink, and as it is. The first tells white subtitles from a bright scene behind
+    /// them. The second reads what the first is not made for: thin, off-white or coloured
+    /// letters, which games that use them set on a dark ground.
+    pub fn prepare(&mut self, bgra: &[u8]) -> (&[u8], &[u8]) {
+        let bgra = match &mut self.resize {
+            Some(resize) => resize.run(bgra),
+            None => bgra,
+        };
+        for (grey, p) in self.plain.iter_mut().zip(bgra.as_chunks::<4>().0) {
+            let [b, g, r] = [p[0], p[1], p[2]].map(u32::from);
+            *grey = ((r * 77 + g * 150 + b * 29) >> 8) as u8;
         }
+        (self.prep.prepare(bgra), &self.plain)
     }
 
-    /// What was read in that picture, `t` seconds in. Gives a subtitle once it is sure of it,
-    /// with the time it was first seen.
-    pub fn read(&mut self, t: f64, lines: &[Line]) -> Option<(f64, String)> {
-        let block = pick(lines, self.width as f32);
+    /// What was read in those two pictures, `t` seconds in. Gives a subtitle once it is sure
+    /// of it, with the time it was first seen.
+    pub fn read(&mut self, t: f64, lines: &[Line], plain: &[Line]) -> Option<(f64, String)> {
+        let width = self.width as f32;
+        let block = pick(lines, width);
         self.prep.feedback(block.as_ref(), lines);
+        let plain = pick(plain, width);
+        if let Some(now) = plain.as_ref().and_then(|b| self.prep.whiteness(b)) {
+            self.white = Some(self.white.map_or(now, |was| 0.8 * was + 0.2 * now));
+        }
+        // The prepared picture's reading where the letters are white, the plain one's else.
+        let block = if self.white.is_some_and(|w| w < WHITE_MIN) {
+            plain
+        } else {
+            block
+        };
         self.tracker.feed(t, block, self.prep.changed)
     }
 }

@@ -19,6 +19,8 @@ const STROKE: f32 = 1.0 / 320.0;
 const K_MAX: u8 = 8;
 /// The subtitle changed when less than this share of its pixels (of at least `COLLAPSE_MIN`)
 /// lasted into a picture.
+/// Bright pixels in thin strokes a subtitle has to have for its whiteness to be told.
+const WHITE_OF: usize = 100;
 const COLLAPSE: f32 = 0.5;
 const COLLAPSE_MIN: usize = 40;
 /// Pictures without a subtitle before where it stood is forgotten.
@@ -48,8 +50,9 @@ pub struct Prep {
     age_w: Vec<u8>,
     age_g: Vec<u8>,
     age_x: Vec<u8>,
-    /// The last picture's letter pixels.
+    /// The last picture's letter pixels, and each pixel's darkest channel.
     letters: Vec<bool>,
+    dark: Vec<u8>,
     /// A subtitle was found lately, in this many pictures in a row,
     alive: bool,
     seen: u8,
@@ -78,6 +81,7 @@ impl Prep {
             age_g: vec![0; n],
             age_x: vec![0; n],
             letters: vec![false; n],
+            dark: vec![0; n],
             alive: false,
             seen: 0,
             miss: 0,
@@ -159,7 +163,33 @@ impl Prep {
             }
         }
         self.letters = seed;
+        self.dark = dark;
         &self.grey
+    }
+
+    /// How white the letters of a subtitle read in the last picture are: of the pixels in
+    /// its rows that lie in thin strokes at least `GLO` bright, the share that is white.
+    /// Most of a white subtitle's; a fifth of one in thin, off-white or coloured letters,
+    /// which this picture is not made for. None where there is too little to tell.
+    pub fn whiteness(&self, block: &Block) -> Option<f32> {
+        let (mut white, mut bright) = (0, 0);
+        for r in &block.rows {
+            let (x0, y0) = (r.x0.max(0.0) as usize, r.y0.max(0.0) as usize);
+            let x1 = (r.x1.max(0.0) as usize + 1).min(self.w);
+            let y1 = (r.y1.max(0.0) as usize + 1).min(self.h);
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
+            let (w, h) = (x1 - x0, y1 - y0);
+            for (level, count) in [(LO, &mut white), (GLO, &mut bright)] {
+                let mut thin: Vec<bool> = (0..w * h)
+                    .map(|i| self.dark[(y0 + i / w) * self.w + x0 + i % w] >= level)
+                    .collect();
+                strokes(&mut thin, w, h, self.stroke);
+                *count += thin.iter().filter(|&&t| t).count();
+            }
+        }
+        (bright >= WHITE_OF).then(|| white as f32 / bright as f32)
     }
 
     /// What was read in the picture prepared last: the subtitle found in it and all its lines.

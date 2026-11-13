@@ -1139,13 +1139,14 @@ fn screen_raw(width: usize, height: usize) -> anyhow::Result<()> {
     let (mut n, mut prepare, mut read) = (0u32, Duration::ZERO, Duration::ZERO);
     while input.read_exact(&mut bgra).is_ok() {
         let t = Instant::now();
-        let grey = reader.prepare(&bgra);
+        let (prepared, plain) = reader.prepare(&bgra);
         prepare += t.elapsed();
         let t = Instant::now();
-        let lines = ocr.read(grey, size.0, size.1)?;
+        let lines = ocr.read(prepared, size.0, size.1)?;
+        let plain = ocr.read(plain, size.0, size.1)?;
         read += t.elapsed();
         let at = f64::from(n) / 10.0;
-        if let Some((seen, text)) = reader.read(at, &lines) {
+        if let Some((seen, text)) = reader.read(at, &lines, &plain) {
             println!("{seen:.2}\t{at:.2}\t{text}");
         }
         n += 1;

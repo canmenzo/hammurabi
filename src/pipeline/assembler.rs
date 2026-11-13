@@ -467,8 +467,42 @@ impl Assembler {
         }
     }
 
+    /// Whether `words` are the sentence shown last, heard to its end: Whisper closes whatever
+    /// the audio ends in with a full stop, and when that stood long enough to be shown, goes
+    /// back and says the whole of it ("Trevor is a liability." and then "Trevor is a liability
+    /// that none of us can afford."). Where in the last caption that sentence begins.
+    fn said_whole(&self, words: &[String], lang: &Option<String>, now: Instant) -> Option<usize> {
+        let (_, said, at, l) = self.last_caption.as_ref()?;
+        if self.separate || l != lang || now.saturating_duration_since(*at) >= DEDUPE_WINDOW {
+            return None;
+        }
+        let key = |w: &[String]| -> Vec<String> {
+            w.iter().map(|w| norm(w)).filter(|w| !w.is_empty()).collect()
+        };
+        let from = said[..said.len().saturating_sub(1)]
+            .iter()
+            .rposition(|w| ends_sentence(w))
+            .map_or(0, |i| i + 1);
+        let (short, whole) = (key(&said[from..]), key(words));
+        (short.len() >= 2 && whole.len() > short.len() && whole.starts_with(&short))
+            .then_some(from)
+    }
+
     fn emit(&mut self, out: &mut Vec<Out>, words: Vec<String>, lang: Option<String>, now: Instant) {
         if !self.fresh(&words, now) {
+            return;
+        }
+        if let Some(from) = self.said_whole(&words, &lang, now)
+            && let Some((id, said, at, _)) = &mut self.last_caption
+        {
+            said.truncate(from);
+            said.extend(words);
+            *at = now;
+            out.push(Out::Sentence {
+                id: *id,
+                text: said.join(" "),
+                lang,
+            });
             return;
         }
         if self.joins(&words, &lang, now)
@@ -753,6 +787,27 @@ mod tests {
         a.separate = true;
         let o = a.finish(6, Some((w("Fine."), "en".into())), soon + JOIN_WITHIN);
         assert_eq!(sentences(&o), ["Fine."]);
+    }
+
+    #[test]
+    fn a_sentence_heard_to_its_end_takes_the_place_of_its_start() {
+        let t = Instant::now();
+        let mut a = Assembler::default();
+        a.finish(1, Some((w("He left. He is a risk."), "en".into())), t);
+        // The same words and more: the caption is put right, under its id.
+        let o = a.finish(2, Some((w("He is a risk we cannot take."), "en".into())), t);
+        assert_eq!(sentences(&o), ["He left. He is a risk we cannot take."]);
+        assert!(matches!(&o[0], Out::Sentence { id: 1, .. }));
+        // Not one word said again, nor other words, nor a caption read aloud already.
+        let o = a.finish(3, Some((w("No."), "en".into())), t + JOIN_WITHIN);
+        let o2 = a.finish(4, Some((w("No way, man."), "en".into())), t + JOIN_WITHIN);
+        assert_eq!(sentences(&o), ["No."]);
+        assert_eq!(sentences(&o2), ["No. No way, man."]);
+        a.separate = true;
+        a.finish(5, Some((w("Get out."), "en".into())), t + 3 * JOIN_WITHIN);
+        let o = a.finish(6, Some((w("Get out of here."), "en".into())), t + 3 * JOIN_WITHIN);
+        assert_eq!(sentences(&o), ["Get out of here."]);
+        assert!(matches!(&o[0], Out::Sentence { id: 4, .. }));
     }
 
     #[test]

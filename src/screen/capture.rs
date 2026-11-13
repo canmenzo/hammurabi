@@ -22,6 +22,7 @@ use windows::Win32::System::WinRT::Direct3D11::{
     CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 use windows::core::{Interface, factory};
 
 /// Rows of pixels, four bytes each: blue, green, red, alpha.
@@ -40,10 +41,11 @@ pub struct Capture {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     shared: IDirect3DDevice,
-    item: GraphicsCaptureItem,
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
     size: SizeInt32,
+    /// The window captured, when it is one.
+    window: Option<HWND>,
     /// Where a band is copied to be read, and its size.
     staging: Option<(ID3D11Texture2D, u32, u32)>,
 }
@@ -93,10 +95,13 @@ impl Capture {
             device,
             context,
             shared,
-            item,
             pool,
             session,
             size,
+            window: match *target {
+                Target::Window(w) => Some(w),
+                Target::Display(_) => None,
+            },
             staging: None,
         })
     }
@@ -194,7 +199,8 @@ impl Capture {
 
     /// False once the window is gone.
     pub fn alive(&self) -> bool {
-        self.item.Size().is_ok_and(|s| s.Width > 0 && s.Height > 0)
+        self.window
+            .is_none_or(|w| unsafe { IsWindow(Some(w)) }.as_bool())
     }
 }
 

@@ -15,6 +15,8 @@ pub mod windows;
 pub enum ScreenEvent {
     /// Reading has begun; what is read from.
     Ready(String),
+    /// The window to read is not open, or was closed: it is looked for until it is.
+    Waiting(String),
     /// A subtitle, once.
     Line(String),
     Error(String),
@@ -29,7 +31,6 @@ mod source {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use anyhow::anyhow;
     use crossbeam_channel::{Receiver, Sender};
 
     use super::capture::{Capture, Target};
@@ -79,6 +80,9 @@ mod source {
         }
     }
 
+    /// How often a window that is not open is looked for.
+    const LOOK: Duration = Duration::from_secs(1);
+
     fn run(
         window: &str,
         band: (f32, f32),
@@ -86,28 +90,53 @@ mod source {
         tx: &Sender<ScreenEvent>,
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
-        let display = window.is_empty();
-        // Lets Hammurabi's windows into pictures of the display again when reading ends.
-        struct Own;
-        impl Drop for Own {
-            fn drop(&mut self) {
-                windows::keep_own_out(false);
-            }
-        }
-        let _own = display.then_some(Own);
-        let (target, name) = if display {
-            (
-                Target::Display(windows::primary_display()),
-                "the main display".to_string(),
-            )
-        } else {
-            let w = windows::find(window)
-                .ok_or_else(|| anyhow!("no open window is titled like \"{window}\""))?;
-            (Target::Window(w), format!("\"{window}\""))
-        };
-        let mut capture = Capture::start(&target)?;
         let ocr = Ocr::new(lang)?;
-        let _ = tx.send(ScreenEvent::Ready(name));
+        if window.is_empty() {
+            // Lets Hammurabi's windows into pictures of the display again when reading ends.
+            struct Own;
+            impl Drop for Own {
+                fn drop(&mut self) {
+                    windows::keep_own_out(false);
+                }
+            }
+            let _own = Own;
+            let capture = Capture::start(&Target::Display(windows::primary_display()))?;
+            let _ = tx.send(ScreenEvent::Ready("the main display".into()));
+            return read(capture, true, band, &ocr, tx, stop);
+        }
+        // A window comes and goes (a game restarted, a projector closed by mistake): it is
+        // read whenever it is there.
+        let name = format!("\"{window}\"");
+        let mut waiting = false;
+        while !stop.load(Ordering::Relaxed) {
+            match windows::find(window).map(|w| Capture::start(&Target::Window(w))) {
+                Some(Ok(capture)) => {
+                    let _ = tx.send(ScreenEvent::Ready(name.clone()));
+                    waiting = false;
+                    read(capture, false, band, &ocr, tx, stop)?;
+                    continue;
+                }
+                Some(Err(e)) => log::debug!("screen: {name} cannot be captured: {e:#}"),
+                None => {}
+            }
+            if !waiting {
+                let _ = tx.send(ScreenEvent::Waiting(name.clone()));
+                waiting = true;
+            }
+            std::thread::sleep(LOOK);
+        }
+        Ok(())
+    }
+
+    /// Reads what is captured until told to stop, or until a window is gone.
+    fn read(
+        mut capture: Capture,
+        display: bool,
+        band: (f32, f32),
+        ocr: &Ocr,
+        tx: &Sender<ScreenEvent>,
+        stop: &AtomicBool,
+    ) -> anyhow::Result<()> {
         let t0 = Instant::now();
         // The newest picture: Windows gives one only when something was drawn.
         let mut image = None;
@@ -123,10 +152,15 @@ mod source {
                 windows::keep_own_out(true);
             }
             pictures += 1;
-            match capture.band(band.0, band.1)? {
-                Some(new) => image = Some(new),
-                None if capture.alive() => {}
-                None => return Err(anyhow!("the window was closed")),
+            match capture.band(band.0, band.1) {
+                Ok(Some(new)) => image = Some(new),
+                Ok(None) if capture.alive() => {}
+                Ok(None) => return Ok(()),
+                Err(e) if display => return Err(e),
+                Err(e) => {
+                    log::debug!("screen: the window gave no picture: {e:#}");
+                    return Ok(());
+                }
             }
             if let Some(image) = &image {
                 let size = (image.width, image.height);

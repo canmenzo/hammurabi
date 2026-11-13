@@ -1535,6 +1535,16 @@ impl Engine {
                     );
                 }
             }
+            ScreenEvent::Waiting(from) => {
+                if self.running {
+                    self.events().send(EngineEvent::State(EngineState::Running));
+                    self.events().status(
+                        StatusLevel::Warning,
+                        format!("Waiting for the window {from} to read subtitles from"),
+                        None,
+                    );
+                }
+            }
             ScreenEvent::Line(text) => {
                 if self.running {
                     self.core.screen_line(text, Instant::now());

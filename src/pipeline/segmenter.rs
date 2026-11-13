@@ -10,15 +10,18 @@ use crate::types::FRAME_SAMPLES;
 // All in 100 ms frames.
 /// A segment needs at least 0.8 s before a pause can close it.
 const MIN_FINAL: usize = 8;
-/// 0.3 s of quiet closes the segment.
+/// 0.3 s of quiet closes the segment, or 0.6 s on a GPU: what is said after a breath is heard
+/// better with what came before it, and there every run starts from the captions shown already,
+/// so a longer segment costs no time.
 const PAUSE: usize = 3;
+const PAUSE_GPU: usize = 6;
 /// After 0.2 s of quiet the open segment is re-run at once: whoever spoke may be done, and what
 /// that run ends in need not wait for the pause to be a whole one.
 const EARLY: usize = 2;
-/// Hard cut so continuous talk still finalizes: at 5 s, or at 12 s on a GPU, which is fast enough
+/// Hard cut so continuous talk still finalizes: at 5 s, or at 20 s on a GPU, which is fast enough
 /// to re-run that much for every partial and hears whole sentences better than halves.
 const MAX_SEG: usize = 50;
-const MAX_SEG_GPU: usize = 120;
+const MAX_SEG_GPU: usize = 200;
 /// Quiet frames kept after the last loud one: words end in sounds too soft to count as loud.
 const TAIL: usize = 3;
 /// On a hard cut, split at the quietest frame within the last 1.5 s.
@@ -89,6 +92,8 @@ pub struct Segmenter {
     /// Whether the last frame pushed was speech.
     pub last_loud: bool,
     max_seg: usize,
+    /// Quiet frames that close a segment of speech.
+    pause: usize,
     partial_every: usize,
     asr_ms: f32,
 }
@@ -117,6 +122,7 @@ impl Segmenter {
             pushed: 0,
             last_loud: false,
             max_seg: MAX_SEG,
+            pause: PAUSE,
             partial_every: PARTIAL_EVERY,
             asr_ms: 0.0,
         }
@@ -127,14 +133,15 @@ impl Segmenter {
         let vad = Vad::new()
             .inspect_err(|e| log::error!("voice detector unavailable, using loudness: {e:#}"))
             .ok();
-        let max_seg = if crate::device::label() == "CPU" {
-            MAX_SEG
+        let (max_seg, pause) = if crate::device::label() == "CPU" {
+            (MAX_SEG, PAUSE)
         } else {
-            MAX_SEG_GPU
+            (MAX_SEG_GPU, PAUSE_GPU)
         };
         Self {
             vad,
             max_seg,
+            pause,
             ..Self::new()
         }
     }
@@ -285,7 +292,7 @@ impl Segmenter {
             } else {
                 None
             }
-        } else if (seg.quiet >= PAUSE && n >= MIN_FINAL) || seg.quiet >= PAUSE * 4 {
+        } else if (seg.quiet >= self.pause && n >= MIN_FINAL) || seg.quiet >= self.pause * 4 {
             let end = n - seg.quiet + TAIL.min(seg.quiet);
             Some(self.close(end, false))
         } else if n >= self.max_seg {

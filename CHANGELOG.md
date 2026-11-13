@@ -4,6 +4,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-13
+
 ### Changed
 
 - The Natural translator says what the speaker said. It used to turn the N-word into a friendly form of address or "that word", and a filter replaced it wherever the model had kept it; both are gone. Profanity and slurs keep their strength, nothing is softened or swapped for a politer word, and the N-word stays in the caption as it was said.
@@ -162,7 +164,8 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
-[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.2
 [0.7.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.1
 [0.7.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.0
 [0.6.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.6.0

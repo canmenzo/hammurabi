@@ -177,7 +177,7 @@ lan or amına koyayım, not siktir git.
 snitch = ötmek; smoked = öldürüldü; cappin' = atmak (yalan); keep it a hunnid = dürüst ol; bet = \
 tamamdır; real talk = ciddiyim; opps = düşmanlar; OG = abi; ho = kaşar; forty = bira; lit up / \
 light up = kurşun yağdırmak; stoner = esrarkeş; damn = vay be / lan; bad bitch = afet (a \
-compliment); pony = at kuyruğu; you want some? = dayak mı istiyorsun.
+compliment); pony = at kuyruğu; chump change = üç kuruş; you want some? = dayak mı istiyorsun.
 ";
 
 /// Example lines and their translations, shown to the model as earlier turns.

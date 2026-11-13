@@ -249,15 +249,20 @@ impl Tracker {
     /// `block`: the subtitle picked in the picture at `t` seconds. `changed`: the pixels of
     /// the one before went away in it.
     fn feed(&mut self, t: f64, block: Option<Block>, changed: bool) -> Option<(f64, String)> {
+        let mut ended = None;
         if changed {
-            self.cur = None;
+            ended = self.end(t);
             self.done.iter_mut().for_each(|d| d.gone = true);
         }
         if self.cur.as_ref().is_some_and(|c| t - c.last > GAP_S) {
-            self.cur = None;
+            ended = ended.or(self.end(t));
         }
-        let block = block?;
+        let Some(block) = block else {
+            return ended;
+        };
         let cur = match &mut self.cur {
+            // Another reading of the subtitle that stands. One that reads or lies otherwise
+            // takes its place: most often the same subtitle, come out further.
             Some(c) if c.same(&block) => {
                 if c.emitted || c.reads.len() == READS_MAX {
                     // Only the best and the last are looked at from here on.
@@ -284,32 +289,57 @@ impl Tracker {
             }),
         };
         if cur.emitted {
-            let block = cur.reads.last()?;
-            for r in &block.rows {
-                known(&mut self.done, &r.text, (r.x0, r.x1), block.h, t, t);
+            if let Some(block) = cur.reads.last() {
+                for r in &block.rows {
+                    known(&mut self.done, &r.text, (r.x0, r.x1), block.h, t, t);
+                }
             }
+            return ended;
+        }
+        let Some(rows) = cur.choose(t) else {
+            return ended;
+        };
+        cur.emitted = true;
+        give(&mut self.done, cur, rows, t)
+    }
+
+    /// The subtitle that stood is gone: its pixels went, or nothing was read for a while. One
+    /// that was up too briefly for its words to agree,
+    /// but was read `LATE_N - 1` times with `LATE_FRAC` of them agreeing, is given on now:
+    /// a word of it may be wrong, which a reader forgives sooner than a line that is missing.
+    fn end(&mut self, t: f64) -> Option<(f64, String)> {
+        let cur = self.cur.take()?;
+        let n = cur.reads.len();
+        if cur.emitted || n + 1 < LATE_N {
             return None;
         }
-        let rows = cur.choose(t)?;
-        cur.emitted = true;
-        self.done.retain(|d| t - d.t <= REPEAT_S);
-        let block = cur.reads.last()?;
-        let mut fresh = Vec::new();
-        for (i, text) in rows.into_iter().enumerate() {
-            let r = &block.rows[i.min(block.rows.len() - 1)];
-            if !known(&mut self.done, &text, (r.x0, r.x1), block.h, cur.t0, t) {
-                self.done.push(Done {
-                    text: text.clone(),
-                    t,
-                    x0: r.x0,
-                    x1: r.x1,
-                    gone: false,
-                });
-                fresh.push(text);
-            }
-        }
-        (!fresh.is_empty()).then(|| (cur.t0, apostrophes(&commas(&fresh.join(" ")))))
+        let (rows, sure, _) = mend(&cur.reads[n.saturating_sub(MEND_READS)..])?;
+        (sure >= LATE_FRAC)
+            .then(|| give(&mut self.done, &cur, rows, t))
+            .flatten()
     }
+}
+
+/// The rows of a subtitle to give on at `t`: those not given on lately, as one text with the
+/// time the subtitle was first seen.
+fn give(done: &mut Vec<Done>, cur: &Track, rows: Vec<String>, t: f64) -> Option<(f64, String)> {
+    done.retain(|d| t - d.t <= REPEAT_S);
+    let block = cur.reads.last()?;
+    let mut fresh = Vec::new();
+    for (i, text) in rows.into_iter().enumerate() {
+        let r = &block.rows[i.min(block.rows.len() - 1)];
+        if !known(done, &text, (r.x0, r.x1), block.h, cur.t0, t) {
+            done.push(Done {
+                text: text.clone(),
+                t,
+                x0: r.x0,
+                x1: r.x1,
+                gone: false,
+            });
+            fresh.push(text);
+        }
+    }
+    (!fresh.is_empty()).then(|| (cur.t0, apostrophes(&commas(&fresh.join(" ")))))
 }
 
 impl Track {
@@ -705,6 +735,25 @@ mod tests {
             (0.2, vec![line(whole)], false),
         ];
         assert_eq!(run(&pictures), [(0, 2, whole.to_string())]);
+    }
+
+    #[test]
+    fn a_subtitle_gone_before_its_words_agreed_is_given_when_it_goes() {
+        // Its first word is read differently each time, and the next subtitle comes.
+        let pictures = [
+            (0.0, vec![line("Whet fucking thing?")], false),
+            (0.1, vec![line("What fucking thing?")], false),
+            (0.2, vec![line("Vmat fucking thing?")], false),
+            (0.3, vec![line(B)], true),
+            (0.4, vec![line(B)], false),
+        ];
+        assert_eq!(
+            run(&pictures),
+            [
+                (0, 3, "Whet fucking thing?".to_string()),
+                (3, 4, B.to_string())
+            ]
+        );
     }
 
     #[test]

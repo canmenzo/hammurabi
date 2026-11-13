@@ -333,8 +333,9 @@ impl Track {
         }
         self.best = best;
         let n = self.reads.len();
-        let (rows, sure) = mend(&self.reads[n.saturating_sub(MEND_READS)..])?;
-        (sure >= 1.0 || (t - self.t0 >= LATE_S && n >= LATE_N && sure >= LATE_FRAC)).then_some(rows)
+        let (rows, sure, growing) = mend(&self.reads[n.saturating_sub(MEND_READS)..])?;
+        let late = t - self.t0 >= LATE_S && n >= LATE_N && sure >= LATE_FRAC;
+        ((sure >= 1.0 && !growing) || late).then_some(rows)
     }
 }
 
@@ -406,9 +407,11 @@ type Piece<'a> = (f32, f32, &'a str, usize);
 /// One text out of the readings of a subtitle, each of which may have some word wrong. A word
 /// is read right when `N_AGREE` readings have it in the same place. The reading with the
 /// largest share of such words is taken; each other word of it gives way to the right words
-/// other readings have in its place, and right words it lacks are put in. Gives the rows and
-/// the share of the words that are read right.
-fn mend(reads: &[Block]) -> Option<(Vec<String>, f32)> {
+/// other readings have in its place, and right words it lacks are put in. Gives the rows, the
+/// share of the words that are read right, and whether the newest reading has a word where no
+/// word has been read twice: over a bright background a subtitle's first readings lack words,
+/// which come as what moves behind them is told from what stands.
+fn mend(reads: &[Block]) -> Option<(Vec<String>, f32, bool)> {
     let h = reads.last()?.h;
     let tol = WORD_TOL * h;
     let mut words: Vec<Word> = Vec::new();
@@ -450,6 +453,12 @@ fn mend(reads: &[Block]) -> Option<(Vec<String>, f32)> {
     let (b, ws, _) = base?;
     let good: Vec<&Word> = words.iter().filter(|w| w.n >= N_AGREE).collect();
     let put_back = (N_AGREE as f32).max(LIVE_FRAC * reads.len() as f32);
+    let newest: usize = reads.last()?.rows.iter().map(|r| r.words.len()).sum();
+    let growing = words[words.len() - newest..].iter().any(|w| {
+        let over =
+            |g: &&Word| (g.y - w.y).abs() < 0.5 * h && g.x0 < w.x1 - tol && w.x0 < g.x1 - tol;
+        w.n < N_AGREE && !good.iter().any(over)
+    });
     fn piece<'a>(w: &Word<'a>) -> Piece<'a> {
         (w.x0, w.x1, w.text, w.n)
     }
@@ -516,7 +525,7 @@ fn mend(reads: &[Block]) -> Option<(Vec<String>, f32)> {
         line.sort_by(order);
         out.push(line.iter().map(|l| l.2).collect::<Vec<_>>().join(" "));
     }
-    Some((out, 1.0 - open as f32 / ws.len() as f32))
+    Some((out, 1.0 - open as f32 / ws.len() as f32, growing))
 }
 
 #[cfg(test)]
@@ -667,6 +676,31 @@ mod tests {
             run(&pictures),
             [(0, 2, c1.to_string()), (4, 6, c2.to_string())]
         );
+    }
+
+    #[test]
+    fn a_subtitle_still_coming_out_is_waited_for() {
+        // Its middle stands over something bright and is read two pictures later.
+        let (whole, ends) = ("Don't act like you know, homie.", "Don't act like homie.");
+        let short = || {
+            let mut l = line(whole);
+            l.text = ends.into();
+            l.words.drain(3..5);
+            vec![l]
+        };
+        let pictures = [
+            (0.0, short(), false),
+            (0.1, short(), false),
+            (0.2, vec![line(whole)], false),
+            (0.3, vec![line(whole)], false),
+        ];
+        assert_eq!(run(&pictures), [(0, 1, ends.to_string())]);
+        let pictures = [
+            (0.0, short(), false),
+            (0.1, vec![line(whole)], false),
+            (0.2, vec![line(whole)], false),
+        ];
+        assert_eq!(run(&pictures), [(0, 2, whole.to_string())]);
     }
 
     #[test]

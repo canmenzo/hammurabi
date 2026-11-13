@@ -4,6 +4,14 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-13
+
+### Changed
+
+- Subtitles on screen reads thin, off-white and coloured subtitles too, where the game sets them on a dark ground. It kept only what was white, which broke the letters of a game like Red Dead Redemption 2 ("where is Illy son, l)utch van cler Linde?"); each picture is now also read as it is, and how white the letters are decides which reading is followed. That game's subtitles come out whole.
+- A subtitle that is up for under a second is no longer missed for never reading the same twice: it is given on as it goes, with what was read most. On the recorded game missions 7 of 290 subtitles are missed, from 12.
+- A window that is closed, or not open yet when captions start, is waited for and read when it is there, instead of captions stopping with an error.
+
 ## [0.7.0] - 2026-11-13
 
 ### Added
@@ -144,7 +152,8 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
-[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.1
 [0.7.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.0
 [0.6.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.6.0
 [0.5.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.5.0

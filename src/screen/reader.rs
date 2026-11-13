@@ -304,7 +304,7 @@ impl Tracker {
                 fresh.push(text);
             }
         }
-        (!fresh.is_empty()).then(|| (cur.t0, commas(&fresh.join(" "))))
+        (!fresh.is_empty()).then(|| (cur.t0, apostrophes(&commas(&fresh.join(" ")))))
     }
 }
 
@@ -352,6 +352,22 @@ fn commas(text: &str) -> String {
     (0..c.len())
         .map(|i| if comma(i) { ',' } else { c[i] })
         .collect()
+}
+
+/// An apostrophe the recognition took for a letter, in the words it does that to: "goinl",
+/// "11m", "Ilma".
+fn apostrophes(text: &str) -> String {
+    let word = |word: &str| {
+        let end = word.trim_end_matches(|c: char| !c.is_alphanumeric()).len();
+        let (w, rest) = word.split_at(end);
+        match w {
+            "11m" | "1m" | "Ilm" => format!("I'm{rest}"),
+            "11ma" | "Ilma" => format!("I'ma{rest}"),
+            _ if w.len() > 4 && w.ends_with("inl") => format!("{}'{rest}", &w[..w.len() - 1]),
+            _ => word.to_string(),
+        }
+    };
+    text.split(' ').map(word).collect::<Vec<_>>().join(" ")
 }
 
 /// Was this row given on lately: the same text, its beginning or its end, or roughly the same
@@ -657,6 +673,14 @@ mod tests {
     fn a_full_stop_before_a_small_letter_is_a_comma() {
         assert_eq!(commas("Man. get in. Now."), "Man, get in. Now.");
         assert_eq!(commas("I... mean... no. I do."), "I... mean... no. I do.");
+    }
+
+    #[test]
+    fn an_apostrophe_read_as_a_letter_is_one_again() {
+        assert_eq!(
+            apostrophes("Keep bustinl, loc! 11m serious. Ilma go, girl."),
+            "Keep bustin', loc! I'm serious. I'ma go, girl."
+        );
     }
 
     #[test]

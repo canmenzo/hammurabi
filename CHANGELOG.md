@@ -4,6 +4,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- Subtitles on screen (Settings > Listen), on Windows: instead of listening, Hammurabi reads the subtitles a game or film shows and translates those. Pick the window to read (it may be covered by others, but not minimized) or the main display, and how far down the picture the subtitles are. What is read is what was written, so slang, names and talk under gunfire come out right where listening mishears them: on three recorded game missions one word in sixteen was read wrong, against one in five heard wrong, and a subtitle is read a tenth to half a second after it appears, usually before its line has been said. It reads white subtitles at the bottom middle of the picture, in English or any language Windows has text recognition for; a window much smaller than 1920 wide is read less well (one word in nine wrong at 1280).
+
 ## [0.6.0] - 2026-11-12
 
 ### Added

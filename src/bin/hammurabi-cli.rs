@@ -126,6 +126,12 @@ enum Cmd {
         bottom: f32,
         #[arg(long, default_value_t = 5)]
         secs: u64,
+        /// Translate the subtitles to this language code,
+        #[arg(long)]
+        translate: Option<String>,
+        /// with the Natural translator instead of MADLAD.
+        #[arg(long)]
+        natural: bool,
         /// List the windows there are instead.
         #[arg(long)]
         list: bool,
@@ -260,6 +266,8 @@ fn main() -> anyhow::Result<()> {
             top,
             bottom,
             secs,
+            translate,
+            natural,
             list,
             raw,
             width,
@@ -267,8 +275,29 @@ fn main() -> anyhow::Result<()> {
         } => {
             if raw {
                 screen_raw(width, height)
+            } else if list {
+                for (_, title) in hammurabi::screen::windows::list() {
+                    println!("{title}");
+                }
+                Ok(())
             } else {
-                screen(window.as_deref(), (top, bottom), secs, list)
+                screen(
+                    Settings {
+                        asr_backend: hammurabi::settings::AsrBackend::ScreenText,
+                        screen_window: window.unwrap_or_default(),
+                        screen_top: top,
+                        screen_bottom: bottom,
+                        translate: translate.is_some(),
+                        target_language: translate.unwrap_or_else(|| "en".into()),
+                        translator: if natural {
+                            TranslatorChoice::Natural { light: false }
+                        } else {
+                            TranslatorChoice::Builtin
+                        },
+                        ..Settings::default()
+                    },
+                    secs,
+                )
             }
         }
         Cmd::Record {
@@ -1077,24 +1106,21 @@ fn live_captions(secs: u64, translate: Option<String>, live: bool) -> anyhow::Re
 }
 
 #[cfg(windows)]
-fn screen(window: Option<&str>, band: (f32, f32), secs: u64, list: bool) -> anyhow::Result<()> {
-    use hammurabi::screen::{ScreenEvent, ScreenText, windows};
-    if list {
-        for (_, title) in windows::list() {
-            println!("{title}");
-        }
-        return Ok(());
-    }
-    let source = ScreenText::spawn(window.unwrap_or_default().into(), band, "en".into());
+fn screen(settings: Settings, secs: u64) -> anyhow::Result<()> {
+    let engine = Engine::spawn(Arc::new(|| {}));
+    engine.send(EngineCommand::Start(settings));
     let t0 = Instant::now();
-    while let Some(left) = Duration::from_secs(secs).checked_sub(t0.elapsed()) {
-        match source.events.recv_timeout(left) {
-            Ok(ScreenEvent::Ready(from)) => println!("reading {from}"),
-            Ok(ScreenEvent::Line(l)) => println!("[{:6.2}s] {l}", t0.elapsed().as_secs_f32()),
-            Ok(ScreenEvent::Error(e)) => anyhow::bail!(e),
-            Err(_) => break,
+    let end = t0 + Duration::from_secs(secs);
+    while let Some(e) = engine.recv_timeout(end.saturating_duration_since(Instant::now())) {
+        match e {
+            EngineEvent::Caption(c) => print_caption(&c, Some(t0.elapsed().as_secs_f32()), false),
+            EngineEvent::Status(s) => eprintln!("status: {}", s.text),
+            EngineEvent::State(s) => eprintln!("state: {s:?}"),
+            _ => {}
         }
     }
+    engine.send(EngineCommand::Stop);
+    engine.shutdown(Duration::from_secs(3));
     Ok(())
 }
 

@@ -55,6 +55,8 @@ pub fn lang_name(code: &str) -> &str {
 pub enum AsrBackend {
     Whisper,
     WindowsLiveCaptions,
+    /// No listening: the subtitles a game shows are read off the screen (`screen`).
+    ScreenText,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +136,11 @@ pub struct Settings {
     pub hint: String,
     pub asr_backend: AsrBackend,
     pub model: ModelChoice,
+    /// Part of the title of the window subtitles are read from; empty = the main display.
+    pub screen_window: String,
+    /// The part of that picture's height the subtitles are in, as fractions from its top.
+    pub screen_top: f32,
+    pub screen_bottom: f32,
     /// Encode only the speech plus a margin instead of Whisper's full 30 s window (much faster on CPU).
     pub trim_audio: bool,
     pub translate: bool,
@@ -189,6 +196,9 @@ impl Default for Settings {
             hint: String::new(),
             asr_backend: AsrBackend::Whisper,
             model: ModelChoice::Auto,
+            screen_window: String::new(),
+            screen_top: 0.72,
+            screen_bottom: 1.0,
             trim_audio: true,
             translate: true,
             target_language: default_target(sys_locale::get_locale().as_deref()),

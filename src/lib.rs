@@ -5,6 +5,7 @@ pub mod device;
 pub mod models;
 pub mod paths;
 pub mod pipeline;
+pub mod screen;
 pub mod settings;
 pub mod translate;
 pub mod tts;

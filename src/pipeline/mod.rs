@@ -21,6 +21,9 @@ use crate::asr::AsrWorker;
 use crate::asr::livecaptions::{LcEvent, LiveCaptions};
 use crate::audio::{AudioCapture, Frames16k};
 use crate::models::{self, ModelId};
+use crate::screen::ScreenEvent;
+#[cfg(windows)]
+use crate::screen::ScreenText;
 use crate::settings::{AsrBackend, ModelChoice, Settings, TranslatorChoice};
 use crate::translate::TranslatorWorker;
 use crate::tts::{self, Speaker};
@@ -274,6 +277,15 @@ impl Core {
     #[cfg(any(test, all(windows, feature = "win-livecaptions")))]
     fn lc_muted(&mut self, text: &str, now: Instant) {
         self.rolling.reseed(text, now);
+    }
+
+    /// A subtitle read off the screen: a caption as it stands.
+    fn screen_line(&mut self, text: String, now: Instant) {
+        let lang = self.settings.spoken_language.clone();
+        let out = self
+            .asm
+            .external(vec![text], None, lang.as_deref().unwrap_or("en"), now);
+        self.apply(out);
     }
 
     fn apply_step(&mut self, step: Step, now: Instant) {
@@ -795,6 +807,8 @@ pub struct Engine {
     system_clear: bool,
     #[cfg(all(windows, feature = "win-livecaptions"))]
     lc: Option<LiveCaptions>,
+    #[cfg(windows)]
+    screen: Option<ScreenText>,
     speaker: Option<Speaker>,
     /// Audio arrives through `audio_tx` from outside (CLI) instead of capture devices.
     fed: bool,
@@ -865,6 +879,8 @@ impl Engine {
                     system_clear: false,
                     #[cfg(all(windows, feature = "win-livecaptions"))]
                     lc: None,
+                    #[cfg(windows)]
+                    screen: None,
                     speaker: None,
                     fed,
                     audio_tx,
@@ -917,6 +933,7 @@ impl Engine {
                 .map_or_else(never, |(_, w)| w.events.clone());
             let audio_rx = self.audio_rx.clone();
             let lc_rx = self.lc_rx();
+            let screen_rx = self.screen_rx();
             let tts_rx = self
                 .speaker
                 .as_ref()
@@ -947,6 +964,9 @@ impl Engine {
                     Ok(e) => self.on_lc(e),
                     Err(_) => self.lc_failed("reader stopped".into()),
                 },
+                recv(screen_rx) -> ev => self.on_screen(
+                    ev.unwrap_or_else(|_| ScreenEvent::Error("reader stopped".into())),
+                ),
                 recv(tr_rx) -> ev => match ev {
                     Ok(e) => self.on_tr(e),
                     Err(_) => self.on_tr(TranslatorEvent::Error("translation worker stopped".into())),
@@ -1059,7 +1079,7 @@ impl Engine {
                 self.core.set_settings(s);
                 self.core.reset();
                 self.sync_speaker();
-                if self.start_lc() {
+                if self.start_lc() || self.start_screen() {
                     self.ensure_workers();
                     self.running = true;
                     self.events().send(EngineEvent::State(EngineState::Loading));
@@ -1084,7 +1104,12 @@ impl Engine {
             }
             EngineCommand::Reconfigure(s) => {
                 let prev = self.core.settings.clone();
-                if self.running && s.asr_backend != prev.asr_backend {
+                let read_from =
+                    |s: &Settings| (s.screen_window.clone(), s.screen_top, s.screen_bottom);
+                if self.running
+                    && (s.asr_backend != prev.asr_backend
+                        || (self.screen_active() && read_from(&s) != read_from(&prev)))
+                {
                     return self.command(EngineCommand::Start(s));
                 }
                 self.core.set_settings(s);
@@ -1093,7 +1118,7 @@ impl Engine {
                     return;
                 }
                 self.ensure_workers();
-                if self.lc_active() {
+                if self.lc_active() || self.screen_active() {
                     return;
                 }
                 self.check_system_clear();
@@ -1317,6 +1342,10 @@ impl Engine {
         {
             self.lc = None;
         }
+        #[cfg(windows)]
+        {
+            self.screen = None;
+        }
         self.running = false;
         self.capture_lost = false;
         self.asr_retry_at = None;
@@ -1349,7 +1378,10 @@ impl Engine {
             model = ModelChoice::Turbo;
         }
         let key = (model, self.core.settings.trim_audio);
-        if !self.lc_active() && self.asr.as_ref().is_none_or(|(k, _)| *k != key) {
+        if !self.lc_active()
+            && !self.screen_active()
+            && self.asr.as_ref().is_none_or(|(k, _)| *k != key)
+        {
             self.asr = Some((key, AsrWorker::spawn(key.0, key.1)));
             self.asr_took.clear();
             self.asr_downloading = false;
@@ -1439,6 +1471,90 @@ impl Engine {
                     None,
                 );
                 self.events().send(EngineEvent::State(EngineState::Error));
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn screen_active(&self) -> bool {
+        self.screen.is_some()
+    }
+
+    #[cfg(not(windows))]
+    fn screen_active(&self) -> bool {
+        false
+    }
+
+    /// Starts reading subtitles off the screen when that is chosen; false = listen.
+    fn start_screen(&mut self) -> bool {
+        let s = &self.core.settings;
+        if s.asr_backend != AsrBackend::ScreenText || self.fed {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            self.screen = Some(ScreenText::spawn(
+                s.screen_window.clone(),
+                (s.screen_top, s.screen_bottom),
+                s.spoken_language.clone().unwrap_or_else(|| "en".into()),
+            ));
+            true
+        }
+        #[cfg(not(windows))]
+        {
+            self.events().status(
+                StatusLevel::Warning,
+                "Subtitles can only be read off the screen on Windows, listening instead".into(),
+                Some(Duration::from_secs(8)),
+            );
+            false
+        }
+    }
+
+    #[cfg(windows)]
+    fn screen_rx(&self) -> Receiver<ScreenEvent> {
+        self.screen
+            .as_ref()
+            .map_or_else(never, |s| s.events.clone())
+    }
+
+    #[cfg(not(windows))]
+    fn screen_rx(&self) -> Receiver<ScreenEvent> {
+        never()
+    }
+
+    fn on_screen(&mut self, ev: ScreenEvent) {
+        match ev {
+            ScreenEvent::Ready(from) => {
+                if self.running {
+                    self.events().send(EngineEvent::State(EngineState::Running));
+                    self.events().status(
+                        StatusLevel::Info,
+                        format!("Running: reading subtitles from {from}"),
+                        Some(Duration::from_secs(3)),
+                    );
+                }
+            }
+            ScreenEvent::Line(text) => {
+                if self.running {
+                    self.core.screen_line(text, Instant::now());
+                }
+            }
+            ScreenEvent::Error(e) => {
+                #[cfg(windows)]
+                {
+                    self.screen = None;
+                }
+                if self.running {
+                    log::error!("reading subtitles off the screen failed: {e}");
+                    self.stop();
+                    self.events().status(
+                        StatusLevel::Error,
+                        format!("Cannot read subtitles off the screen: {e}"),
+                        None,
+                    );
+                    self.events().send(EngineEvent::State(EngineState::Error));
+                }
             }
         }
     }

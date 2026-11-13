@@ -113,6 +113,31 @@ enum Cmd {
         #[arg(long)]
         live: bool,
     },
+    /// Read text off a window or the main display, as the "subtitles on screen" source does.
+    #[cfg(windows)]
+    Screen {
+        /// Part of the window's title; the main display when omitted.
+        #[arg(long)]
+        window: Option<String>,
+        /// The band to read, as fractions of the height.
+        #[arg(long, default_value_t = 0.72)]
+        top: f32,
+        #[arg(long, default_value_t = 1.0)]
+        bottom: f32,
+        #[arg(long, default_value_t = 5)]
+        secs: u64,
+        /// List the windows there are instead.
+        #[arg(long)]
+        list: bool,
+        /// Read pictures of the band from standard input instead of the screen: raw BGRA,
+        /// `width` by `height`, ten a second (ffmpeg -r 10 -pix_fmt bgra -f rawvideo).
+        #[arg(long)]
+        raw: bool,
+        #[arg(long, default_value_t = 1920)]
+        width: usize,
+        #[arg(long, default_value_t = 270)]
+        height: usize,
+    },
     /// Download a model into the cache.
     Download {
         #[arg(value_enum)]
@@ -229,6 +254,23 @@ fn main() -> anyhow::Result<()> {
         .init();
     match cli.cmd {
         Cmd::Devices => devices(),
+        #[cfg(windows)]
+        Cmd::Screen {
+            window,
+            top,
+            bottom,
+            secs,
+            list,
+            raw,
+            width,
+            height,
+        } => {
+            if raw {
+                screen_raw(width, height)
+            } else {
+                screen(window.as_deref(), (top, bottom), secs, list)
+            }
+        }
         Cmd::Record {
             source,
             secs,
@@ -1031,5 +1073,60 @@ fn live_captions(secs: u64, translate: Option<String>, live: bool) -> anyhow::Re
     }
     engine.send(EngineCommand::Stop);
     engine.shutdown(Duration::from_secs(3));
+    Ok(())
+}
+
+#[cfg(windows)]
+fn screen(window: Option<&str>, band: (f32, f32), secs: u64, list: bool) -> anyhow::Result<()> {
+    use hammurabi::screen::{ScreenEvent, ScreenText, windows};
+    if list {
+        for (_, title) in windows::list() {
+            println!("{title}");
+        }
+        return Ok(());
+    }
+    let source = ScreenText::spawn(window.unwrap_or_default().into(), band, "en".into());
+    let t0 = Instant::now();
+    while let Some(left) = Duration::from_secs(secs).checked_sub(t0.elapsed()) {
+        match source.events.recv_timeout(left) {
+            Ok(ScreenEvent::Ready(from)) => println!("reading {from}"),
+            Ok(ScreenEvent::Line(l)) => println!("[{:6.2}s] {l}", t0.elapsed().as_secs_f32()),
+            Ok(ScreenEvent::Error(e)) => anyhow::bail!(e),
+            Err(_) => break,
+        }
+    }
+    Ok(())
+}
+
+/// The screen source's reading over pictures from a pipe, for measuring it on recorded video:
+/// a line for each subtitle with when it was first seen, when it was given on, and its text.
+#[cfg(windows)]
+fn screen_raw(width: usize, height: usize) -> anyhow::Result<()> {
+    use hammurabi::screen::ocr::Ocr;
+    use hammurabi::screen::reader::Reader;
+    use std::io::Read;
+    let ocr = Ocr::new("en")?;
+    let mut reader = Reader::new(width, height);
+    let mut input = std::io::stdin().lock();
+    let mut bgra = vec![0u8; width * height * 4];
+    let (mut n, mut prepare, mut read) = (0u32, Duration::ZERO, Duration::ZERO);
+    while input.read_exact(&mut bgra).is_ok() {
+        let t = Instant::now();
+        let grey = reader.prepare(&bgra);
+        prepare += t.elapsed();
+        let t = Instant::now();
+        let lines = ocr.read(grey, width, height)?;
+        read += t.elapsed();
+        let at = f64::from(n) / 10.0;
+        if let Some((seen, text)) = reader.read(at, &lines) {
+            println!("{seen:.2}\t{at:.2}\t{text}");
+        }
+        n += 1;
+    }
+    eprintln!(
+        "{n} pictures: {:.1} ms to prepare and {:.1} ms to read each",
+        prepare.as_secs_f64() * 1000.0 / f64::from(n.max(1)),
+        read.as_secs_f64() * 1000.0 / f64::from(n.max(1))
+    );
     Ok(())
 }

@@ -449,8 +449,9 @@ fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
 pub fn pending_downloads(s: &Settings, m: &ModelsStatus) -> Vec<ModelId> {
     let lc = cfg!(all(windows, feature = "win-livecaptions"))
         && s.asr_backend == AsrBackend::WindowsLiveCaptions;
+    let screen = cfg!(windows) && s.asr_backend == AsrBackend::ScreenText;
     let mut out = Vec::new();
-    if !lc {
+    if !lc && !screen {
         out.push(ModelId::whisper(s.model, m.compute != "CPU"));
     }
     if s.translate {
@@ -567,6 +568,64 @@ fn size_text(id: ModelId) -> String {
     format!("{} MB", spec(id).approx_bytes / 1_000_000)
 }
 
+/// Where subtitles are read from, and the part of that picture they are in.
+#[cfg(windows)]
+fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
+    ui.label("Read from");
+    let current = if s.screen_window.is_empty() {
+        "Main display".to_string()
+    } else {
+        s.screen_window.clone()
+    };
+    ComboBox::from_id_salt("screen-window")
+        .selected_text(current)
+        .width(260.0)
+        .show_ui(ui, |ui| {
+            *changed |= ui
+                .selectable_value(&mut s.screen_window, String::new(), "Main display")
+                .changed();
+            for (_, title) in crate::screen::windows::list() {
+                let short: String = title.chars().take(60).collect();
+                *changed |= ui
+                    .selectable_value(&mut s.screen_window, title, short)
+                    .changed();
+            }
+        })
+        .response
+        .on_hover_text(
+            "A window is read even when others cover it, but not while it is minimized. \
+             For a console on a capture card, pick OBS's projector window of the game.",
+        );
+    ui.end_row();
+
+    ui.label("Subtitle area");
+    ui.horizontal(|ui| {
+        let (mut top, mut bottom) = (s.screen_top * 100.0, s.screen_bottom * 100.0);
+        let a = ui.add(
+            egui::Slider::new(&mut top, 0.0..=95.0)
+                .fixed_decimals(0)
+                .suffix("%")
+                .text("from"),
+        );
+        let b = ui.add(
+            egui::Slider::new(&mut bottom, 5.0..=100.0)
+                .fixed_decimals(0)
+                .suffix("%")
+                .text("to"),
+        );
+        if a.changed() || b.changed() {
+            s.screen_top = (top / 100.0).min(0.95);
+            s.screen_bottom = (bottom / 100.0).max(s.screen_top + 0.05);
+            *changed = true;
+        }
+    })
+    .response
+    .on_hover_text(
+        "How far down the picture the subtitles are. The bottom quarter suits most games.",
+    );
+    ui.end_row();
+}
+
 /// Check mark, Download button or progress bar for one model.
 fn model_status(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
     ui.horizontal(|ui| {
@@ -602,32 +661,58 @@ fn speech(
     let gpu = m.compute != "CPU";
     let lc = cfg!(all(windows, feature = "win-livecaptions"))
         && s.asr_backend == AsrBackend::WindowsLiveCaptions;
+    let screen = cfg!(windows) && s.asr_backend == AsrBackend::ScreenText;
+    // Neither listens with Whisper.
+    let lc = lc || screen;
     grid(ui, "speech", |ui| {
-        if cfg!(all(windows, feature = "win-livecaptions")) {
+        if cfg!(windows) {
             ui.label("Speech engine");
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    for (v, label) in [
-                        (AsrBackend::Whisper, "Whisper (local)"),
-                        (AsrBackend::WindowsLiveCaptions, "Windows Live Captions"),
-                    ] {
-                        *changed |= ui.radio_value(&mut s.asr_backend, v, label).changed();
+                    *changed |= ui
+                        .radio_value(&mut s.asr_backend, AsrBackend::Whisper, "Whisper (local)")
+                        .changed();
+                    if cfg!(feature = "win-livecaptions") {
+                        *changed |= ui
+                            .radio_value(
+                                &mut s.asr_backend,
+                                AsrBackend::WindowsLiveCaptions,
+                                "Windows Live Captions",
+                            )
+                            .changed();
                     }
+                    *changed |= ui
+                        .radio_value(
+                            &mut s.asr_backend,
+                            AsrBackend::ScreenText,
+                            "Subtitles on screen",
+                        )
+                        .on_hover_text(
+                            "Does not listen: reads the subtitles a game or video shows and \
+                             translates those. For a game with subtitles in another language.",
+                        )
+                        .changed();
                 });
-                if lc {
+                if screen {
+                    ui.weak("Reads the subtitles a game shows, in the language chosen below.");
+                } else if lc {
                     ui.weak("Language and microphone come from Windows Live Captions settings.");
                 }
             });
             ui.end_row();
+        }
+        #[cfg(windows)]
+        if screen {
+            screen_rows(ui, s, changed);
         }
 
         ui.label("Spoken language");
         let current = s
             .spoken_language
             .as_deref()
-            .map_or("Auto-detect", lang_name)
+            .map_or(if screen { "English" } else { "Auto-detect" }, lang_name)
             .to_string();
-        ui.add_enabled_ui(!lc, |ui| {
+        ui.add_enabled_ui(!lc || screen, |ui| {
             ComboBox::from_id_salt("spoken")
                 .selected_text(current)
                 .width(200.0)

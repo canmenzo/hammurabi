@@ -1,9 +1,7 @@
 use std::io::{BufRead, BufReader};
-use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::Context;
-use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::settings::lang_name;
@@ -140,8 +138,8 @@ fn system(src: &str, tgt: &str, hint: &str) -> String {
     let notes = if (src, tgt) == ("English", "Turkish") {
         TURKISH
     } else {
-        "- Keep profanity as strong as it is. A slur used between friends as a form of address \
-         becomes a friendly form of address, never a racial word.\n"
+        "- What is said is what the subtitle says: profanity and slurs keep their strength, and \
+         nothing is softened, censored or swapped for a politer word.\n"
     };
     format!(
         "You translate live {src} subtitles of films, games and streams into {tgt}, like a skilled \
@@ -160,9 +158,11 @@ fn system(src: &str, tgt: &str, hint: &str) -> String {
 }
 
 const TURKISH: &str = "\
-- Address words like homie, dog, dawg, bro, cuz and the N-word become kanka, moruk, birader or lan \
-(never köpek). Never render the N-word as a racial word. Where the word itself is what is talked \
-about (who you calling a nigga, don't say nigga), it is \"o kelime\": kime o kelimeyi diyorsun lan.
+- Address words like homie, dog, dawg, bro and cuz become kanka, moruk, birader or lan (never \
+köpek).
+- What is said is what the subtitle says: nothing is softened, censored or swapped for a politer \
+word. The word nigga (niggas, nigger) stays as it is wherever it is said: my nigga = nigga'm, who \
+you calling a nigga = kime nigga diyorsun lan.
 - Keep profanity at natural Turkish strength: fuck = siktir / amına koyayım, motherfucker = orospu \
 çocuğu, bitch = kaltak / şerefsiz, asshole = pislik / göt herif, shit = siktir / bok. Avoid tame \
 words like \"lanet olası\". \"The fuck\" as an intensifier (calm the fuck down, what the fuck) is \
@@ -182,7 +182,7 @@ fn shots(src: &str, tgt: &str) -> &'static [(&'static str, &'static str)] {
     &[
         (
             "Nigga, you crazy as hell.",
-            "Kanka, sen kafayı sıyırmışsın.",
+            "Nigga, sen kafayı sıyırmışsın.",
         ),
         (
             "ay fool quit playin and get in the car",
@@ -296,33 +296,8 @@ impl Translate for LlmTranslator {
         };
         let out = clean(&content);
         check(text, &out, target)?;
-        Ok(Some(scrub(&out, target)))
+        Ok(Some(out))
     }
-}
-
-/// The model keeps the N-word as it is when it is talked about rather than used ("you can't say
-/// ..."), and in Turkish it may name it ("zenci kelimesi") or fall back on "zenci" for a person.
-/// A stream cannot show the first, and "siyahi" is the word for the last that offends no one.
-fn scrub(out: &str, target: &str) -> String {
-    static SLUR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bnigg(?:a|er)s?\b").unwrap());
-    static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bzenci kelimesi").unwrap());
-    static ZENCI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bzenci").unwrap());
-    // "That word", capitalized where what it replaces was.
-    let that = |c: &regex::Captures| {
-        let upper = c[0].starts_with(char::is_uppercase);
-        if upper { "O kelime" } else { "o kelime" }.to_string()
-    };
-    let out = SLUR.replace_all(out, that);
-    if target != "tr" {
-        return out.into_owned();
-    }
-    let out = NAMED.replace_all(&out, that);
-    ZENCI
-        .replace_all(&out, |c: &regex::Captures| {
-            let upper = c[0].starts_with(char::is_uppercase);
-            if upper { "Siyahi" } else { "siyahi" }.to_string()
-        })
-        .into_owned()
 }
 
 /// Languages written in the Latin alphabet, among the translation targets.
@@ -398,21 +373,6 @@ mod tests {
     }
 
     #[test]
-    fn words_a_stream_cannot_show_are_replaced() {
-        assert_eq!(
-            scrub("Yayında nigga diyemezsin.", "tr"),
-            "Yayında o kelime diyemezsin."
-        );
-        assert_eq!(
-            scrub("Zenci kelimesi. Bu hiç hoş değil, kanka.", "tr"),
-            "O kelime. Bu hiç hoş değil, kanka."
-        );
-        assert_eq!(scrub("İki zenciyi gördüm.", "tr"), "İki siyahiyi gördüm.");
-        assert_eq!(scrub("Niggas, bitte.", "de"), "O kelime, bitte.");
-        assert_eq!(scrub("Kanka, naber?", "tr"), "Kanka, naber?");
-    }
-
-    #[test]
     fn rejects_what_is_no_translation() {
         assert!(check("Hello there.", "Selam, n'aber? Çok iyi…", "tr").is_ok());
         assert!(check("Hello there.", "", "tr").is_err());
@@ -437,7 +397,7 @@ mod tests {
         assert_eq!(shots("English", "Turkish").len(), 5);
         let p = system("Japanese", "German", " ");
         assert!(p.contains("live Japanese subtitles") && !p.contains("kanka"));
-        assert!(p.contains("unchanged.\n") && p.contains("never a racial word"));
+        assert!(p.contains("unchanged.\n") && p.contains("nothing is softened"));
         assert!(shots("Japanese", "German").is_empty());
     }
 

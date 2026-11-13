@@ -4,6 +4,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Changed
+
+- The Natural translator says what the speaker said. It used to turn the N-word into a friendly form of address or "that word", and a filter replaced it wherever the model had kept it; both are gone. Profanity and slurs keep their strength, nothing is softened or swapped for a politer word, and the N-word stays in the caption as it was said.
+
 ## [0.7.1] - 2026-11-13
 
 ### Changed

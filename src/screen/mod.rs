@@ -8,6 +8,7 @@ pub mod capture;
 pub mod ocr;
 mod prepare;
 pub mod reader;
+mod resize;
 #[cfg(windows)]
 pub mod windows;
 
@@ -118,9 +119,10 @@ mod source {
                     Some((w, h, reader)) if (*w, *h) == size => reader,
                     slot => &mut slot.insert((size.0, size.1, Reader::new(size.0, size.1))).2,
                 };
+                let (w, h) = reader.size();
                 let grey = reader.prepare(&image.bgra);
                 if grey != read.0 {
-                    read = (grey.to_vec(), ocr.read(grey, size.0, size.1)?);
+                    read = (grey.to_vec(), ocr.read(grey, w, h)?);
                 }
                 if let Some((_, line)) = reader.read((t - t0).as_secs_f64(), &read.1) {
                     log::debug!("screen: {line:?}");

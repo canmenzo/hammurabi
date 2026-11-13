@@ -1133,6 +1133,7 @@ fn screen_raw(width: usize, height: usize) -> anyhow::Result<()> {
     use std::io::Read;
     let ocr = Ocr::new("en")?;
     let mut reader = Reader::new(width, height);
+    let size = reader.size();
     let mut input = std::io::stdin().lock();
     let mut bgra = vec![0u8; width * height * 4];
     let (mut n, mut prepare, mut read) = (0u32, Duration::ZERO, Duration::ZERO);
@@ -1141,7 +1142,7 @@ fn screen_raw(width: usize, height: usize) -> anyhow::Result<()> {
         let grey = reader.prepare(&bgra);
         prepare += t.elapsed();
         let t = Instant::now();
-        let lines = ocr.read(grey, width, height)?;
+        let lines = ocr.read(grey, size.0, size.1)?;
         read += t.elapsed();
         let at = f64::from(n) / 10.0;
         if let Some((seen, text)) = reader.read(at, &lines) {

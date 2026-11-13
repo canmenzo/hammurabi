@@ -3,6 +3,7 @@
 //! readings of one subtitle over time are made into one text, given on once.
 
 use super::prepare::Prep;
+use super::resize::Resize;
 
 /// A line of text as it stands in the band, in pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,8 +72,18 @@ const LATE_FRAC: f32 = 0.5;
 /// Readings kept of one subtitle.
 const READS_MAX: usize = 64;
 
+/// The width the band is read at. What counts as white and how the text recognition reads
+/// were set on pictures this wide; a smaller window's band is enlarged to it first, which
+/// takes the words read wrong at 1280 wide from a third to a ninth.
+const WIDTH: usize = 1920;
+/// A band within this share of that width is read as it is.
+const WIDTH_TOL: f32 = 0.06;
+
 pub struct Reader {
+    /// The size the band is read at.
     width: usize,
+    height: usize,
+    resize: Option<Resize>,
     prep: Prep,
     tracker: Tracker,
 }
@@ -80,17 +91,33 @@ pub struct Reader {
 impl Reader {
     /// For a band this many pixels wide and high, read ten times a second.
     pub fn new(width: usize, height: usize) -> Self {
+        let scale = WIDTH as f32 / width as f32;
+        let to = if (scale - 1.0).abs() <= WIDTH_TOL {
+            (width, height)
+        } else {
+            (WIDTH, ((height as f32 * scale).round() as usize).max(1))
+        };
         Self {
-            width,
-            prep: Prep::new(width, height),
+            width: to.0,
+            height: to.1,
+            resize: (to != (width, height)).then(|| Resize::new((width, height), to)),
+            prep: Prep::new(to.0, to.1),
             tracker: Tracker::default(),
         }
+    }
+
+    /// The width and height of the picture `prepare` gives.
+    pub fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 
     /// The band (four bytes a pixel: blue, green, red, alpha) as the picture the text
     /// recognition is to read: one byte a pixel.
     pub fn prepare(&mut self, bgra: &[u8]) -> &[u8] {
-        self.prep.prepare(bgra)
+        match &mut self.resize {
+            Some(resize) => self.prep.prepare(resize.run(bgra)),
+            None => self.prep.prepare(bgra),
+        }
     }
 
     /// What was read in that picture, `t` seconds in. Gives a subtitle once it is sure of it,

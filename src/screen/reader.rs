@@ -304,7 +304,7 @@ impl Tracker {
                 fresh.push(text);
             }
         }
-        (!fresh.is_empty()).then(|| (cur.t0, fresh.join(" ")))
+        (!fresh.is_empty()).then(|| (cur.t0, commas(&fresh.join(" "))))
     }
 }
 
@@ -336,6 +336,22 @@ impl Track {
         let (rows, sure) = mend(&self.reads[n.saturating_sub(MEND_READS)..])?;
         (sure >= 1.0 || (t - self.t0 >= LATE_S && n >= LATE_N && sure >= LATE_FRAC)).then_some(rows)
     }
+}
+
+/// A full stop after a letter and before a small one is a comma the recognition took for
+/// one, which it does to every third: "Man. get your ass in there."
+fn commas(text: &str) -> String {
+    let c: Vec<char> = text.chars().collect();
+    let comma = |i: usize| {
+        c[i] == '.'
+            && i > 0
+            && c[i - 1].is_alphabetic()
+            && c.get(i + 1) == Some(&' ')
+            && c.get(i + 2).is_some_and(|n| n.is_lowercase())
+    };
+    (0..c.len())
+        .map(|i| if comma(i) { ',' } else { c[i] })
+        .collect()
 }
 
 /// Was this row given on lately: the same text, its beginning or its end, or roughly the same
@@ -635,6 +651,12 @@ mod tests {
             run(&pictures),
             [(0, 2, c1.to_string()), (4, 6, c2.to_string())]
         );
+    }
+
+    #[test]
+    fn a_full_stop_before_a_small_letter_is_a_comma() {
+        assert_eq!(commas("Man. get in. Now."), "Man, get in. Now.");
+        assert_eq!(commas("I... mean... no. I do."), "I... mean... no. I do.");
     }
 
     #[test]

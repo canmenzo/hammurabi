@@ -1109,8 +1109,7 @@ impl Engine {
             }
             EngineCommand::Reconfigure(s) => {
                 let prev = self.core.settings.clone();
-                let read_from =
-                    |s: &Settings| (s.screen_window.clone(), s.screen_top, s.screen_bottom);
+                let read_from = |s: &Settings| (s.screen_window.clone(), s.screen_area());
                 if self.running
                     && (s.asr_backend != prev.asr_backend
                         || (self.screen_active() && read_from(&s) != read_from(&prev)))
@@ -1500,7 +1499,7 @@ impl Engine {
         {
             self.screen = Some(ScreenText::spawn(
                 s.screen_window.clone(),
-                (s.screen_top, s.screen_bottom),
+                s.screen_area(),
                 s.spoken_language.clone().unwrap_or_else(|| "en".into()),
             ));
             true

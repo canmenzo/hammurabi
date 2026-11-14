@@ -124,6 +124,11 @@ enum Cmd {
         top: f32,
         #[arg(long, default_value_t = 1.0)]
         bottom: f32,
+        /// The sides of the video in it, as fractions of the width.
+        #[arg(long, default_value_t = 0.0)]
+        left: f32,
+        #[arg(long, default_value_t = 1.0)]
+        right: f32,
         #[arg(long, default_value_t = 5)]
         secs: u64,
         /// Translate the subtitles to this language code,
@@ -265,6 +270,8 @@ fn main() -> anyhow::Result<()> {
             window,
             top,
             bottom,
+            left,
+            right,
             secs,
             translate,
             natural,
@@ -287,6 +294,8 @@ fn main() -> anyhow::Result<()> {
                         screen_window: window.unwrap_or_default(),
                         screen_top: top,
                         screen_bottom: bottom,
+                        screen_left: left,
+                        screen_right: right,
                         translate: translate.is_some(),
                         target_language: translate.unwrap_or_else(|| "en".into()),
                         translator: if natural {

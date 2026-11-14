@@ -7,10 +7,30 @@ pub mod capture;
 #[cfg(windows)]
 pub mod ocr;
 mod prepare;
+#[cfg(windows)]
+pub mod preview;
 pub mod reader;
 mod resize;
 #[cfg(windows)]
 pub mod windows;
+
+/// The part of a picture subtitles are read in, as fractions of its width and height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Area {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+impl Area {
+    pub const WHOLE: Area = Area {
+        left: 0.0,
+        top: 0.0,
+        right: 1.0,
+        bottom: 1.0,
+    };
+}
 
 pub enum ScreenEvent {
     /// Reading has begun; what is read from.
@@ -38,7 +58,7 @@ mod source {
     use super::capture::{Capture, Target};
     use super::ocr::Ocr;
     use super::reader::Reader;
-    use super::{ScreenEvent, windows};
+    use super::{Area, ScreenEvent, windows};
 
     /// A picture is read this often: what the reader's counts of pictures are set for.
     const EVERY: Duration = Duration::from_millis(100);
@@ -52,8 +72,8 @@ mod source {
 
     impl ScreenText {
         /// `window`: part of a window's title, or empty for the main display. `band`: the
-        /// part of the picture's height the subtitles are in. `lang`: what they are written in.
-        pub fn spawn(window: String, band: (f32, f32), lang: String) -> ScreenText {
+        /// part of the picture the subtitles are in. `lang`: what they are written in.
+        pub fn spawn(window: String, band: Area, lang: String) -> ScreenText {
             let (tx, events) = crossbeam_channel::unbounded();
             let stop = Arc::new(AtomicBool::new(false));
             let s = stop.clone();
@@ -87,21 +107,14 @@ mod source {
 
     fn run(
         window: &str,
-        band: (f32, f32),
+        band: Area,
         lang: &str,
         tx: &Sender<ScreenEvent>,
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
         let ocr = Ocr::new(lang)?;
         if window.is_empty() {
-            // Lets Hammurabi's windows into pictures of the display again when reading ends.
-            struct Own;
-            impl Drop for Own {
-                fn drop(&mut self) {
-                    windows::keep_own_out(false);
-                }
-            }
-            let _own = Own;
+            let _own = windows::OwnOut::hold();
             let capture = Capture::start(&Target::Display(windows::primary_display()))?;
             let _ = tx.send(ScreenEvent::Ready("the main display".into()));
             return read(capture, None, band, &ocr, tx, stop);
@@ -135,7 +148,7 @@ mod source {
     fn read(
         mut capture: Capture,
         window: Option<&str>,
-        band: (f32, f32),
+        band: Area,
         ocr: &Ocr,
         tx: &Sender<ScreenEvent>,
         stop: &AtomicBool,
@@ -167,7 +180,7 @@ mod source {
                     ScreenEvent::Ready(name.to_string())
                 });
             }
-            match capture.band(band.0, band.1) {
+            match capture.part(band) {
                 Ok(Some(new)) => image = Some(new),
                 Ok(None) if capture.alive() => {}
                 Ok(None) => return Ok(()),

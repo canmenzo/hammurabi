@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::screen::Area;
 use crate::tts::{self, Style};
 use crate::types::AudioSource;
 
@@ -141,6 +142,10 @@ pub struct Settings {
     /// The part of that picture's height the subtitles are in, as fractions from its top.
     pub screen_top: f32,
     pub screen_bottom: f32,
+    /// The sides of the video in that picture, as fractions from its left: a video in a web
+    /// page does not fill its window, and its subtitles are centred in the video.
+    pub screen_left: f32,
+    pub screen_right: f32,
     /// Encode only the speech plus a margin instead of Whisper's full 30 s window (much faster on CPU).
     pub trim_audio: bool,
     pub translate: bool,
@@ -199,6 +204,8 @@ impl Default for Settings {
             screen_window: String::new(),
             screen_top: 0.72,
             screen_bottom: 1.0,
+            screen_left: 0.0,
+            screen_right: 1.0,
             trim_audio: true,
             translate: true,
             target_language: default_target(sys_locale::get_locale().as_deref()),
@@ -227,6 +234,15 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn screen_area(&self) -> Area {
+        Area {
+            left: self.screen_left,
+            top: self.screen_top,
+            right: self.screen_right,
+            bottom: self.screen_bottom,
+        }
+    }
+
     /// Configs from before personas keep the voice and speed picked there, as Custom.
     pub fn migrated(mut self) -> Self {
         if self.speak_persona.is_empty() {

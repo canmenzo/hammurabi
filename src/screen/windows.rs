@@ -1,5 +1,7 @@
 //! The windows and displays there are to read from.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use windows::Win32::Foundation::{HWND, LPARAM, POINT};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
@@ -67,6 +69,28 @@ pub fn keep_own_out(out: bool) {
         true.into()
     }
     let _ = unsafe { EnumWindows(Some(each), LPARAM(isize::from(out))) };
+}
+
+/// Hammurabi's own windows stay out of pictures of a display for as long as one of these
+/// lives: reading and the settings window's preview may each hold one.
+pub struct OwnOut(());
+
+static HOLDS: AtomicUsize = AtomicUsize::new(0);
+
+impl OwnOut {
+    pub fn hold() -> Self {
+        HOLDS.fetch_add(1, Ordering::Relaxed);
+        keep_own_out(true);
+        Self(())
+    }
+}
+
+impl Drop for OwnOut {
+    fn drop(&mut self) {
+        if HOLDS.fetch_sub(1, Ordering::Relaxed) == 1 {
+            keep_own_out(false);
+        }
+    }
 }
 
 pub fn primary_display() -> HMONITOR {

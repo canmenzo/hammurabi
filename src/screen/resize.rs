@@ -114,9 +114,48 @@ impl Resize {
     }
 }
 
+/// A picture `k` times smaller each way, a pixel the mean of the `k` by `k` it stands for:
+/// blue, green, red in, red, green, blue out. Gives its width and height with it.
+#[cfg(any(windows, test))]
+pub fn shrink(bgra: &[u8], width: usize, height: usize, k: usize) -> (usize, usize, Vec<u8>) {
+    let (w, h) = (width / k, height / k);
+    let n = (k * k) as u32;
+    let mut out = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = [0u32; 3];
+            for row in 0..k {
+                let at = ((y * k + row) * width + x * k) * 4;
+                for px in bgra[at..at + k * 4].as_chunks::<4>().0 {
+                    for (s, v) in sum.iter_mut().zip(px) {
+                        *s += u32::from(*v);
+                    }
+                }
+            }
+            out.extend([sum[2] / n, sum[1] / n, sum[0] / n, 255].map(|v| v as u8));
+        }
+    }
+    (w, h, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_smaller_picture_is_the_mean_of_its_pixels() {
+        // Four by two: a blue half that is half lit, and a red half.
+        let px = |x: usize, y: usize| match (x < 2, y) {
+            (true, 0) => [200, 0, 0, 255],
+            (true, _) => [100, 0, 0, 255],
+            _ => [0, 0, 60, 255],
+        };
+        let bgra: Vec<u8> = (0..8).flat_map(|i| px(i % 4, i / 4)).collect();
+        assert_eq!(
+            shrink(&bgra, 4, 2, 2),
+            (2, 1, vec![0, 0, 150, 255, 60, 0, 0, 255])
+        );
+    }
 
     #[test]
     fn a_thin_white_stroke_stays_white_when_enlarged() {

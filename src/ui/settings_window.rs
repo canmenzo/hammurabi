@@ -624,6 +624,133 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         "How far down the picture the subtitles are. The bottom quarter suits most games.",
     );
     ui.end_row();
+
+    ui.label("");
+    ui.vertical(|ui| screen_preview(ui, s, changed));
+    ui.end_row();
+}
+
+/// What is read, as a small picture with the subtitle area lit: its two edges can be dragged.
+#[cfg(windows)]
+fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
+    use crate::screen::preview::Preview;
+    use crossbeam_channel::TryRecvError;
+
+    struct Live {
+        window: String,
+        preview: Preview,
+        texture: Option<egui::TextureHandle>,
+        problem: Option<String>,
+        /// The edge being dragged: left, top, right or bottom.
+        edge: usize,
+    }
+    // One settings window, and its pages are drawn by functions that keep nothing.
+    static LIVE: std::sync::Mutex<Option<Live>> = std::sync::Mutex::new(None);
+
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    if live.as_ref().is_some_and(|l| l.window != s.screen_window) {
+        *live = None;
+    }
+    let l = live.get_or_insert_with(|| {
+        let (ctx, id) = (ui.ctx().clone(), ui.ctx().viewport_id());
+        Live {
+            window: s.screen_window.clone(),
+            preview: Preview::spawn(s.screen_window.clone(), move || ctx.request_repaint_of(id)),
+            texture: None,
+            problem: None,
+            edge: 1,
+        }
+    });
+    l.preview.seen();
+    let ended = loop {
+        match l.preview.pictures.try_recv() {
+            Ok(Ok(p)) => {
+                let image = egui::ColorImage::from_rgba_unmultiplied([p.width, p.height], &p.rgba);
+                l.texture = Some(ui.ctx().load_texture(
+                    "screen-preview",
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+                l.problem = None;
+            }
+            Ok(Err(e)) => l.problem = Some(e),
+            Err(TryRecvError::Empty) => break false,
+            Err(TryRecvError::Disconnected) => break true,
+        }
+    };
+    match (&l.problem, &l.texture) {
+        (Some(problem), _) => {
+            ui.colored_label(WARN, problem);
+        }
+        (None, None) => {
+            ui.weak("Waiting for a picture of it.");
+        }
+        (None, Some(texture)) => {
+            let full = texture.size_vec2();
+            let size = full * (400.0 / full.x).min(1.0);
+            let (rect, resp) = ui.allocate_exact_size(size, Sense::drag());
+            // The lit part in the picture's points.
+            let lit = |s: &Settings| {
+                Rect::from_min_max(
+                    rect.lerp_inside(vec2(s.screen_left, s.screen_top)),
+                    rect.lerp_inside(vec2(s.screen_right, s.screen_bottom)),
+                )
+            };
+            if let Some(p) = resp.interact_pointer_pos() {
+                let was = s.screen_area();
+                if resp.drag_started() {
+                    let r = lit(s);
+                    let far = [
+                        p.x - r.left(),
+                        p.y - r.top(),
+                        p.x - r.right(),
+                        p.y - r.bottom(),
+                    ];
+                    l.edge = (0..4)
+                        .min_by(|a, b| far[*a].abs().total_cmp(&far[*b].abs()))
+                        .unwrap_or(1);
+                }
+                // To a whole percent, as the sliders give.
+                let at = ((p - rect.min) / rect.size() * 100.0).round() / 100.0;
+                match l.edge {
+                    0 => s.screen_left = at.x.clamp(0.0, s.screen_right - 0.2),
+                    1 => s.screen_top = at.y.clamp(0.0, s.screen_bottom - 0.05),
+                    2 => s.screen_right = at.x.clamp(s.screen_left + 0.2, 1.0),
+                    _ => s.screen_bottom = at.y.clamp(s.screen_top + 0.05, 1.0),
+                }
+                *changed |= was != s.screen_area();
+            }
+            let painter = ui.painter_at(rect);
+            let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            painter.image(texture.id(), rect, whole, Color32::WHITE);
+            let r = lit(s);
+            let shade = Color32::from_black_alpha(170);
+            for dark in [
+                rect.with_max_y(r.top()),
+                rect.with_min_y(r.bottom()),
+                r.with_min_x(rect.left()).with_max_x(r.left()),
+                r.with_min_x(r.right()).with_max_x(rect.right()),
+            ] {
+                painter.rect_filled(dark, 0, shade);
+            }
+            painter.rect_stroke(
+                r,
+                0,
+                Stroke::new(2.0, ui.visuals().selection.bg_fill),
+                egui::StrokeKind::Inside,
+            );
+            resp.on_hover_cursor(CursorIcon::Grab);
+            ui.weak(
+                "The lit part is read. Drag its top and bottom around the subtitles, and its \
+                 sides to the sides of the video when that does not fill the window.",
+            );
+        }
+    }
+    if ended {
+        // It ended while this page was not shown: a new one is started.
+        *live = None;
+        ui.ctx().request_repaint();
+    }
 }
 
 /// Check mark, Download button or progress bar for one model.

@@ -4,6 +4,11 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- Subtitles on screen shows what it reads: under the subtitle area in Settings > Listen there is now a small live picture of the window or display, with the part that is read lit. Its edges can be dragged, so the area is set by looking instead of by guessing a percentage.
+- The area has sides too. A video in a web page does not fill its window, and its subtitles are centred in the video, not in the window, so they were passed over as something standing to a side; with the sides dragged to the video's they are read.
+
 ## [0.7.2] - 2026-11-13
 
 ### Changed

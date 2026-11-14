@@ -25,6 +25,8 @@ use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemIntero
 use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow};
 use windows::core::{Interface, factory};
 
+use super::Area;
+
 /// Rows of pixels, four bytes each: blue, green, red, alpha.
 pub struct Image {
     pub width: usize,
@@ -46,7 +48,7 @@ pub struct Capture {
     size: SizeInt32,
     /// The window captured, when it is one.
     window: Option<HWND>,
-    /// Where a band is copied to be read, and its size.
+    /// Where the part to read is copied to, and its size.
     staging: Option<(ID3D11Texture2D, u32, u32)>,
 }
 
@@ -106,9 +108,8 @@ impl Capture {
         })
     }
 
-    /// The rows from `top` to `bottom` (fractions of its height) of the newest picture, or None
-    /// when nothing was drawn since the last call.
-    pub fn band(&mut self, top: f32, bottom: f32) -> anyhow::Result<Option<Image>> {
+    /// That part of the newest picture, or None when nothing was drawn since the last call.
+    pub fn part(&mut self, area: Area) -> anyhow::Result<Option<Image>> {
         let mut newest = None;
         while let Ok(f) = self.pool.TryGetNextFrame() {
             newest = Some(f);
@@ -134,16 +135,24 @@ impl Capture {
         unsafe { texture.GetDesc(&mut desc) };
         let width = desc.Width.min(size.Width as u32);
         let height = desc.Height.min(size.Height as u32);
-        let y0 = ((top.clamp(0.0, 1.0) * height as f32) as u32).min(height.saturating_sub(1));
-        let y1 = ((bottom.clamp(0.0, 1.0) * height as f32).ceil() as u32).clamp(y0 + 1, height);
-        let rows = y1 - y0;
+        // From and to in pixels, of `len`: at least one of them.
+        let span = |from: f32, to: f32, len: u32| {
+            let a = ((from.clamp(0.0, 1.0) * len as f32) as u32).min(len.saturating_sub(1));
+            (
+                a,
+                ((to.clamp(0.0, 1.0) * len as f32).ceil() as u32).clamp(a + 1, len),
+            )
+        };
+        let (x0, x1) = span(area.left, area.right, width);
+        let (y0, y1) = span(area.top, area.bottom, height);
+        let (cols, rows) = (x1 - x0, y1 - y0);
         if self
             .staging
             .as_ref()
-            .is_none_or(|&(_, w, h)| (w, h) != (width, rows))
+            .is_none_or(|&(_, w, h)| (w, h) != (cols, rows))
         {
             let desc = D3D11_TEXTURE2D_DESC {
-                Width: width,
+                Width: cols,
                 Height: rows,
                 MipLevels: 1,
                 ArraySize: 1,
@@ -159,21 +168,21 @@ impl Capture {
             };
             let mut t = None;
             unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut t)) }?;
-            self.staging = t.map(|t| (t, width, rows));
+            self.staging = t.map(|t| (t, cols, rows));
         }
         let (staging, ..) = self
             .staging
             .as_ref()
             .ok_or_else(|| anyhow!("no texture to read from"))?;
         let from = D3D11_BOX {
-            left: 0,
+            left: x0,
             top: y0,
             front: 0,
-            right: width,
+            right: x1,
             bottom: y1,
             back: 1,
         };
-        let (w, h) = (width as usize, rows as usize);
+        let (w, h) = (cols as usize, rows as usize);
         let mut bgra = vec![0u8; w * h * 4];
         unsafe {
             self.context

@@ -8,15 +8,33 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - Subtitles on screen shows what it reads: under the subtitle area in Settings > Listen there is now a small live picture of the window or display, with the part that is read lit. Its edges can be dragged, so the area is set by looking instead of by guessing a percentage.
 - The area has sides too. A video in a web page does not fill its window, and its subtitles are centred in the video, not in the window, so they were passed over as something standing to a side; with the sides dragged to the video's they are read.
+- Subtitles on screen reads captions that grow word by word from a left edge, as a video site's automatic ones do. They are not centred and a row of them is not whole until the next begins, so they were passed over. Such captions are told by a row that grows and then moves up as the next starts under it; each row is then given on once, when the next one starts under it or when no word has joined it for a moment. A game's subtitles, which stand whole, are read as before.
 - A downloaded model can be deleted from Settings, with a second click to confirm, and Settings > General lists every model with what it takes to download or delete it. A download shows how many megabytes of how many are in, beside its percentage.
 - Settings says whether captions keep up: how long a line takes to hear (Listen) and to translate (Translate), in orange with what helps when that is too long to keep up with speech. It stands where the model's name was repeated as its status.
 
 ### Changed
 
 - Words to expect are tags: Enter or a comma adds what was typed, the cross on a tag removes it, and the list opens and closes. A long list in one line could not be read.
-- Settings > Listen shows only what applies: while subtitles are read off the screen or Windows Live Captions listens, the speech model's settings are hidden instead of greyed out, where they could be seen but not clicked.
 - While a display is read, only Hammurabi's captions are kept out of pictures of it. Its Settings window was kept out too, so it vanished from every screenshot.
 - "Runs on" says what the speech model runs on in words ("Your NVIDIA graphics card") instead of "CUDA 0".
+- Settings > Listen begins with the choice it hid as the third of three "speech engines": captions from listening, from Windows Live Captions, or from the subtitles on screen. What the chosen one does not use is not shown, and the language of the subtitles stands right under the choice.
+- Settings speaks plainly. The translators are "Fast", "Natural" and "Your own AI server", each with what it is under it instead of in a hover; models are named by what they are for ("Fast translator", "Natural voices") and sized in gigabytes; status lines say "the speech model" where they gave a model's code name.
+- While captions run, a translator or speech model that is not downloaded yet cannot be picked: it says "Download first" beside it. Picking one dropped the model in use and started a download of several gigabytes. The same holds for turning translation on and for going back to listening; the Natural translator can be picked with only its smaller model downloaded, and then uses that.
+- The captions page for a streaming app shows the sample caption while Settings > Captions is open, until a real caption comes, so its size and place can be set before anyone speaks, and Settings says how to add it to OBS.
+- A shortcut is Ctrl or Alt with a function key, or two of Ctrl, Alt and Shift with a letter, a digit or Space: Ctrl+C could be taken from every other app.
+
+### Fixed
+
+- Starting Subtitles on screen after Hammurabi had sat idle for hours took hundreds of megabytes at once, for silence nothing listened to.
+- "Waiting for the window" and "is minimized" stayed on the captions after the window was back. A status in Settings stayed for hours after it had ended, and an error stayed over the game until captions were toggled: it now leaves after 20 seconds and stays in Settings.
+- A translator that failed to load, for a download that stalled or a server not started yet, was not tried again while captions ran.
+- One picture that could not be read, or the display's capture failing once, ended Subtitles on screen for good. The picture is passed over, and the display is waited for as a window is; only when nothing can be read for about five seconds does it stop with an error.
+- The speech model stayed in the graphics card's memory after switching to Subtitles on screen, which uses none.
+- Changing the subtitle language while subtitles were read reached the translator but not the reader.
+- Stopping and starting captions quickly could leave Settings and the tray saying they were off while they ran.
+- The oldest caption was cut off at the top when a status and long captions were up together. It is left out, and the newest is always shown.
+- A word typed into Words to expect was dropped unless Enter was pressed, and recording a shortcut went on after its page was left.
+- Subtitles on screen says so when Windows cannot read the chosen language, where it read it as another. The warning goes once the language is added in Windows.
 
 ## [0.7.2] - 2026-11-13
 

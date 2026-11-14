@@ -40,11 +40,16 @@ fn dev(id: &str, name: &str, d: bool) -> DeviceInfo {
 }
 
 fn main() -> eframe::Result {
+    // Where the window opens, as "x,y": for a display other than the one being worked on.
+    let at = std::env::var("HAMMURABI_DEMO_AT").ok().and_then(|at| {
+        let (x, y) = at.split_once(',')?;
+        Some([x.trim().parse().ok()?, y.trim().parse().ok()?])
+    });
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hammurabi Settings")
             .with_inner_size([740.0, 600.0])
-            .with_position([40.0, 20.0])
+            .with_position(at.unwrap_or([40.0, 20.0]))
             .with_active(false),
         ..Default::default()
     };

@@ -204,10 +204,7 @@ impl SettingsWindow {
                                 ui.set_max_width(ui.available_width() - 12.0);
                                 let (s, m, c, a) = (settings, models, &mut changed, &mut actions);
                                 match self.page {
-                                    Page::Listen => {
-                                        audio(ui, s, m, c, a);
-                                        speech(ui, s, m, c, a);
-                                    }
+                                    Page::Listen => listen(ui, s, m, c, a),
                                     Page::Translate => translation(ui, s, m, c, a),
                                     Page::ReadAloud => read_aloud(ui, s, m, c, a),
                                     Page::Captions => captions(ui, s, c, a),
@@ -316,6 +313,10 @@ impl SettingsWindow {
 
     /// While recording, the next key press with a modifier becomes the shortcut.
     fn record_hotkey(&mut self, ctx: &Context, s: &mut Settings, changed: &mut bool) {
+        // Off its page, or with the window closing, the next key press is meant for something else.
+        if self.page != Page::General || ctx.input(|i| i.viewport().close_requested()) {
+            self.recording = false;
+        }
         if !self.recording {
             return;
         }
@@ -354,7 +355,8 @@ impl SettingsWindow {
             hotkey_label(value)
         };
         let hint = if recording {
-            "Esc cancels"
+            "Ctrl or Alt with an F key, or two of Ctrl, Alt and Shift with a letter, digit or \
+             Space. Esc cancels."
         } else {
             "Click, then press the new shortcut"
         };
@@ -398,11 +400,54 @@ impl SettingsWindow {
         });
 
         section(ui, "Models");
+        // The Natural translator is offered on Windows only.
+        let translation: &[ModelId] = if cfg!(windows) {
+            &[ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b]
+        } else {
+            &[ModelId::Madlad3bQ4k]
+        };
+        let groups: [(&str, &[ModelId]); 3] = [
+            (
+                "Speech",
+                &[
+                    ModelId::WhisperTiny,
+                    ModelId::WhisperBase,
+                    ModelId::WhisperSmall,
+                    ModelId::WhisperTurbo,
+                    ModelId::WhisperLarge,
+                ],
+            ),
+            ("Translation", translation),
+            (
+                "Voices",
+                &[
+                    ModelId::Supertonic,
+                    #[cfg(omnivoice)]
+                    ModelId::OmniVoice,
+                ],
+            ),
+        ];
         grid(ui, "models", |ui| {
-            for &id in ModelId::ALL {
-                ui.label(format!("{} ({})", spec(id).label, size_text(id)));
-                ui.horizontal(|ui| model_state(ui, id, m, in_use(id, s, m), actions));
+            for (heading, ids) in groups {
+                ui.weak(heading);
                 ui.end_row();
+                for &id in ids {
+                    let size = size_label(spec(id).approx_bytes);
+                    ui.label(format!("{} ({size})", model_name(id)));
+                    ui.horizontal(|ui| {
+                        // Read aloud asks for its licence before it offers the download.
+                        #[cfg(omnivoice)]
+                        if id == ModelId::OmniVoice
+                            && !s.omnivoice_accepted
+                            && !m.cached.contains(&id)
+                        {
+                            ui.weak("Agree to its licence in Read aloud first");
+                            return;
+                        }
+                        model_state(ui, id, m, in_use(id, s, m), actions);
+                    });
+                    ui.end_row();
+                }
             }
         });
 
@@ -496,10 +541,7 @@ fn download_note(pending: &[ModelId]) -> String {
     )
 }
 
-#[cfg(windows)]
-const LISTEN_NOTE: &str = "System audio keeps being captioned while a voice reads, on Windows 11 with the default device, or when the voice plays on another device than the one captioned. Otherwise, and for the microphone, listening pauses so the voice is not captioned again.";
-#[cfg(not(windows))]
-const LISTEN_NOTE: &str = "System audio keeps being captioned while a voice reads when it plays on another device than the one captioned. Otherwise, and for the microphone, listening pauses so the voice is not captioned again.";
+const LISTEN_NOTE: &str = "While a voice reads, listening may pause so it is not captioned again.";
 
 fn device_combo(
     ui: &mut Ui,
@@ -562,7 +604,9 @@ fn audio(
             }
         });
         ui.end_row();
-        ui.add_enabled_ui(s.source != AudioSource::System, |ui| ui.label("Microphone"));
+        ui.add_enabled_ui(s.source != AudioSource::System, |ui| {
+            ui.label("Microphone or capture card")
+        });
         ui.add_enabled_ui(s.source != AudioSource::System, |ui| {
             device_combo(ui, "mic", &m.devices.inputs, &mut s.input_device, changed);
         });
@@ -578,13 +622,84 @@ fn size_label(bytes: u64) -> String {
     }
 }
 
-fn size_text(id: ModelId) -> String {
-    format!("{} MB", spec(id).approx_bytes / 1_000_000)
+/// The name a model goes by in the app.
+fn model_name(id: ModelId) -> &'static str {
+    match id {
+        ModelId::Madlad3bQ4k => "Fast translator",
+        ModelId::Gemma12b => "Natural translator",
+        ModelId::GemmaE4b => "Natural translator, smaller",
+        ModelId::Supertonic => "Natural voices",
+        #[cfg(omnivoice)]
+        ModelId::OmniVoice => "Speaker's voice",
+        _ => spec(id).label,
+    }
 }
 
-/// Where subtitles are read from, and the part of that picture they are in.
+/// While captions run, a model that is not downloaded cannot be picked: that would stop them
+/// for a download of gigabytes.
+fn can_pick(id: ModelId, m: &ModelsStatus) -> bool {
+    !(m.running || m.loading) || m.cached.contains(&id)
+}
+
+/// Whether picking the Natural translator chooses its smaller model: only when the larger
+/// cannot be picked. None when neither can.
+fn natural_light(m: &ModelsStatus) -> Option<bool> {
+    if can_pick(ModelId::natural(false), m) {
+        Some(false)
+    } else {
+        can_pick(ModelId::natural(true), m).then_some(true)
+    }
+}
+
+/// The language of the subtitles, where they are read from, and the part of that picture they
+/// are in.
 #[cfg(windows)]
 fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
+    // No auto-detect when reading: none chosen is English.
+    ui.label("Subtitle language");
+    let current = s.spoken_language.clone().unwrap_or_else(|| "en".into());
+    ComboBox::from_id_salt("subtitle-language")
+        .selected_text(lang_name(&current))
+        .width(200.0)
+        .show_ui(ui, |ui| {
+            for c in SOURCE_LANGS {
+                if ui.selectable_label(current == c, lang_name(c)).clicked() && current != c {
+                    s.spoken_language = Some(c.to_string());
+                    *changed = true;
+                }
+            }
+        });
+    ui.end_row();
+
+    // Windows is asked once per language, not every frame, and again every five seconds while
+    // it cannot read it: the language may have been added in Windows since.
+    let lang = s.spoken_language.as_deref().unwrap_or("en");
+    let key = egui::Id::unique("ocr-reads");
+    let now = ui.input(|i| i.time);
+    let known = ui
+        .data(|d| d.get_temp::<(String, bool, f64)>(key))
+        .filter(|(l, reads, at)| l == lang && (*reads || now - at < 5.0));
+    let reads = match known {
+        Some((_, reads, _)) => reads,
+        None => {
+            let reads = crate::screen::ocr::reads(lang);
+            ui.data_mut(|d| d.insert_temp(key, (lang.to_string(), reads, now)));
+            reads
+        }
+    };
+    if !reads {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(5));
+        ui.label("");
+        let text = format!(
+            "Windows cannot read {} yet. Add it in Windows Settings > Time & language > \
+             Language & region.",
+            lang_name(lang)
+        );
+        ui.add(egui::Label::new(RichText::new(text).color(WARN)).wrap());
+        ui.end_row();
+    }
+
     ui.label("Read from");
     let current = if s.screen_window.is_empty() {
         "Main display".to_string()
@@ -780,7 +895,8 @@ fn model_status(
     actions: &mut Vec<SettingsAction>,
 ) {
     ui.horizontal(|ui| {
-        ui.label(format!("{} ({})", spec(id).label, size_text(id)));
+        let size = size_label(spec(id).approx_bytes);
+        ui.label(format!("{} ({size})", model_name(id)));
         model_state(ui, id, m, used, actions);
     });
 }
@@ -792,9 +908,7 @@ fn in_use(id: ModelId, s: &Settings, m: &ModelsStatus) -> bool {
     }
     let listens = s.asr_backend == AsrBackend::Whisper;
     match id {
-        ModelId::Madlad3bQ4k => {
-            s.translate && !matches!(s.translator, TranslatorChoice::Llm { .. })
-        }
+        ModelId::Madlad3bQ4k => s.translate && s.translator == TranslatorChoice::Builtin,
         ModelId::Gemma12b | ModelId::GemmaE4b => {
             s.translate
                 && matches!(s.translator, TranslatorChoice::Natural { light } if id == ModelId::natural(light))
@@ -847,7 +961,7 @@ fn model_state(
                 .data(|d| d.get_temp::<f64>(key))
                 .is_some_and(|until| now < until);
             let text = if asked {
-                format!("Delete {}?", size_text(id))
+                format!("Delete {}?", size_label(spec(id).approx_bytes))
             } else {
                 "Delete".to_string()
             };
@@ -884,7 +998,32 @@ fn keeping_up(ui: &mut Ui, ms: Option<f32>, verb: &str, limits: [f32; 2], then: 
     } else if ms <= limits[1] {
         ui.label(format!("Nearly: a line takes {secs} to {verb}"));
     } else {
-        ui.colored_label(WARN, format!("No: a line takes {secs} to {verb}. {then}"));
+        let text = RichText::new(format!("No: a line takes {secs} to {verb}. {then}")).color(WARN);
+        ui.add(egui::Label::new(text).wrap());
+    }
+}
+
+/// What helps the speech model keep up.
+fn listen_advice(s: &Settings, m: &ModelsStatus) -> &'static str {
+    if ModelId::whisper(s.model, m.compute != "CPU") != ModelId::WhisperTiny {
+        "A smaller model keeps up better."
+    } else if cfg!(windows) {
+        "This computer is too slow to listen. Try Subtitles on screen."
+    } else {
+        "This computer is too slow to listen."
+    }
+}
+
+/// What helps the translator keep up.
+fn translate_advice(s: &Settings, m: &ModelsStatus) -> &'static str {
+    match s.translator {
+        TranslatorChoice::Natural { light: false } => {
+            "The graphics card is busy. The smaller model needs less."
+        }
+        TranslatorChoice::Natural { light: true } => "The graphics card is busy.",
+        TranslatorChoice::Builtin if m.compute == "CPU" => "This computer is slow for it.",
+        TranslatorChoice::Builtin => "The graphics card is busy.",
+        TranslatorChoice::Llm { .. } => "Your server is slow.",
     }
 }
 
@@ -892,11 +1031,85 @@ fn keeping_up(ui: &mut Ui, ms: Option<f32>, verb: &str, limits: [f32; 2], then: 
 fn runs_on(compute: &str) -> &'static str {
     match compute {
         "CPU" => {
-            "The processor, as no graphics card this version can use was found. Tiny and Base keep up best."
+            "The processor. Listening uses a graphics card only in the RTX 50 download. Tiny and \
+             Base keep up best."
         }
         "Metal" => "This Mac's graphics chip",
         _ => "Your NVIDIA graphics card",
     }
+}
+
+/// The Listen page: where captions come from, then what that needs. Listening needs the audio
+/// and the speech model; subtitles on screen need where to read them; Windows Live Captions
+/// keeps its settings to itself.
+fn listen(
+    ui: &mut Ui,
+    s: &mut Settings,
+    m: &ModelsStatus,
+    changed: &mut bool,
+    actions: &mut Vec<SettingsAction>,
+) {
+    if cfg!(windows) {
+        section(ui, "Captions from");
+        ui.horizontal(|ui| {
+            // Listening starts the speech model.
+            let id = ModelId::whisper(s.model, m.compute != "CPU");
+            let free = s.asr_backend == AsrBackend::Whisper || can_pick(id, m);
+            *changed |= ui
+                .add_enabled_ui(free, |ui| {
+                    ui.radio_value(&mut s.asr_backend, AsrBackend::Whisper, "Listening")
+                })
+                .inner
+                .changed();
+            if !free {
+                ui.weak("Download first");
+                model_state(ui, id, m, false, actions);
+            }
+            if cfg!(feature = "win-livecaptions") {
+                *changed |= ui
+                    .radio_value(
+                        &mut s.asr_backend,
+                        AsrBackend::WindowsLiveCaptions,
+                        "Windows Live Captions",
+                    )
+                    .changed();
+            }
+            *changed |= ui
+                .radio_value(
+                    &mut s.asr_backend,
+                    AsrBackend::ScreenText,
+                    "Subtitles on screen",
+                )
+                .on_hover_text(
+                    "Does not listen: reads the subtitles a game or video shows and \
+                     translates those. For a game with subtitles in another language.",
+                )
+                .changed();
+        });
+    }
+    let lc = cfg!(all(windows, feature = "win-livecaptions"))
+        && s.asr_backend == AsrBackend::WindowsLiveCaptions;
+    let screen = cfg!(windows) && s.asr_backend == AsrBackend::ScreenText;
+    if cfg!(windows) {
+        ui.weak(if screen {
+            "Reads the subtitles a game shows."
+        } else if lc {
+            "Language and microphone come from Windows Live Captions settings."
+        } else {
+            "Listens to the computer's sound or a microphone."
+        });
+    }
+    #[cfg(windows)]
+    if screen {
+        ui.add_space(4.0);
+        grid(ui, "screen", |ui| screen_rows(ui, s, changed));
+        return;
+    }
+    if lc {
+        return;
+    }
+    audio(ui, s, m, changed, actions);
+    speech(ui, s, m, changed, actions);
 }
 
 fn speech(
@@ -908,84 +1121,28 @@ fn speech(
 ) {
     section(ui, "Speech recognition");
     let gpu = m.compute != "CPU";
-    let lc = cfg!(all(windows, feature = "win-livecaptions"))
-        && s.asr_backend == AsrBackend::WindowsLiveCaptions;
-    let screen = cfg!(windows) && s.asr_backend == AsrBackend::ScreenText;
-    // Neither listens with Whisper.
-    let lc = lc || screen;
     grid(ui, "speech", |ui| {
-        if cfg!(windows) {
-            ui.label("Speech engine");
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    *changed |= ui
-                        .radio_value(&mut s.asr_backend, AsrBackend::Whisper, "Whisper (local)")
-                        .changed();
-                    if cfg!(feature = "win-livecaptions") {
-                        *changed |= ui
-                            .radio_value(
-                                &mut s.asr_backend,
-                                AsrBackend::WindowsLiveCaptions,
-                                "Windows Live Captions",
-                            )
-                            .changed();
-                    }
-                    *changed |= ui
-                        .radio_value(
-                            &mut s.asr_backend,
-                            AsrBackend::ScreenText,
-                            "Subtitles on screen",
-                        )
-                        .on_hover_text(
-                            "Does not listen: reads the subtitles a game or video shows and \
-                             translates those. For a game with subtitles in another language.",
-                        )
-                        .changed();
-                });
-                if screen {
-                    ui.weak("Reads the subtitles a game shows, in the language chosen below.");
-                } else if lc {
-                    ui.weak("Language and microphone come from Windows Live Captions settings.");
-                }
-            });
-            ui.end_row();
-        }
-        #[cfg(windows)]
-        if screen {
-            screen_rows(ui, s, changed);
-        }
-
         ui.label("Spoken language");
         let current = s
             .spoken_language
             .as_deref()
-            .map_or(if screen { "English" } else { "Auto-detect" }, lang_name)
+            .map_or("Auto-detect", lang_name)
             .to_string();
-        ui.add_enabled_ui(!lc || screen, |ui| {
-            ComboBox::from_id_salt("spoken")
-                .selected_text(current)
-                .width(200.0)
-                .show_ui(ui, |ui| {
+        ComboBox::from_id_salt("spoken")
+            .selected_text(current)
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                *changed |= ui
+                    .selectable_value(&mut s.spoken_language, None, "Auto-detect")
+                    .changed();
+                for c in SOURCE_LANGS {
                     *changed |= ui
-                        .selectable_value(&mut s.spoken_language, None, "Auto-detect")
+                        .selectable_value(&mut s.spoken_language, Some(c.to_string()), lang_name(c))
                         .changed();
-                    for c in SOURCE_LANGS {
-                        *changed |= ui
-                            .selectable_value(
-                                &mut s.spoken_language,
-                                Some(c.to_string()),
-                                lang_name(c),
-                            )
-                            .changed();
-                    }
-                })
-        });
+                }
+            });
         ui.end_row();
 
-        // The rest is the speech model's, which neither of those uses.
-        if lc {
-            return;
-        }
         ui.label("Words to expect");
         hint_tags(ui, &mut s.hint, changed);
         ui.end_row();
@@ -1000,7 +1157,7 @@ fn speech(
             }
             c => {
                 let id = ModelId::whisper(c, gpu);
-                format!("{} ({})", spec(id).label, size_text(id))
+                format!("{} ({})", spec(id).label, size_label(spec(id).approx_bytes))
             }
         };
         ui.horizontal(|ui| {
@@ -1016,7 +1173,18 @@ fn speech(
                         ModelChoice::Turbo,
                         ModelChoice::Large,
                     ] {
-                        *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
+                        let id = ModelId::whisper(c, gpu);
+                        if can_pick(id, m) {
+                            *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
+                            continue;
+                        }
+                        ui.horizontal(|ui| {
+                            ui.add_enabled_ui(false, |ui| {
+                                ui.selectable_label(s.model == c, label(c))
+                            });
+                            ui.weak("Download first");
+                            model_state(ui, id, m, false, actions);
+                        });
                     }
                 });
             let id = ModelId::whisper(s.model, gpu);
@@ -1025,30 +1193,28 @@ fn speech(
         ui.end_row();
 
         ui.label("Keeping up");
-        keeping_up(
-            ui,
-            m.asr_ms,
-            "hear",
-            [400.0, 1000.0],
-            "A smaller model keeps up better.",
-        );
+        keeping_up(ui, m.asr_ms, "hear", [400.0, 1000.0], listen_advice(s, m));
         ui.end_row();
 
         ui.label("Speed");
         *changed |= ui
-            .checkbox(&mut s.trim_audio, "Fast mode (skip silence padding)")
-            .on_hover_text("Encodes only the speech instead of a full 30 s window. Turn off if captions get worse.")
+            .checkbox(&mut s.trim_audio, "Skip the silence around speech")
+            .on_hover_text(
+                "Much faster on a computer without a graphics card. Turn it off if captions get \
+                 worse.",
+            )
             .changed();
         ui.end_row();
 
         ui.label("Runs on");
-        ui.label(runs_on(&m.compute));
+        // A label in a grid is one line unless it is told to wrap.
+        ui.add(egui::Label::new(runs_on(&m.compute)).wrap());
         ui.end_row();
     });
 }
 
-/// The words to expect (kept as one text, commas between them) as tags: Enter or a comma adds
-/// what was typed, the cross on a tag removes it, and their count opens and closes them. Each
+/// The words to expect (kept as one text, commas between them) as tags: Enter, a comma or
+/// leaving the field adds what was typed, the cross on a tag removes it, and their count opens and closes them. Each
 /// line of tags is a row of the grid `ui` lays out.
 fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
     /// As wide as a line of tags gets.
@@ -1068,10 +1234,12 @@ fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
                  once go in with commas between them. Not used while subtitles are read off \
                  the screen.",
             );
-        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-        if enter || new.contains(',') {
+        // Clicking elsewhere adds what was typed too, and only Enter keeps the field for more.
+        let done = field.lost_focus();
+        let enter = done && ui.input(|i| i.key_pressed(Key::Enter));
+        if done || new.contains(',') {
             // What stands after the last comma is still being typed.
-            let cut = if enter {
+            let cut = if done {
                 new.len()
             } else {
                 new.rfind(',').map_or(0, |i| i + 1)
@@ -1211,9 +1379,25 @@ fn translation(
     actions: &mut Vec<SettingsAction>,
 ) {
     section(ui, "Translation");
-    *changed |= ui
-        .checkbox(&mut s.translate, "Translate captions")
-        .changed();
+    // Turning it on starts the chosen translator's model.
+    let model = match s.translator {
+        TranslatorChoice::Builtin => Some(ModelId::Madlad3bQ4k),
+        TranslatorChoice::Natural { light } => Some(ModelId::natural(light)),
+        TranslatorChoice::Llm { .. } => None,
+    };
+    let free = s.translate || model.is_none_or(|id| can_pick(id, m));
+    ui.horizontal(|ui| {
+        *changed |= ui
+            .add_enabled(
+                free,
+                egui::Checkbox::new(&mut s.translate, "Translate captions"),
+            )
+            .changed();
+        if let Some(id) = model.filter(|_| !free) {
+            ui.weak("Download first");
+            model_state(ui, id, m, false, actions);
+        }
+    });
     ui.add_space(4.0);
     ui.add_enabled_ui(s.translate, |ui| {
         grid(ui, "translation", |ui| {
@@ -1229,38 +1413,71 @@ fn translation(
                     }
                 });
             ui.end_row();
+        });
 
-            ui.label("Engine");
-            // 0 = MADLAD, 1 = Natural, 2 = the user's own server.
-            let was = match s.translator {
-                TranslatorChoice::Builtin => 0,
-                TranslatorChoice::Natural { .. } => 1,
-                TranslatorChoice::Llm { .. } => 2,
-            };
-            let mut now = was;
-            ui.vertical(|ui| {
-                ui.radio_value(&mut now, 0, "Fast (MADLAD)")
-                    .on_hover_text("Word for word. Runs on any computer.");
-                if cfg!(windows) {
-                    ui.radio_value(&mut now, 1, "Natural (language model)")
-                        .on_hover_text(NATURAL_NOTE);
-                }
-                ui.radio_value(&mut now, 2, "Your own LLM server")
-                    .on_hover_text("Ollama, LM Studio or any OpenAI-compatible server.");
-            });
-            if now != was {
-                s.translator = match now {
-                    0 => TranslatorChoice::Builtin,
-                    1 => TranslatorChoice::Natural { light: false },
-                    _ => TranslatorChoice::Llm {
-                        base_url: OLLAMA_URL.into(),
-                        model: OLLAMA_MODEL.into(),
-                    },
-                };
-                *changed = true;
+        // The radios with a line under each are outside the grid: tall cells leave the rows
+        // after them too much room.
+        section(ui, "Translator");
+        // 0 = MADLAD, 1 = Natural, 2 = the user's own server.
+        let was = match s.translator {
+            TranslatorChoice::Builtin => 0,
+            TranslatorChoice::Natural { .. } => 1,
+            TranslatorChoice::Llm { .. } => 2,
+        };
+        let mut now = was;
+        for (v, title, model, about) in [
+            (
+                0,
+                "Fast",
+                Some(ModelId::Madlad3bQ4k),
+                "Word for word. Runs on any computer.",
+            ),
+            (1, "Natural", Some(ModelId::natural(false)), NATURAL_NOTE),
+            (
+                2,
+                "Your own AI server (advanced)",
+                None,
+                "Ollama, LM Studio or any OpenAI-compatible server.",
+            ),
+        ] {
+            if v == 1 && !cfg!(windows) {
+                continue;
             }
-            ui.end_row();
+            let free = v == was
+                || (v == 1 && natural_light(m).is_some())
+                || (v != 1 && model.is_none_or(|id| can_pick(id, m)));
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(free, egui::RadioButton::new(now == v, title))
+                    .clicked()
+                {
+                    now = v;
+                }
+                if let Some(id) = model.filter(|_| !free) {
+                    ui.weak("Download first");
+                    model_state(ui, id, m, false, actions);
+                }
+            });
+            indented(ui, |ui| {
+                ui.weak(about);
+            });
+        }
+        if now != was {
+            s.translator = match now {
+                0 => TranslatorChoice::Builtin,
+                1 => TranslatorChoice::Natural {
+                    light: natural_light(m).unwrap_or(false),
+                },
+                _ => TranslatorChoice::Llm {
+                    base_url: OLLAMA_URL.into(),
+                    model: OLLAMA_MODEL.into(),
+                },
+            };
+            *changed = true;
+        }
+        ui.add_space(4.0);
 
+        grid(ui, "translator", |ui| {
             let used = [ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b]
                 .map(|id| in_use(id, s, m));
             match &mut s.translator {
@@ -1271,21 +1488,29 @@ fn translation(
                 }
                 TranslatorChoice::Natural { light } => {
                     ui.label("Model");
-                    ui.vertical(|ui| {
-                        let used = used[1 + usize::from(*light)];
-                        model_status(ui, ModelId::natural(*light), m, used, actions);
+                    let used = used[1 + usize::from(*light)];
+                    model_status(ui, ModelId::natural(*light), m, used, actions);
+                    ui.end_row();
+                    ui.label("");
+                    ui.horizontal(|ui| {
+                        let other = ModelId::natural(!*light);
+                        let free = can_pick(other, m);
                         *changed |= ui
-                            .checkbox(light, "Smaller model")
+                            .add_enabled(free, egui::Checkbox::new(light, "Smaller model"))
                             .on_hover_text(
                                 "Takes 3.5 GB of graphics memory instead of 8, and translates a \
                                  little less naturally. For when a game runs on the same card.",
                             )
                             .changed();
+                        if !free {
+                            ui.weak("Download first");
+                            model_state(ui, other, m, false, actions);
+                        }
                     });
                     ui.end_row();
                 }
                 TranslatorChoice::Llm { base_url, model } => {
-                    ui.label("Base URL");
+                    ui.label("Address");
                     *changed |= ui
                         .add(egui::TextEdit::singleline(base_url).desired_width(260.0))
                         .changed();
@@ -1304,13 +1529,20 @@ fn translation(
                 m.tr_ms,
                 "translate",
                 [700.0, 1500.0],
-                "The graphics card is busy.",
+                translate_advice(s, m),
             );
             ui.end_row();
         });
+        ui.add_space(4.0);
         *changed |= ui
-            .checkbox(&mut s.instant, "Instant (translate the live line)")
+            .checkbox(
+                &mut s.instant,
+                "Translate while a sentence is still being said",
+            )
             .changed();
+        indented(ui, |ui| {
+            ui.weak("Sooner, but the words change as it grows.");
+        });
     });
 }
 
@@ -1436,8 +1668,8 @@ fn read_aloud(
             ui,
             s,
             tts::Engine::Supertonic,
-            "Supertonic 3",
-            "Natural voices that run on this computer, for 22 languages. Others use system voices.",
+            "Natural voices",
+            "Voices that run on this computer, for 22 languages. Others use system voices.",
         );
         if s.speak_engine == tts::Engine::Supertonic {
             let used = in_use(ModelId::Supertonic, s, m);
@@ -1453,9 +1685,12 @@ fn read_aloud(
         #[cfg(not(omnivoice))]
         {
             ui.add_enabled(false, egui::RadioButton::new(false, "Speaker's voice"))
-                .on_disabled_hover_text("Comes with the Windows GPU build");
+                .on_disabled_hover_text("Comes with the hammurabi-windows-gpu download");
             indented(ui, |ui| {
-                ui.weak("Reads in the voice of whoever is speaking. Comes with the Windows GPU build.");
+                ui.weak(
+                    "Reads in the voice of whoever is speaking. Comes with the \
+                     hammurabi-windows-gpu download.",
+                );
             });
         }
         #[cfg(omnivoice)]
@@ -1465,7 +1700,7 @@ fn read_aloud(
                 s,
                 tts::Engine::Speaker,
                 "Speaker's voice",
-                "Reads in the voice of whoever is speaking, learned on this computer from a few seconds of their speech. Needs a GPU with Vulkan.",
+                "Reads in the voice of whoever is speaking, learned on this computer from a few seconds of their speech. Needs a graphics card.",
             );
             if s.speak_engine == tts::Engine::Speaker {
                 speaker_voice(ui, s, m, changed, actions);
@@ -1488,7 +1723,7 @@ fn read_aloud(
             let reader = tts::neural(&style, &sample_lang)
                 .or_else(|| tts::neural_fallback(&style, &m.voices, &sample_lang));
             let voice = match (reader.filter(|_| neural), style.resolve(&m.voices, &sample_lang)) {
-                (Some((_, v, _)), _) => format!("Supertonic 3 {v}"),
+                (Some((_, v, _)), _) => format!("Natural voice {v}"),
                 (_, Ok((Some(v), ..))) => format!("{} ({})", v.name, v.lang),
                 (_, Ok((None, ..))) => "System voice".into(),
                 (_, Err(_)) => format!("No {} voice", lang_name(&sample_lang)),
@@ -1532,7 +1767,7 @@ fn read_aloud(
                 )
                 .changed();
             ui.end_row();
-            ui.label("Read on");
+            ui.label("Play on");
             device_combo(
                 ui,
                 "speak_out",
@@ -1633,7 +1868,7 @@ fn custom_voice(
         ui.label("Voice");
         let label = |v: &Voice| format!("{} ({})", v.name, v.lang);
         let current = match &s.speak_voice {
-            None if neural => format!("Supertonic 3 {}", s.speak_neural_voice),
+            None if neural => format!("Natural voice {}", s.speak_neural_voice),
             None => "Automatic".to_string(),
             Some(id) => m
                 .voices
@@ -1649,7 +1884,7 @@ fn custom_voice(
                     for v in supertonic::STYLES {
                         let on = s.speak_voice.is_none() && s.speak_neural_voice == v;
                         if ui
-                            .selectable_label(on, format!("Supertonic 3 {v}"))
+                            .selectable_label(on, format!("Natural voice {v}"))
                             .clicked()
                         {
                             s.speak_voice = None;
@@ -1722,13 +1957,25 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         .on_hover_text("For a stream: the caption window is not part of a captured game.")
         .changed();
     if s.browser_source {
+        ui.weak("In OBS, add a Browser source as wide and high as your stream, with this address:");
         ui.horizontal(|ui| {
-            ui.weak("In OBS, add a Browser source with this address:");
             let url = super::web::Web::url();
+            let key = egui::Id::unique("url-copied");
+            let now = ui.input(|i| i.time);
             if ui.link(&url).on_hover_text("Copy").clicked() {
                 ui.ctx().copy_text(url);
+                ui.data_mut(|d| d.insert_temp(key, now + 2.0));
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(2));
+            }
+            if ui
+                .data(|d| d.get_temp::<f64>(key))
+                .is_some_and(|until| now < until)
+            {
+                ui.weak("Copied");
             }
         });
+        ui.weak("Add ?scale=1.5 to the address for larger text.");
     }
 
     section(ui, "Look");
@@ -1761,7 +2008,7 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
             .changed();
         ui.end_row();
 
-        ui.label("Captions on screen");
+        ui.label("Captions at once");
         *changed |= ui.add(Slider::new(&mut c.cues, 1..=3)).changed();
         ui.end_row();
 
@@ -1792,7 +2039,7 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         .changed();
     ui.add_enabled_ui(c.show_original, |ui| {
         *changed |= ui
-            .checkbox(&mut c.original_first, "Original first")
+            .checkbox(&mut c.original_first, "Original above the translation")
             .changed();
     });
     ui.add_space(4.0);
@@ -1811,16 +2058,22 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
 /// A key press as a `global_hotkey` string, e.g. "alt+shift+KeyT". None without a modifier a
 /// shortcut can hang on, or for a key that makes a poor shortcut.
 fn hotkey_text(mods: Modifiers, key: Key) -> Option<String> {
-    if !(mods.ctrl || mods.alt || mods.mac_cmd) {
+    let name = key.name();
+    let f_key = matches!(name.as_bytes(), [b'F', rest @ ..]
+        if !rest.is_empty() && rest.iter().all(u8::is_ascii_digit));
+    let held = [mods.ctrl, mods.alt, mods.shift, mods.mac_cmd]
+        .into_iter()
+        .filter(|&on| on)
+        .count();
+    // One modifier and a letter, digit or Space is the apps' own, like Ctrl+C: taken
+    // system-wide it would stop working everywhere.
+    if !(mods.ctrl || mods.alt || mods.mac_cmd) || (held < 2 && !f_key) {
         return None;
     }
-    let name = key.name();
     let code = match name.as_bytes() {
         [c] if c.is_ascii_uppercase() => format!("Key{name}"),
         [c] if c.is_ascii_digit() => format!("Digit{name}"),
-        [b'F', rest @ ..] if !rest.is_empty() && rest.iter().all(u8::is_ascii_digit) => {
-            name.to_string()
-        }
+        _ if f_key => name.to_string(),
         _ if key == Key::Space => "Space".into(),
         _ => return None,
     };
@@ -1895,17 +2148,169 @@ mod tests {
     fn records_hotkeys_the_hotkey_parser_accepts() {
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
         let text = |m, k| hotkey_text(m, k);
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
         assert_eq!(text(alt_shift, Key::T).unwrap(), "alt+shift+KeyT");
-        assert_eq!(text(Modifiers::CTRL, Key::Num1).unwrap(), "ctrl+Digit1");
+        assert_eq!(text(ctrl_shift, Key::Num1).unwrap(), "ctrl+shift+Digit1");
         assert_eq!(text(Modifiers::ALT, Key::F5).unwrap(), "alt+F5");
-        assert_eq!(text(Modifiers::CTRL, Key::Space).unwrap(), "ctrl+Space");
+        assert_eq!(
+            text(Modifiers::CTRL | Modifiers::ALT, Key::Space).unwrap(),
+            "ctrl+alt+Space"
+        );
         assert_eq!(text(Modifiers::NONE, Key::T), None);
         assert_eq!(text(Modifiers::SHIFT, Key::T), None);
+        assert_eq!(text(Modifiers::SHIFT, Key::F5), None);
         assert_eq!(text(Modifiers::ALT, Key::Enter), None);
+        // One modifier is not enough unless the key is a function key.
+        assert_eq!(text(Modifiers::CTRL, Key::C), None);
+        assert_eq!(text(Modifiers::ALT, Key::Num1), None);
+        assert_eq!(text(Modifiers::CTRL, Key::Space), None);
         for k in [Key::T, Key::Num1, Key::F5, Key::Space] {
             let s = text(alt_shift, k).unwrap();
             assert!(s.parse::<global_hotkey::hotkey::HotKey>().is_ok(), "{s}");
         }
+    }
+
+    #[test]
+    fn records_the_hotkey_only_on_its_page() {
+        let ctx = Context::default();
+        let mut s = Settings::default();
+        let was = s.hotkey_toggle.clone();
+        let press = egui::RawInput {
+            events: vec![Event::Key {
+                key: Key::K,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            }],
+            ..Default::default()
+        };
+        let mut win = SettingsWindow {
+            page: Page::Listen,
+            recording: true,
+            ..Default::default()
+        };
+        let mut changed = false;
+        let mut frame = |win: &mut SettingsWindow, s: &mut Settings| {
+            ctx.run_pass(press.clone(), |ctx| win.record_hotkey(ctx, s, &mut changed))
+                .drop_without_applying_deltas();
+        };
+        frame(&mut win, &mut s);
+        assert!(!win.recording);
+        assert_eq!(s.hotkey_toggle, was);
+
+        win.page = Page::General;
+        frame(&mut win, &mut s);
+        assert_eq!(s.hotkey_toggle, was, "the button was not clicked again");
+        win.recording = true;
+        frame(&mut win, &mut s);
+        assert!(!win.recording);
+        assert_eq!(s.hotkey_toggle, "ctrl+shift+KeyK");
+        assert!(changed);
+    }
+
+    #[test]
+    fn a_model_not_downloaded_is_not_picked_while_captions_run() {
+        let mut m = status(vec![ModelId::WhisperTurbo], "CUDA 0");
+        assert!(can_pick(ModelId::WhisperLarge, &m));
+        m.running = true;
+        assert!(can_pick(ModelId::WhisperTurbo, &m));
+        assert!(!can_pick(ModelId::WhisperLarge, &m));
+        m.running = false;
+        m.loading = true;
+        assert!(!can_pick(ModelId::Gemma12b, &m));
+        // The Natural translator can be picked with either of its models.
+        assert_eq!(natural_light(&m), None);
+        m.cached.push(ModelId::GemmaE4b);
+        assert_eq!(natural_light(&m), Some(true));
+        m.cached.push(ModelId::Gemma12b);
+        assert_eq!(natural_light(&m), Some(false));
+        m.loading = false;
+        m.cached.clear();
+        assert_eq!(natural_light(&m), Some(false));
+    }
+
+    #[test]
+    fn says_what_helps_a_model_keep_up() {
+        let gpu = status(Vec::new(), "CUDA 0");
+        let cpu = status(Vec::new(), "CPU");
+        let s = Settings {
+            translator: TranslatorChoice::Natural { light: false },
+            model: ModelChoice::Tiny,
+            ..Settings::default()
+        };
+        assert_eq!(
+            translate_advice(&s, &gpu),
+            "The graphics card is busy. The smaller model needs less."
+        );
+        let light = Settings {
+            translator: TranslatorChoice::Natural { light: true },
+            ..s.clone()
+        };
+        assert_eq!(translate_advice(&light, &gpu), "The graphics card is busy.");
+        let fast = Settings {
+            translator: TranslatorChoice::Builtin,
+            ..s.clone()
+        };
+        assert_eq!(
+            translate_advice(&fast, &cpu),
+            "This computer is slow for it."
+        );
+        assert_eq!(translate_advice(&fast, &gpu), "The graphics card is busy.");
+        let own = Settings {
+            translator: TranslatorChoice::Llm {
+                base_url: OLLAMA_URL.into(),
+                model: OLLAMA_MODEL.into(),
+            },
+            ..s.clone()
+        };
+        assert_eq!(translate_advice(&own, &gpu), "Your server is slow.");
+
+        let too_slow = if cfg!(windows) {
+            "This computer is too slow to listen. Try Subtitles on screen."
+        } else {
+            "This computer is too slow to listen."
+        };
+        assert_eq!(listen_advice(&s, &cpu), too_slow);
+        assert_eq!(listen_advice(&s, &gpu), too_slow);
+        for model in [ModelChoice::Auto, ModelChoice::Base, ModelChoice::Large] {
+            let bigger = Settings { model, ..s.clone() };
+            assert_eq!(
+                listen_advice(&bigger, &cpu),
+                "A smaller model keeps up better."
+            );
+        }
+    }
+
+    #[test]
+    fn a_model_is_in_use_only_while_captions_use_it() {
+        let mut s = Settings {
+            translate: true,
+            translator: TranslatorChoice::Natural { light: false },
+            asr_backend: AsrBackend::Whisper,
+            model: ModelChoice::Turbo,
+            speak: false,
+            ..Settings::default()
+        };
+        let mut m = status(Vec::new(), "CUDA 0");
+        assert!(!in_use(ModelId::Gemma12b, &s, &m));
+        m.running = true;
+        assert!(in_use(ModelId::Gemma12b, &s, &m));
+        assert!(!in_use(ModelId::GemmaE4b, &s, &m));
+        // The Natural translator does not load the Fast one.
+        assert!(!in_use(ModelId::Madlad3bQ4k, &s, &m));
+        assert!(in_use(ModelId::WhisperTurbo, &s, &m));
+        assert!(!in_use(ModelId::WhisperLarge, &s, &m));
+        assert!(!in_use(ModelId::Supertonic, &s, &m));
+
+        s.translator = TranslatorChoice::Builtin;
+        assert!(in_use(ModelId::Madlad3bQ4k, &s, &m));
+        assert!(!in_use(ModelId::Gemma12b, &s, &m));
+        s.translate = false;
+        assert!(!in_use(ModelId::Madlad3bQ4k, &s, &m));
+
+        s.asr_backend = AsrBackend::ScreenText;
+        assert!(!in_use(ModelId::WhisperTurbo, &s, &m));
     }
 
     #[test]

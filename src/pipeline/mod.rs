@@ -57,7 +57,7 @@ const LC_TAIL: Duration = Duration::from_secs(2);
 const ASR_MAX_ERRORS: u32 = 5;
 /// A transcription still running after this long never returns; the speech model is reloaded.
 const ASR_STUCK: Duration = Duration::from_secs(30);
-/// A speech model that failed to load is tried again this many times, this far apart.
+/// A speech model or translator that failed to load is tried again this many times, this far apart.
 const ASR_RETRIES: u32 = 3;
 const ASR_RETRY_AFTER: Duration = Duration::from_secs(5);
 /// The Large speech model taking this long a run on average, over this many runs, is not getting
@@ -827,6 +827,8 @@ pub struct Engine {
     reopen_at: Instant,
     /// The audio device is gone and is being waited for.
     capture_lost: bool,
+    /// A warning that the window to read is not open or is minimized is up.
+    screen_notice: bool,
     asr_errors: u32,
     /// How long the Large model's last runs took.
     asr_took: VecDeque<u32>,
@@ -836,6 +838,8 @@ pub struct Engine {
     asr_busy: Option<Instant>,
     asr_retries: u32,
     asr_retry_at: Option<Instant>,
+    tr_retries: u32,
+    tr_retry_at: Option<Instant>,
     /// A worker is downloading its model (Stop cancels that download).
     asr_downloading: bool,
     tr_downloading: bool,
@@ -896,12 +900,15 @@ impl Engine {
                     padded_until: now,
                     reopen_at: now,
                     capture_lost: false,
+                    screen_notice: false,
                     asr_errors: 0,
                     asr_took: VecDeque::new(),
                     asr_stand_in: false,
                     asr_busy: None,
                     asr_retries: ASR_RETRIES,
                     asr_retry_at: None,
+                    tr_retries: ASR_RETRIES,
+                    tr_retry_at: None,
                     asr_downloading: false,
                     tr_downloading: false,
                 };
@@ -1062,6 +1069,9 @@ impl Engine {
     }
 
     fn pad_silence(&mut self, now: Instant) {
+        if self.lc_active() || self.screen_active() {
+            return;
+        }
         if now.saturating_duration_since(self.last_audio) < SILENCE_AFTER {
             return;
         }
@@ -1081,10 +1091,18 @@ impl Engine {
                     self.stop();
                 }
                 self.asr_retries = ASR_RETRIES;
+                self.tr_retries = ASR_RETRIES;
                 self.core.set_settings(s);
                 self.core.reset();
                 self.sync_speaker();
                 if self.start_lc() || self.start_screen() {
+                    // No speech model is used: its graphics memory is let go, and listening
+                    // again loads it anew.
+                    self.asr = None;
+                    self.asr_downloading = false;
+                    self.asr_busy = None;
+                    self.core.sched.forget_in_flight();
+                    self.core.sched.ready = false;
                     self.ensure_workers();
                     self.running = true;
                     self.events().send(EngineEvent::State(EngineState::Loading));
@@ -1109,7 +1127,13 @@ impl Engine {
             }
             EngineCommand::Reconfigure(s) => {
                 let prev = self.core.settings.clone();
-                let read_from = |s: &Settings| (s.screen_window.clone(), s.screen_area());
+                let read_from = |s: &Settings| {
+                    (
+                        s.screen_window.clone(),
+                        s.screen_area(),
+                        s.spoken_language.clone(),
+                    )
+                };
                 if self.running
                     && (s.asr_backend != prev.asr_backend
                         || (self.screen_active() && read_from(&s) != read_from(&prev)))
@@ -1258,10 +1282,15 @@ impl Engine {
         }
     }
 
-    /// Reloads a speech model that failed to load, or whose worker never answered.
+    /// Reloads a speech model or translator that failed to load, or a speech model whose worker
+    /// never answered.
     fn check_asr(&mut self, now: Instant) {
         if self.asr_retry_at.is_some_and(|t| now >= t) {
             self.asr_retry_at = None;
+            self.ensure_workers();
+        }
+        if self.tr_retry_at.is_some_and(|t| now >= t) {
+            self.tr_retry_at = None;
             self.ensure_workers();
         }
         if self
@@ -1352,7 +1381,9 @@ impl Engine {
         }
         self.running = false;
         self.capture_lost = false;
+        self.screen_notice = false;
         self.asr_retry_at = None;
+        self.tr_retry_at = None;
         self.asr_busy = None;
         self.core.reset();
         self.core.caption(CaptionUpdate::Clear);
@@ -1418,7 +1449,7 @@ impl Engine {
                     self.events().send(EngineEvent::State(EngineState::Running));
                     self.events().status(
                         StatusLevel::Info,
-                        format!("Running: {model} on {device}"),
+                        format!("Listening with {model}"),
                         Some(Duration::from_secs(3)),
                     );
                 }
@@ -1532,8 +1563,15 @@ impl Engine {
             ScreenEvent::Ready(from) => {
                 if self.running {
                     self.events().send(EngineEvent::State(EngineState::Running));
+                    // Only a warning takes the place of the one that stays up while the window is
+                    // away or minimized.
+                    let level = if std::mem::take(&mut self.screen_notice) {
+                        StatusLevel::Warning
+                    } else {
+                        StatusLevel::Info
+                    };
                     self.events().status(
-                        StatusLevel::Info,
+                        level,
                         format!("Running: reading subtitles from {from}"),
                         Some(Duration::from_secs(3)),
                     );
@@ -1541,16 +1579,20 @@ impl Engine {
             }
             ScreenEvent::Waiting(from) => {
                 if self.running {
+                    self.screen_notice = true;
                     self.events().send(EngineEvent::State(EngineState::Running));
-                    self.events().status(
-                        StatusLevel::Warning,
-                        format!("Waiting for the window {from} to read subtitles from"),
-                        None,
-                    );
+                    // A window's name comes in quotes; the display's is "the main display".
+                    let text = if from.starts_with('"') {
+                        format!("Waiting for the window {from} to read subtitles from")
+                    } else {
+                        format!("Waiting for {from} to read subtitles from")
+                    };
+                    self.events().status(StatusLevel::Warning, text, None);
                 }
             }
             ScreenEvent::Minimized(from) => {
                 if self.running {
+                    self.screen_notice = true;
                     self.events().status(
                         StatusLevel::Warning,
                         format!("The window {from} is minimized: bring it back to have its subtitles read"),
@@ -1690,6 +1732,8 @@ impl Engine {
             }
             TranslatorEvent::Ready => {
                 self.core.tr_ready = true;
+                self.tr_retries = ASR_RETRIES;
+                self.tr_retry_at = None;
                 self.events().status(
                     StatusLevel::Info,
                     "Translation ready".into(),
@@ -1702,15 +1746,38 @@ impl Engine {
                 }
                 self.core.translation(id, text);
             }
-            TranslatorEvent::Trouble(e) => self.events().status(
-                StatusLevel::Warning,
-                format!("Translation is failing, trying again: {e}"),
-                Some(Duration::from_secs(8)),
-            ),
+            TranslatorEvent::Trouble(e) => {
+                let text = match self.core.settings.translator {
+                    TranslatorChoice::Natural { light: false } => {
+                        "The Natural translator is too slow here. It needs a graphics card with \
+                         8 GB free. Try its smaller model, or Fast."
+                            .into()
+                    }
+                    TranslatorChoice::Natural { light: true } => {
+                        "The Natural translator is too slow here. Its smaller model needs a \
+                         graphics card with 3.5 GB free. Try Fast."
+                            .into()
+                    }
+                    _ => format!("Translation is failing, trying again: {e}"),
+                };
+                self.events()
+                    .status(StatusLevel::Warning, text, Some(Duration::from_secs(8)));
+            }
             TranslatorEvent::Error(e) => {
                 self.tr = None;
                 self.tr_downloading = false;
                 self.core.translator_replaced(false);
+                if self.running && self.core.settings.translate && self.tr_retries > 0 {
+                    self.tr_retries -= 1;
+                    self.tr_retry_at = Some(Instant::now() + ASR_RETRY_AFTER);
+                    log::error!("translator failed, trying again: {e}");
+                    self.events().status(
+                        StatusLevel::Warning,
+                        "Translation failed, trying again".into(),
+                        Some(ASR_RETRY_AFTER),
+                    );
+                    return;
+                }
                 self.events().status(
                     StatusLevel::Warning,
                     format!("Translation unavailable: {e}"),
@@ -1735,10 +1802,10 @@ impl Engine {
             match models::ensure(id, &mut progress, &cancel) {
                 Ok(_) => ev.status(
                     StatusLevel::Info,
-                    format!("{} downloaded", models::spec(id).label),
+                    "Download finished".into(),
                     Some(Duration::from_secs(3)),
                 ),
-                Err(e) => ev.status(StatusLevel::Error, format!("Download failed: {e}"), None),
+                Err(e) => ev.status(StatusLevel::Error, format!("Download failed: {e:#}"), None),
             }
         });
     }

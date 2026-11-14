@@ -14,6 +14,19 @@ pub struct Ocr {
     engine: OcrEngine,
 }
 
+/// Can Windows recognise text written in `lang` (a two-letter code, as in
+/// `Settings::spoken_language`)?
+pub fn reads(lang: &str) -> bool {
+    let tag = if lang.contains('-') || lang != "en" {
+        lang
+    } else {
+        "en-US"
+    };
+    Language::CreateLanguage(&HSTRING::from(tag))
+        .and_then(|language| OcrEngine::IsLanguageSupported(&language))
+        .unwrap_or(false)
+}
+
 impl Ocr {
     /// `lang`: a tag like "en" or "en-US". Fails when Windows has no recognizer for it.
     pub fn new(lang: &str) -> anyhow::Result<Self> {

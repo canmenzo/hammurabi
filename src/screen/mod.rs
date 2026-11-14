@@ -39,7 +39,8 @@ impl Area {
 pub enum ScreenEvent {
     /// Reading has begun; what is read from.
     Ready(String),
-    /// The window to read is not open, or was closed: it is looked for until it is.
+    /// The window to read is not open, or was closed, or the display gives no picture: it is
+    /// looked for until it is there.
     Waiting(String),
     /// The window to read is minimized: nothing can be read until it is brought back.
     Minimized(String),
@@ -106,8 +107,10 @@ mod source {
         }
     }
 
-    /// How often a window that is not open is looked for.
+    /// How often a window that is not open, or a display that gives no picture, is looked for.
     const LOOK: Duration = Duration::from_secs(1);
+    /// Pictures on end text recognition fails on before reading stops with the error.
+    const FAILS_MAX: u32 = 50;
 
     fn run(
         window: &str,
@@ -117,23 +120,40 @@ mod source {
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
         let ocr = Ocr::new(lang)?;
-        if window.is_empty() {
-            let _own = windows::OwnOut::hold();
-            let capture = Capture::start(&Target::Display(windows::primary_display()))?;
-            let _ = tx.send(ScreenEvent::Ready("the main display".into()));
-            return read(capture, None, band, &ocr, tx, stop);
-        }
-        // A window comes and goes (a game restarted, a projector closed by mistake): it is
-        // read whenever it is there.
-        let name = format!("\"{window}\"");
+        let display = window.is_empty();
+        let _own = display.then(windows::OwnOut::hold);
+        // A window comes and goes (a game restarted, a projector closed by mistake), and a
+        // display can stop giving pictures: what is read is read whenever it is there.
+        let name = if display {
+            "the main display".to_string()
+        } else {
+            format!("\"{window}\"")
+        };
         let mut waiting = false;
         while !stop.load(Ordering::Relaxed) {
-            match windows::find(window).map(|w| Capture::start(&Target::Window(w))) {
+            let target = if display {
+                Some(Target::Display(windows::primary_display()))
+            } else {
+                windows::find(window).map(Target::Window)
+            };
+            match target.map(|t| Capture::start(&t)) {
                 Some(Ok(capture)) => {
                     let _ = tx.send(ScreenEvent::Ready(name.clone()));
                     waiting = false;
-                    read(capture, Some(&name), band, &ocr, tx, stop)?;
-                    continue;
+                    read(
+                        capture,
+                        (!display).then_some(name.as_str()),
+                        band,
+                        &ocr,
+                        tx,
+                        stop,
+                    )?;
+                    // What gave no picture, a window or the display, is looked for again after
+                    // a while: at once, a window that is open but gives none would be captured
+                    // anew many times a second.
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
                 }
                 Some(Err(e)) => log::debug!("screen: {name} cannot be captured: {e:#}"),
                 None => {}
@@ -148,7 +168,8 @@ mod source {
     }
 
     /// Reads what is captured, a display or the `window` of that name, until told to stop or
-    /// until the window is gone.
+    /// until no picture can be had: the window is gone, or capturing failed. Fails when text
+    /// recognition fails on `FAILS_MAX` pictures on end.
     fn read(
         mut capture: Capture,
         window: Option<&str>,
@@ -158,6 +179,9 @@ mod source {
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
         let t0 = Instant::now();
+        // When a picture that could not be read was last logged, and how many on end were not.
+        let mut failed: Option<Instant> = None;
+        let mut fails = 0;
         // The newest picture: Windows gives one only when something was drawn.
         let mut image = None;
         let mut reader: Option<(usize, usize, Reader)> = None;
@@ -188,9 +212,9 @@ mod source {
                 Ok(Some(new)) => image = Some(new),
                 Ok(None) if capture.alive() => {}
                 Ok(None) => return Ok(()),
-                Err(e) if display => return Err(e),
                 Err(e) => {
-                    log::debug!("screen: the window gave no picture: {e:#}");
+                    let what = window.unwrap_or("the display");
+                    log::debug!("screen: {what} gave no picture: {e:#}");
                     return Ok(());
                 }
             }
@@ -202,16 +226,35 @@ mod source {
                 };
                 let (w, h) = reader.size();
                 let (prepared, plain) = reader.prepare(&image.bgra);
-                for (picture, read) in [prepared, plain].into_iter().zip(&mut read) {
-                    if picture != read.0 {
-                        *read = (picture.to_vec(), ocr.read(picture, w, h)?);
-                    }
-                }
+                let fresh =
+                    [prepared, plain]
+                        .into_iter()
+                        .zip(&mut read)
+                        .try_for_each(|(picture, read)| {
+                            if picture != read.0 {
+                                *read = (picture.to_vec(), ocr.read(picture, w, h)?);
+                            }
+                            anyhow::Ok(())
+                        });
                 let at = (t - t0).as_secs_f64();
-                if let Some((_, line)) = reader.read(at, &read[0].1, &read[1].1) {
-                    log::debug!("screen: {line:?}");
-                    if tx.send(ScreenEvent::Line(line)).is_err() {
-                        break;
+                // A picture text recognition fails on is skipped (it is read again with the
+                // next), and the failure logged at most once a second.
+                if let Err(e) = fresh {
+                    fails += 1;
+                    if fails >= FAILS_MAX {
+                        return Err(e);
+                    }
+                    if failed.is_none_or(|last| last.elapsed() >= Duration::from_secs(1)) {
+                        log::warn!("screen: a picture could not be read: {e:#}");
+                        failed = Some(Instant::now());
+                    }
+                } else {
+                    fails = 0;
+                    if let Some((_, line)) = reader.read(at, &read[0].1, &read[1].1) {
+                        log::debug!("screen: {line:?}");
+                        if tx.send(ScreenEvent::Line(line)).is_err() {
+                            break;
+                        }
                     }
                 }
             }

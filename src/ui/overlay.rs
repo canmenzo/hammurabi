@@ -14,7 +14,9 @@ const FADE_IN: Duration = Duration::from_millis(120);
 /// How often a fade is painted. Asking for the next frame at once leaves the pace to the driver,
 /// which without vertical sync paints thousands of frames a second.
 const FADE_FRAME: Duration = Duration::from_millis(16);
-const SAMPLE_ORIGINAL: &str = "This is how captions will look.";
+pub const SAMPLE_ORIGINAL: &str = "This is how captions will look.";
+/// How long an error stays over the game; Settings keeps showing it.
+const ERROR_TTL: Duration = Duration::from_secs(20);
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 8.0;
 const BLOCK_GAP: f32 = 6.0;
@@ -159,7 +161,10 @@ impl OverlayState {
         self.status = Some(StatusPill {
             level: status.level,
             text: status.text,
-            expires: status.ttl.map(|t| now + t),
+            expires: status
+                .ttl
+                .or(matches!(status.level, StatusLevel::Error).then_some(ERROR_TTL))
+                .map(|t| now + t),
         });
     }
 
@@ -205,13 +210,11 @@ impl OverlayState {
         let mut fading = false;
         let mut bubbles = Vec::new();
 
-        let sample = sample
-            .filter(|_| self.cues.is_empty() && self.live.is_none())
-            .map(|t| Line {
-                original: SAMPLE_ORIGINAL.into(),
-                translated: Some(t.into()),
-                same_lang: false,
-            });
+        let sample = sample.filter(|_| self.quiet()).map(|t| Line {
+            original: SAMPLE_ORIGINAL.into(),
+            translated: Some(t.into()),
+            same_lang: false,
+        });
         let mut blocks: Vec<(&Line, f32)> = Vec::new();
         let skip = self.cues.len().saturating_sub(style.cues.max(1) as usize);
         for c in &self.cues[skip..] {
@@ -232,11 +235,20 @@ impl OverlayState {
             blocks.push((l, 1.0));
         }
 
-        let mut draw = |lines: Vec<(Arc<Galley>, Color32)>, bg: Color32, alpha: f32| {
+        // Blocks go up from the bottom, newest first. The window is sized for one-line captions,
+        // so one that wraps, or a status, leaves no room for the oldest: it is left out, and so
+        // is every block above it. The status and the newest caption are `keep`: drawn even
+        // when they do not fit, with their top cut.
+        let mut full = false;
+        let mut draw = |lines: Vec<(Arc<Galley>, Color32)>, bg: Color32, alpha: f32, keep: bool| {
             let w = lines.iter().map(|(g, _)| g.size().x).fold(0.0, f32::max);
             let h = lines.iter().map(|(g, _)| g.size().y).sum::<f32>()
                 + LINE_GAP * lines.len().saturating_sub(1) as f32;
             let size = vec2(w + 2.0 * PAD_X, h + 2.0 * PAD_Y);
+            full = full || (!keep && y - size.y < rect.top());
+            if full {
+                return;
+            }
             let r = Rect::from_center_size(Pos2::new(rect.center().x, y - size.y / 2.0), size);
             painter.rect_filled(r, CornerRadius::same(10), bg.gamma_multiply(alpha));
             bubbles.push(r);
@@ -270,12 +282,12 @@ impl OverlayState {
                 Color32::WHITE,
                 wrap,
             );
-            draw(vec![(g, color)], Color32::from_black_alpha(215), 1.0);
+            draw(vec![(g, color)], Color32::from_black_alpha(215), 1.0, true);
         }
 
         let trans_color = parse_color(&style.trans_color);
         let orig_color = parse_color(&style.orig_color);
-        for (line, alpha) in blocks.into_iter().rev() {
+        for (i, (line, alpha)) in blocks.into_iter().rev().enumerate() {
             let lines = line
                 .lines(style)
                 .into_iter()
@@ -294,7 +306,7 @@ impl OverlayState {
                     (g, color)
                 })
                 .collect();
-            draw(lines, bg, alpha);
+            draw(lines, bg, alpha, i == 0);
         }
 
         if fading {
@@ -319,6 +331,11 @@ impl OverlayState {
         self.live.is_none()
             && !self.has_status()
             && !self.cues.iter().any(|c| now < c.hold_end() + FADE)
+    }
+
+    /// No caption is up, so the sample stands in for one.
+    pub fn quiet(&self) -> bool {
+        self.cues.is_empty() && self.live.is_none()
     }
 
     pub fn has_status(&self) -> bool {
@@ -417,4 +434,81 @@ pub fn layout_for_monitor(
         None => Pos2::new((monitor.x - size.x) / 2.0, monitor.y * 0.92 - size.y),
     };
     (pos, size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_captions_and_a_status_stay_inside_the_window() {
+        let settings = Settings::default();
+        let (_, size) = layout_for_monitor(vec2(1920.0, 1080.0), &settings.caption, None);
+        let window = Rect::from_min_size(Pos2::ZERO, size);
+        let long = "so we were going down the highway and the cops were right behind us ".repeat(4);
+        let mut overlay = OverlayState::default();
+        let now = Instant::now();
+        for id in 0..2 {
+            let c = CaptionUpdate::Final {
+                id,
+                original: long.clone(),
+                translated: Some(long.clone()),
+                lang: "en".into(),
+            };
+            overlay.apply(c, &settings, now);
+        }
+        let live = CaptionUpdate::Live {
+            original: long.clone(),
+            translated: Some(long.clone()),
+            lang: Some("en".into()),
+        };
+        overlay.apply(live, &settings, now);
+        let status = Status {
+            level: StatusLevel::Warning,
+            text: "Translation unavailable".into(),
+            ttl: None,
+        };
+        overlay.set_status(status, now);
+
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(window),
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| {
+            overlay.paint(ui, &settings.caption, None);
+        })
+        .drop_without_applying_deltas();
+
+        // The status, then the newest caption, which may be cut at the top; what else is drawn
+        // is whole inside the window.
+        let bubbles = overlay.bubbles();
+        assert!((2..4).contains(&bubbles.len()), "{bubbles:?}");
+        let whole = |b: &Rect| window.contains_rect(*b);
+        assert!(
+            whole(&bubbles[0]) && bubbles[2..].iter().all(whole),
+            "{bubbles:?}"
+        );
+        let newest = bubbles[1];
+        assert!(
+            newest.bottom() <= bubbles[0].top()
+                && newest.left() >= window.left()
+                && newest.right() <= window.right(),
+            "{bubbles:?}"
+        );
+    }
+
+    #[test]
+    fn an_error_leaves_the_overlay_after_a_while() {
+        let error = || Status {
+            level: StatusLevel::Error,
+            text: "Capture failed".into(),
+            ttl: None,
+        };
+        let mut overlay = OverlayState::default();
+        overlay.set_status(error(), Instant::now());
+        assert!(overlay.has_status());
+        overlay.set_status(error(), Instant::now() - ERROR_TTL);
+        assert!(!overlay.has_status());
+    }
 }

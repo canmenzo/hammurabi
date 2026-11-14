@@ -36,6 +36,8 @@ const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 const ENGINE_RESTART_GAP: Duration = Duration::from_secs(30);
 const WEBSITE: &str = "https://hammurabi.menzo.dev";
 const SETTINGS_ID: &str = "hammurabi-settings";
+/// The sample caption is sent this often to the captions page, for a page that connects later.
+const WEB_SAMPLE_EVERY: Duration = Duration::from_secs(1);
 /// Start without opening a window: what the login entry passes.
 pub const BACKGROUND_ARG: &str = "--background";
 
@@ -90,7 +92,11 @@ pub struct App {
     passthrough: bool,
     layout: Option<(egui::Pos2, egui::Vec2)>,
     status: String,
+    /// When `status` ends; None keeps it.
+    status_until: Option<Instant>,
     alert: bool,
+    /// When the sample caption was last sent to the captions page.
+    web_sample: Option<Instant>,
     dirty_since: Option<Instant>,
     tray_dirty: bool,
     update: Option<update::Release>,
@@ -158,7 +164,9 @@ impl App {
             passthrough: true,
             layout: None,
             status: String::new(),
+            status_until: None,
             alert: false,
+            web_sample: None,
             dirty_since: None,
             tray_dirty: true,
             update: None,
@@ -199,16 +207,20 @@ impl App {
 
     fn warn(&mut self, text: String) {
         log::warn!("{text}");
-        self.status = text.clone();
-        self.alert = true;
-        self.overlay.set_status(
-            Status {
-                level: StatusLevel::Warning,
-                text,
-                ttl: Some(Duration::from_secs(6)),
-            },
-            Instant::now(),
-        );
+        self.set_status(Status {
+            level: StatusLevel::Warning,
+            text,
+            ttl: Some(Duration::from_secs(6)),
+        });
+    }
+
+    /// Shows a status in Settings, the tray tooltip and the overlay, until its ttl passes.
+    fn set_status(&mut self, s: Status) {
+        let now = Instant::now();
+        self.status = s.text.clone();
+        self.status_until = s.ttl.map(|t| now + t);
+        self.alert = !matches!(s.level, StatusLevel::Info);
+        self.overlay.set_status(s, now);
         self.tray_dirty = true;
     }
 
@@ -389,8 +401,10 @@ impl App {
         match event {
             EngineEvent::State(s) => {
                 self.state = s;
-                if matches!(s, EngineState::Idle | EngineState::Error) {
-                    self.running = false;
+                // Follows the engine: a Stop then Start before the Stop's Idle came is on again
+                // with the Start's Loading.
+                self.running = matches!(s, EngineState::Loading | EngineState::Running);
+                if !self.running {
                     self.models.asr_ms = None;
                     self.models.tr_ms = None;
                 }
@@ -406,10 +420,7 @@ impl App {
                 if matches!(s.level, StatusLevel::Error | StatusLevel::Warning) {
                     self.models.downloading.clear();
                 }
-                self.status = s.text.clone();
-                self.alert = !matches!(s.level, StatusLevel::Info);
-                self.overlay.set_status(s, now);
-                self.tray_dirty = true;
+                self.set_status(s);
             }
             EngineEvent::Progress(p) => {
                 self.models.downloading.retain(|d| d.0 != p.model);
@@ -424,7 +435,7 @@ impl App {
                                 let pct = total
                                     .map(|t| format!(" {}%", done * 100 / t.max(1)))
                                     .unwrap_or_default();
-                                format!("{}{pct}", models::spec(m).label)
+                                format!("{}{pct}", purpose(m))
                             })
                             .collect();
                         Some(format!("Downloading {}", parts.join(", ")))
@@ -435,18 +446,15 @@ impl App {
                     }
                     ProgressPhase::Loading => {
                         self.refresh_models();
-                        Some(format!("Loading {}…", models::spec(p.model).label))
+                        Some(format!("Loading {}…", purpose(p.model)))
                     }
                 };
                 if let Some(text) = text {
-                    self.status = text.clone();
-                    self.alert = false;
-                    let status = Status {
+                    self.set_status(Status {
                         level: StatusLevel::Info,
                         text,
                         ttl: Some(Duration::from_secs(5)),
-                    };
-                    self.overlay.set_status(status, now);
+                    });
                 }
                 self.tray_dirty = true;
             }
@@ -463,6 +471,17 @@ impl App {
                 if self.settings.browser_source
                     && let Some(w) = &self.web
                 {
+                    // A caption takes the sample's place. The sample is the page's live line,
+                    // which a final caption leaves as it is, so it is cleared first.
+                    if self.web_sample.take().is_some() && !matches!(c, CaptionUpdate::Live { .. })
+                    {
+                        let empty = CaptionUpdate::Live {
+                            original: String::new(),
+                            translated: None,
+                            lang: None,
+                        };
+                        w.caption(&empty, "");
+                    }
                     w.caption(&c, &self.settings.target_language);
                 }
                 self.overlay.apply(c, &self.settings, now)
@@ -476,13 +495,17 @@ impl App {
                 tts::Activity::VoiceLearned => self.models.voice_learned = true,
                 tts::Activity::VoiceForgotten => self.models.voice_learned = false,
             },
+            // A run that ends after Stop must not show a time while captions are off.
             EngineEvent::Stats { asr_ms, device } => {
                 self.models.compute = device;
-                self.models.asr_ms = Some(smoothed(self.models.asr_ms, asr_ms));
+                if self.running {
+                    self.models.asr_ms = Some(smoothed(self.models.asr_ms, asr_ms));
+                }
             }
-            EngineEvent::Translated { ms } => {
+            EngineEvent::Translated { ms } if self.running => {
                 self.models.tr_ms = Some(smoothed(self.models.tr_ms, ms));
             }
+            EngineEvent::Translated { .. } => {}
         }
     }
 
@@ -577,6 +600,19 @@ fn install_handlers(ctx: &Context, tx: Sender<AppEvent>) {
     }));
 }
 
+/// What a model is for, as status lines name it.
+fn purpose(id: ModelId) -> &'static str {
+    match id {
+        ModelId::Madlad3bQ4k | ModelId::Gemma12b | ModelId::GemmaE4b => "the translation model",
+        ModelId::WhisperTiny
+        | ModelId::WhisperBase
+        | ModelId::WhisperSmall
+        | ModelId::WhisperTurbo
+        | ModelId::WhisperLarge => "the speech model",
+        _ => "the voices",
+    }
+}
+
 /// A time in milliseconds joined to those before it, so that one slow run does not show as slowness.
 fn smoothed(was: Option<f32>, ms: u32) -> f32 {
     was.map_or(ms as f32, |was| 0.8 * was + 0.2 * ms as f32)
@@ -607,6 +643,17 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
         }
 
+        let now = Instant::now();
+        if let Some(t) = self.status_until {
+            if now >= t {
+                self.status_until = None;
+                self.status.clear();
+                self.alert = false;
+                self.tray_dirty = true;
+            } else {
+                ctx.request_repaint_after(t - now);
+            }
+        }
         if self.tray_dirty {
             self.tray_dirty = false;
             let tip = self.tooltip();
@@ -630,7 +677,6 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
-        let now = Instant::now();
         if self.settings.check_updates {
             let due = *self.next_update_check.get_or_insert(now);
             if now >= due {
@@ -697,6 +743,38 @@ impl eframe::App for App {
         let pressed = self
             .overlay
             .paint(ui, &self.settings.caption, sample.as_deref());
+        // The captions page shows it too, in the live line as the overlay does, so that its size
+        // and place can be set in the streaming app. Leaving the page clears the live line only
+        // while the sample is in it: a caption that came since took its place (`on_engine`).
+        if let Some(w) = &self.web {
+            match sample.as_deref().filter(|_| self.settings.browser_source) {
+                Some(text) => {
+                    if self.overlay.quiet()
+                        && self
+                            .web_sample
+                            .is_none_or(|t| t.elapsed() >= WEB_SAMPLE_EVERY)
+                    {
+                        let c = CaptionUpdate::Live {
+                            original: overlay::SAMPLE_ORIGINAL.into(),
+                            translated: Some(text.into()),
+                            lang: None,
+                        };
+                        w.caption(&c, &self.settings.target_language);
+                        self.web_sample = Some(Instant::now());
+                    }
+                    ctx.request_repaint_after(WEB_SAMPLE_EVERY);
+                }
+                None if self.web_sample.take().is_some() => {
+                    let c = CaptionUpdate::Live {
+                        original: String::new(),
+                        translated: None,
+                        lang: None,
+                    };
+                    w.caption(&c, "");
+                }
+                None => {}
+            }
+        }
         if pressed {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
             self.dragging = true;
@@ -776,10 +854,23 @@ impl eframe::App for App {
                         }
                         self.changed();
                     }
-                    SettingsAction::Download(id) => self.engine().send(EngineCommand::Prefetch(id)),
+                    SettingsAction::Download(id) => {
+                        // A bar at once: the first bytes can take seconds. A failed download's
+                        // error status clears it.
+                        if !self.models.downloading.iter().any(|d| d.0 == id) {
+                            self.models.downloading.push((id, 0, None));
+                        }
+                        self.engine().send(EngineCommand::Prefetch(id));
+                    }
                     SettingsAction::DeleteModel(id) => {
+                        // After Stop the translator's server can still hold the file open.
                         if let Err(e) = models::remove(id) {
-                            self.warn(format!("{e:#}"));
+                            log::warn!("could not delete {id:?}: {e:#}");
+                            self.warn(
+                                "Hammurabi still has that model open. Quit it from the tray icon, \
+                                 open it again and delete the model before starting captions."
+                                    .into(),
+                            );
                         }
                         self.refresh_models();
                     }

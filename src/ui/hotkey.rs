@@ -49,7 +49,13 @@ impl Hotkeys {
                 self.toggle = Some(hk);
                 None
             }
-            Err(e) => Some(format!("Hotkey not registered ({text}: {e})")),
+            Err(e) => {
+                log::warn!("hotkey {text} not registered: {e}");
+                Some(
+                    "That shortcut is taken by another app. Pick another in Settings > General."
+                        .into(),
+                )
+            }
         }
     }
 

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code signing policy | Hammurabi</title>
+<meta name="description" content="How Hammurabi's Windows downloads are signed, who may change the code and who approves a release.">
+<link rel="canonical" href="https://hammurabi.menzo.dev/code-signing">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="theme-color" content="#0d1514">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400;600;700&amp;display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<nav class="pill" aria-label="Main">
+<a class="brand" href="/"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a>
+<div class="links"><a href="/#download">Download</a><a href="/#features">Features</a><a href="/privacy">Privacy</a></div>
+<a class="btn sm" href="https://github.com/canmenzo/hammurabi">GitHub</a>
+</nav>
+<main id="main">
+<section class="wrap">
+<p class="eyebrow">Code signing policy</p>
+<h1>How the Windows downloads are signed</h1>
+<p class="lead">Free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>.</p>
+</section>
+
+<section class="wrap">
+<h2>What is signed</h2>
+<p class="lead">The Windows programs and installers attached to a <a href="https://github.com/canmenzo/hammurabi/releases">release on GitHub</a>. They are built from the public source by GitHub Actions, from the tag the release is named after, and signed as part of that build. Nothing built on a private machine is signed.</p>
+</section>
+
+<section class="wrap">
+<h2>Who does what</h2>
+<p class="lead"><strong>Committers and reviewers:</strong> <a href="https://github.com/canmenzo">canmenzo</a>. Changes from anyone else come in as pull requests and are read before they are merged.</p>
+<p class="lead"><strong>Approvers:</strong> <a href="https://github.com/canmenzo">canmenzo</a> approves each release for signing.</p>
+</section>
+
+<section class="wrap">
+<h2>Privacy</h2>
+<p class="lead">This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. It downloads the models it needs and looks for new versions; what that involves is on the <a href="/privacy">privacy page</a>.</p>
+</section>
+</main>
+<footer><div class="wrap"><div class="fb"><a class="brand" href="/"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a><p>Live captions for your whole desktop.</p></div><nav aria-label="Footer"><a href="https://github.com/canmenzo/hammurabi">GitHub</a><a href="https://github.com/canmenzo/hammurabi/releases/latest">Releases</a><a href="/privacy">Privacy</a><a href="/code-signing">Code signing</a><a href="https://menzo.dev">menzo.dev</a></nav></div><div class="wrap fine"><p>MIT licensed. Made by <a href="https://menzo.dev">menzo</a>.</p></div></footer>
+</body>
+</html>

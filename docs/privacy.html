@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy | Hammurabi</title>
+<meta name="description" content="What Hammurabi does with your audio, your screen and the network: everything is processed on your computer, and nothing is collected.">
+<link rel="canonical" href="https://hammurabi.menzo.dev/privacy">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="theme-color" content="#0d1514">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400;600;700&amp;display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<nav class="pill" aria-label="Main">
+<a class="brand" href="/"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a>
+<div class="links"><a href="/#download">Download</a><a href="/#features">Features</a><a href="/privacy" aria-current="page">Privacy</a></div>
+<a class="btn sm" href="https://github.com/canmenzo/hammurabi">GitHub</a>
+</nav>
+<main id="main">
+<section class="wrap">
+<p class="eyebrow">Privacy policy</p>
+<h1>Nothing you hear, say or see leaves your computer</h1>
+<p class="lead">Hammurabi has no account, no analytics and no server of ours. This page says what it does with your audio, your screen and the network. Last changed on 14 November 2026.</p>
+</section>
+
+<section class="wrap">
+<h2>What stays on your computer</h2>
+<p class="lead">The sound your computer plays, your microphone, and, when you have it read a game's subtitles, pictures of the window or display you chose are turned into captions by models that run on your own machine. None of it is recorded, stored or sent anywhere. Captions are shown and then gone; they are not saved.</p>
+<p class="lead">Your settings and a log of what the app did (which models loaded, errors) are kept in files on your computer. Captions are written to the log only if you start the app with debug logging on.</p>
+</section>
+
+<section class="wrap">
+<h2>What goes over the network</h2>
+<p class="lead">Hammurabi connects to other computers only for these:</p>
+<p class="lead"><strong>Model downloads.</strong> The speech, translation and voice models are downloaded from Hugging Face the first time they are needed, and the program that runs the Natural translator from GitHub. These are plain file downloads: they carry no information about you beyond what any download does (your IP address).</p>
+<p class="lead"><strong>Looking for a new version.</strong> Once a day the app asks GitHub which release is the latest. Nothing else is sent. You can turn this off in Settings > General. The Microsoft Store version does not do it: the Store updates the app.</p>
+<p class="lead"><strong>Your own AI server, if you set one.</strong> If you choose "Your own AI server" as the translator, the text of each caption is sent to the address you entered, which is a program on your own computer unless you point it elsewhere.</p>
+<p class="lead"><strong>Captions as a web page.</strong> When you turn this on for a streaming app, the captions are served at an address that only your own computer can reach.</p>
+</section>
+
+<section class="wrap">
+<h2>What we collect</h2>
+<p class="lead">Nothing. There is no telemetry, no crash reporting and no advertising, and no data about you or your use of the app reaches us or anyone else. Hugging Face and GitHub handle the downloads above under their own privacy policies.</p>
+</section>
+
+<section class="wrap">
+<h2>Questions</h2>
+<p class="lead">The code is public on <a href="https://github.com/canmenzo/hammurabi">GitHub</a>, so all of this can be checked. Write to <a href="mailto:hi@menzo.dev">hi@menzo.dev</a> with any question.</p>
+</section>
+</main>
+<footer><div class="wrap"><div class="fb"><a class="brand" href="/"><img src="favicon.svg" alt="" width="24" height="24">Hammurabi</a><p>Live captions for your whole desktop.</p></div><nav aria-label="Footer"><a href="https://github.com/canmenzo/hammurabi">GitHub</a><a href="https://github.com/canmenzo/hammurabi/releases/latest">Releases</a><a href="/privacy">Privacy</a><a href="/code-signing">Code signing</a><a href="https://menzo.dev">menzo.dev</a></nav></div><div class="wrap fine"><p>MIT licensed. Made by <a href="https://menzo.dev">menzo</a>.</p></div></footer>
+</body>
+</html>

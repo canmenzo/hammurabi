@@ -98,6 +98,7 @@ fn serve(
     // Without a translator every request still gets an (empty) answer.
     while let Ok(req) = rx.recv() {
         let stop = || given_up.load(Ordering::Relaxed) == req.id;
+        let mut ms = None;
         let text = if req.source == req.target {
             Some(req.text)
         } else if stop() {
@@ -129,6 +130,7 @@ fn serve(
                         req.text
                     );
                     failures = 0;
+                    ms = Some(started.elapsed().as_millis() as u32);
                     Some(text)
                 }
                 Err(e) => {
@@ -146,7 +148,11 @@ fn serve(
             None
         };
         if ev
-            .send(TranslatorEvent::Result { id: req.id, text })
+            .send(TranslatorEvent::Result {
+                id: req.id,
+                text,
+                ms,
+            })
             .is_err()
         {
             break;
@@ -359,7 +365,7 @@ mod tests {
         loop {
             match w.events.recv().unwrap() {
                 TranslatorEvent::Ready => ready = true,
-                TranslatorEvent::Result { id, text } => {
+                TranslatorEvent::Result { id, text, .. } => {
                     assert!(ready);
                     assert_eq!(id, 7);
                     println!("{text:?}");
@@ -400,7 +406,7 @@ mod tests {
         let results: Vec<_> = ev
             .iter()
             .filter_map(|e| match e {
-                TranslatorEvent::Result { id, text } => Some((id, text)),
+                TranslatorEvent::Result { id, text, .. } => Some((id, text)),
                 _ => None,
             })
             .collect();
@@ -452,19 +458,30 @@ mod tests {
         assert!(matches!(
             &got[..],
             [
-                TranslatorEvent::Result { id: 1, text: None },
-                TranslatorEvent::Result { id: 2, text: None },
+                TranslatorEvent::Result {
+                    id: 1,
+                    text: None,
+                    ..
+                },
+                TranslatorEvent::Result {
+                    id: 2,
+                    text: None,
+                    ..
+                },
                 TranslatorEvent::Result {
                     id: 3,
-                    text: Some(_)
+                    text: Some(_),
+                    ..
                 },
                 TranslatorEvent::Result {
                     id: 4,
-                    text: Some(_)
+                    text: Some(_),
+                    ..
                 },
                 TranslatorEvent::Result {
                     id: 5,
-                    text: Some(_)
+                    text: Some(_),
+                    ..
                 },
             ]
         ));
@@ -485,7 +502,11 @@ mod tests {
         let rest: Vec<_> = ev.try_iter().collect();
         assert!(matches!(
             &rest[..],
-            [TranslatorEvent::Result { id: 4, text: None }]
+            [TranslatorEvent::Result {
+                id: 4,
+                text: None,
+                ..
+            }]
         ));
     }
 }

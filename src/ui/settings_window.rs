@@ -30,6 +30,10 @@ pub struct ModelsStatus {
     pub devices: DeviceList,
     /// Compute device label, e.g. "CPU".
     pub compute: String,
+    /// How long the speech model takes over a run and the translator over a caption, in
+    /// milliseconds, smoothed. None while captions are off.
+    pub asr_ms: Option<f32>,
+    pub tr_ms: Option<f32>,
     /// Real OS state, not a setting.
     pub autostart: bool,
     pub voices: Vec<Voice>,
@@ -49,6 +53,7 @@ pub struct ModelsStatus {
 pub enum SettingsAction {
     Changed,
     Download(ModelId),
+    DeleteModel(ModelId),
     OpenModelsFolder,
     RefreshDevices,
     ToggleAutostart,
@@ -392,6 +397,15 @@ impl SettingsWindow {
             self.hotkey_row(ui, "Start / stop captions", &toggle);
         });
 
+        section(ui, "Models");
+        grid(ui, "models", |ui| {
+            for &id in ModelId::ALL {
+                ui.label(format!("{} ({})", spec(id).label, size_text(id)));
+                ui.horizontal(|ui| model_state(ui, id, m, actions));
+                ui.end_row();
+            }
+        });
+
         section(ui, "Files");
         ui.horizontal(|ui| {
             if ui.button("Open models folder").clicked() {
@@ -626,11 +640,13 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     ui.end_row();
 
     ui.label("");
-    ui.vertical(|ui| screen_preview(ui, s, changed));
+    screen_preview(ui, s, changed);
     ui.end_row();
 }
 
-/// What is read, as a small picture with the subtitle area lit: its two edges can be dragged.
+/// What is read, as a small picture with the subtitle area lit: its edges can be dragged. The
+/// picture and the line under it are a row of the grid each, as a tall cell of several things
+/// leaves the rows after it too much room.
 #[cfg(windows)]
 fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     use crate::screen::preview::Preview;
@@ -740,10 +756,12 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
                 egui::StrokeKind::Inside,
             );
             resp.on_hover_cursor(CursorIcon::Grab);
-            ui.weak(
-                "The lit part is read. Drag its top and bottom around the subtitles, and its \
-                 sides to the sides of the video when that does not fill the window.",
-            );
+            ui.end_row();
+            ui.label("");
+            // A label in a grid is one line unless it is told to wrap.
+            let note = "The lit part is read. Drag its top and bottom around the subtitles, and \
+                        its sides to the video's when that does not fill the window.";
+            ui.add(egui::Label::new(RichText::new(note).weak()).wrap());
         }
     }
     if ended {
@@ -753,28 +771,91 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     }
 }
 
-/// Check mark, Download button or progress bar for one model.
+/// A model's name and size, and `model_state`.
 fn model_status(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
     ui.horizontal(|ui| {
         ui.label(format!("{} ({})", spec(id).label, size_text(id)));
-        match m.downloading.iter().find(|d| d.0 == id) {
-            Some(&(_, done, total)) => {
-                let bar = match total {
-                    Some(t) if t > 0 => ProgressBar::new(done as f32 / t as f32).show_percentage(),
-                    _ => ProgressBar::new(0.0).animate(true),
-                };
-                ui.add(bar.desired_width(160.0));
-            }
-            _ if m.cached.contains(&id) => {
-                ui.colored_label(Color32::from_rgb(90, 190, 110), "Downloaded");
-            }
-            _ => {
-                if ui.button("Download").clicked() {
-                    actions.push(SettingsAction::Download(id));
+        model_state(ui, id, m, actions);
+    });
+}
+
+/// Whether a model is downloaded, with what can be done about it: a Download button, how far
+/// its download is, or a Delete button that asks once more before it deletes.
+fn model_state(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
+    match m.downloading.iter().find(|d| d.0 == id) {
+        Some(&(_, done, total)) => {
+            let total = total.filter(|t| *t > 0);
+            let bar = match total {
+                Some(t) => ProgressBar::new(done as f32 / t as f32).show_percentage(),
+                None => ProgressBar::new(0.0).animate(true),
+            };
+            ui.add(bar.desired_width(160.0));
+            let of = total
+                .map(|t| format!(" of {}", t / 1_000_000))
+                .unwrap_or_default();
+            ui.weak(format!("{}{of} MB", done / 1_000_000));
+        }
+        _ if m.cached.contains(&id) => {
+            ui.colored_label(Color32::from_rgb(90, 190, 110), "Downloaded");
+            let key = egui::Id::unique(("delete-model", spec(id).label));
+            let now = ui.input(|i| i.time);
+            let asked = ui
+                .data(|d| d.get_temp::<f64>(key))
+                .is_some_and(|until| now < until);
+            let text = if asked {
+                format!("Delete {}?", size_text(id))
+            } else {
+                "Delete".to_string()
+            };
+            let button = ui
+                .add_enabled(!(m.running || m.loading), egui::Button::new(text))
+                .on_hover_text(
+                    "Frees the disk space. It is downloaded again when it is next needed.",
+                )
+                .on_disabled_hover_text("Stop captions to delete a model.");
+            if button.clicked() {
+                if asked {
+                    actions.push(SettingsAction::DeleteModel(id));
                 }
+                ui.data_mut(|d| d.insert_temp(key, if asked { 0.0 } else { now + 4.0 }));
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(4));
             }
         }
-    });
+        _ => {
+            if ui.button("Download").clicked() {
+                actions.push(SettingsAction::Download(id));
+            }
+        }
+    }
+}
+
+/// How long a line takes, and whether that keeps up with speech: up to `limits[0]`
+/// milliseconds it does, over `limits[1]` it does not, and `then` says what helps.
+fn keeping_up(ui: &mut Ui, ms: Option<f32>, verb: &str, limits: [f32; 2], then: &str) {
+    let Some(ms) = ms else {
+        ui.weak("Shown while captions run.");
+        return;
+    };
+    let secs = format!("{:.1} s", ms / 1000.0);
+    if ms <= limits[0] {
+        ui.label(format!("Yes: a line takes {secs} to {verb}"));
+    } else if ms <= limits[1] {
+        ui.label(format!("Nearly: a line takes {secs} to {verb}"));
+    } else {
+        ui.colored_label(WARN, format!("No: a line takes {secs} to {verb}. {then}"));
+    }
+}
+
+/// What the speech model runs on, in words.
+fn runs_on(compute: &str) -> &'static str {
+    match compute {
+        "CPU" => {
+            "The processor, as no graphics card this version can use was found. Tiny and Base keep up best."
+        }
+        "Metal" => "This Mac's graphics chip",
+        _ => "Your NVIDIA graphics card",
+    }
 }
 
 fn speech(
@@ -860,10 +941,12 @@ fn speech(
         });
         ui.end_row();
 
+        // The rest is the speech model's, which neither of those uses.
+        if lc {
+            return;
+        }
         ui.label("Words to expect");
-        ui.add_enabled_ui(!lc, |ui| {
-            ui.vertical(|ui| hint_tags(ui, &mut s.hint, changed));
-        });
+        hint_tags(ui, &mut s.hint, changed);
         ui.end_row();
 
         ui.label("Model");
@@ -879,7 +962,7 @@ fn speech(
                 format!("{} ({})", spec(id).label, size_text(id))
             }
         };
-        ui.add_enabled_ui(!lc, |ui| {
+        ui.horizontal(|ui| {
             ComboBox::from_id_salt("model")
                 .selected_text(label(s.model))
                 .width(200.0)
@@ -894,12 +977,19 @@ fn speech(
                     ] {
                         *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
                     }
-                })
+                });
+            model_state(ui, ModelId::whisper(s.model, gpu), m, actions);
         });
         ui.end_row();
 
-        ui.label("Status");
-        model_status(ui, ModelId::whisper(s.model, gpu), m, actions);
+        ui.label("Keeping up");
+        keeping_up(
+            ui,
+            m.asr_ms,
+            "hear",
+            [400.0, 1000.0],
+            "A smaller model keeps up better.",
+        );
         ui.end_row();
 
         ui.label("Speed");
@@ -910,74 +1000,113 @@ fn speech(
         ui.end_row();
 
         ui.label("Runs on");
-        ui.label(&m.compute);
+        ui.label(runs_on(&m.compute));
         ui.end_row();
     });
 }
 
-/// The words to expect (kept as one text, commas between them) as tags under a heading that
-/// opens: Enter or a comma adds what was typed, the cross on a tag removes it.
+/// The words to expect (kept as one text, commas between them) as tags: Enter or a comma adds
+/// what was typed, the cross on a tag removes it, and their count opens and closes them. Each
+/// line of tags is a row of the grid `ui` lays out.
 fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
+    /// As wide as a line of tags gets.
+    const WIDTH: f32 = 380.0;
     let mut words = hint_words(hint);
-    let was = words.len();
-    let id = ui.scope_id().with("hint-new");
-    let mut new: String = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
-    let title = match was {
-        0 => "None yet".to_string(),
-        1 => "1 word".to_string(),
-        n => format!("{n} words"),
-    };
-    egui::CollapsingHeader::new(title)
-        .id_salt("hint")
-        .default_open(was == 0)
-        .show(ui, |ui| {
-            ui.set_max_width(380.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                let mut gone = None;
-                for (i, word) in words.iter().enumerate() {
+    let id = ui.scope_id().with("hint");
+    let (mut new, mut open): (String, bool) = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+    ui.horizontal(|ui| {
+        let field = ui
+            .add(
+                egui::TextEdit::singleline(&mut new)
+                    .hint_text("A name or word, then Enter")
+                    .desired_width(200.0),
+            )
+            .on_hover_text(
+                "Helps the speech model hear and spell names, places and slang. Several at \
+                 once go in with commas between them. Not used while subtitles are read off \
+                 the screen.",
+            );
+        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+        if enter || new.contains(',') {
+            // What stands after the last comma is still being typed.
+            let cut = if enter {
+                new.len()
+            } else {
+                new.rfind(',').map_or(0, |i| i + 1)
+            };
+            for word in hint_words(&new[..cut]) {
+                if !words.iter().any(|w| w.eq_ignore_ascii_case(&word)) {
+                    words.push(word);
+                    open = true;
+                }
+            }
+            new = new[cut..].trim_start().to_string();
+            if enter {
+                field.request_focus();
+            }
+        }
+        if !words.is_empty() && opener(ui, open, words.len()) {
+            open = !open;
+        }
+    });
+    let mut gone = None;
+    if open {
+        let mut from = 0;
+        while from < words.len() {
+            // As many as fit, and one at least.
+            let mut wide = 0.0;
+            let line = words[from..]
+                .iter()
+                .take_while(|w| {
+                    wide += tag_width(ui, w) + 6.0;
+                    wide <= WIDTH + 6.0
+                })
+                .count()
+                .max(1);
+            ui.end_row();
+            ui.label("");
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (i, word) in words.iter().enumerate().skip(from).take(line) {
                     if tag(ui, i, word) {
                         gone = Some(i);
                     }
                 }
-                if let Some(i) = gone {
-                    words.remove(i);
-                }
             });
-            let field = ui
-                .add(
-                    egui::TextEdit::singleline(&mut new)
-                        .hint_text("A name or word, then Enter")
-                        .desired_width(260.0),
-                )
-                .on_hover_text(
-                    "Helps the speech model hear and spell names, places and slang. \
-                     Several at once go in with commas between them.",
-                );
-            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-            if enter || new.contains(',') {
-                // What stands after the last comma is still being typed.
-                let cut = if enter {
-                    new.len()
-                } else {
-                    new.rfind(',').map_or(0, |i| i + 1)
-                };
-                for word in hint_words(&new[..cut]) {
-                    if !words.iter().any(|w| w.eq_ignore_ascii_case(&word)) {
-                        words.push(word);
-                    }
-                }
-                new = new[cut..].trim_start().to_string();
-                if enter {
-                    field.request_focus();
-                }
-            }
-        });
-    ui.data_mut(|d| d.insert_temp(id, new));
+            from += line;
+        }
+    }
+    if let Some(i) = gone {
+        words.remove(i);
+    }
+    ui.data_mut(|d| d.insert_temp(id, (new, open)));
     if words != hint_words(hint) {
         *hint = words.join(", ");
         *changed = true;
     }
+}
+
+/// How many words there are, with the triangle that opens them; true when clicked.
+fn opener(ui: &mut Ui, open: bool, n: usize) -> bool {
+    let text = if n == 1 {
+        "1 word".to_string()
+    } else {
+        format!("{n} words")
+    };
+    let font = TextStyle::Body.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.clone(), font, Color32::PLACEHOLDER);
+    let size = vec2(20.0 + galley.size().x, 24.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| WidgetInfo::selected(egui::Role::Button, true, open, &text));
+    let icon = Rect::from_center_size(pos2(rect.left() + 8.0, rect.center().y), vec2(14.0, 14.0));
+    let openness = if open { 1.0 } else { 0.0 };
+    egui::collapsing_header::paint_default_icon(ui, openness, &resp.clone().with_new_rect(icon));
+    let at = pos2(rect.left() + 20.0, rect.center().y - galley.size().y / 2.0);
+    ui.painter()
+        .galley(at, galley, ui.style().interact(&resp).text_color());
+    resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
 }
 
 fn hint_words(hint: &str) -> Vec<String> {
@@ -988,24 +1117,35 @@ fn hint_words(hint: &str) -> Vec<String> {
         .collect()
 }
 
+/// The room a tag's cross takes, and the room left of its word.
+const TAG_CROSS: f32 = 22.0;
+const TAG_PAD: f32 = 10.0;
+
+fn tag_width(ui: &Ui, word: &str) -> f32 {
+    let font = TextStyle::Body.resolve(ui.style());
+    let text = ui
+        .painter()
+        .layout_no_wrap(word.to_string(), font, Color32::PLACEHOLDER);
+    TAG_PAD + text.size().x + TAG_CROSS
+}
+
 /// A word with a cross to its right; true when the cross was clicked.
 fn tag(ui: &mut Ui, i: usize, word: &str) -> bool {
-    const CROSS: f32 = 22.0;
     let v = ui.visuals().clone();
     let font = TextStyle::Body.resolve(ui.style());
     let text = ui
         .painter()
         .layout_no_wrap(word.to_string(), font, v.text_color());
-    let size = vec2(10.0 + text.size().x + CROSS, 24.0);
+    let size = vec2(tag_width(ui, word), 24.0);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let cross = rect.with_min_x(rect.right() - CROSS);
+    let cross = rect.with_min_x(rect.right() - TAG_CROSS);
     let resp = ui
         .interact(cross, ui.scope_id().with(("tag", i)), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
     resp.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, format!("Remove {word}")));
     let painter = ui.painter();
     painter.rect_filled(rect, 12, v.widgets.inactive.weak_bg_fill);
-    let at = pos2(rect.left() + 10.0, rect.center().y - text.size().y / 2.0);
+    let at = pos2(rect.left() + TAG_PAD, rect.center().y - text.size().y / 2.0);
     painter.galley(at, text, v.text_color());
     let stroke = Stroke::new(
         1.5,
@@ -1112,6 +1252,16 @@ fn translation(
                     ui.end_row();
                 }
             }
+
+            ui.label("Keeping up");
+            keeping_up(
+                ui,
+                m.tr_ms,
+                "translate",
+                [700.0, 1500.0],
+                "The graphics card is busy.",
+            );
+            ui.end_row();
         });
         *changed |= ui
             .checkbox(&mut s.instant, "Instant (translate the live line)")
@@ -1670,6 +1820,8 @@ mod tests {
                 system_audio: Ok(()),
             },
             compute: compute.into(),
+            asr_ms: None,
+            tr_ms: None,
             autostart: false,
             voices: Vec::new(),
             running: false,

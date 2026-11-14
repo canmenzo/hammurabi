@@ -8,10 +8,14 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - Subtitles on screen shows what it reads: under the subtitle area in Settings > Listen there is now a small live picture of the window or display, with the part that is read lit. Its edges can be dragged, so the area is set by looking instead of by guessing a percentage.
 - The area has sides too. A video in a web page does not fill its window, and its subtitles are centred in the video, not in the window, so they were passed over as something standing to a side; with the sides dragged to the video's they are read.
+- A downloaded model can be deleted from Settings, with a second click to confirm, and Settings > General lists every model with what it takes to download or delete it. A download shows how many megabytes of how many are in, beside its percentage.
+- Settings says whether captions keep up: how long a line takes to hear (Listen) and to translate (Translate), in orange with what helps when that is too long to keep up with speech. It stands where the model's name was repeated as its status.
 
 ### Changed
 
 - Words to expect are tags: Enter or a comma adds what was typed, the cross on a tag removes it, and the list opens and closes. A long list in one line could not be read.
+- Settings > Listen shows only what applies: while subtitles are read off the screen or Windows Live Captions listens, the speech model's settings are hidden instead of greyed out, where they could be seen but not clicked.
+- "Runs on" says what the speech model runs on in words ("Your NVIDIA graphics card") instead of "CUDA 0".
 
 ## [0.7.2] - 2026-11-13
 

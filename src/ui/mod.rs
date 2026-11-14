@@ -130,6 +130,8 @@ impl App {
                     system_audio: Ok(()),
                 },
                 compute: crate::device::label(),
+                asr_ms: None,
+                tr_ms: None,
                 autostart: autostart::is_enabled(),
                 voices: Vec::new(),
                 running: false,
@@ -389,6 +391,8 @@ impl App {
                 self.state = s;
                 if matches!(s, EngineState::Idle | EngineState::Error) {
                     self.running = false;
+                    self.models.asr_ms = None;
+                    self.models.tr_ms = None;
                 }
                 if s == EngineState::Running {
                     self.status.clear();
@@ -472,7 +476,13 @@ impl App {
                 tts::Activity::VoiceLearned => self.models.voice_learned = true,
                 tts::Activity::VoiceForgotten => self.models.voice_learned = false,
             },
-            EngineEvent::Stats { device, .. } => self.models.compute = device,
+            EngineEvent::Stats { asr_ms, device } => {
+                self.models.compute = device;
+                self.models.asr_ms = Some(smoothed(self.models.asr_ms, asr_ms));
+            }
+            EngineEvent::Translated { ms } => {
+                self.models.tr_ms = Some(smoothed(self.models.tr_ms, ms));
+            }
         }
     }
 
@@ -565,6 +575,11 @@ fn install_handlers(ctx: &Context, tx: Sender<AppEvent>) {
             c.request_repaint();
         }
     }));
+}
+
+/// A time in milliseconds joined to those before it, so that one slow run does not show as slowness.
+fn smoothed(was: Option<f32>, ms: u32) -> f32 {
+    was.map_or(ms as f32, |was| 0.8 * was + 0.2 * ms as f32)
 }
 
 impl eframe::App for App {
@@ -762,6 +777,12 @@ impl eframe::App for App {
                         self.changed();
                     }
                     SettingsAction::Download(id) => self.engine().send(EngineCommand::Prefetch(id)),
+                    SettingsAction::DeleteModel(id) => {
+                        if let Err(e) = models::remove(id) {
+                            self.warn(format!("{e:#}"));
+                        }
+                        self.refresh_models();
+                    }
                     SettingsAction::OpenModelsFolder => {
                         if let Ok(dir) = crate::paths::models_dir() {
                             let _ = std::fs::create_dir_all(&dir);

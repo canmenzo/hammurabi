@@ -1696,7 +1696,12 @@ impl Engine {
                     Some(Duration::from_secs(3)),
                 );
             }
-            TranslatorEvent::Result { id, text } => self.core.translation(id, text),
+            TranslatorEvent::Result { id, text, ms } => {
+                if let Some(ms) = ms {
+                    self.events().send(EngineEvent::Translated { ms });
+                }
+                self.core.translation(id, text);
+            }
             TranslatorEvent::Trouble(e) => self.events().status(
                 StatusLevel::Warning,
                 format!("Translation is failing, trying again: {e}"),

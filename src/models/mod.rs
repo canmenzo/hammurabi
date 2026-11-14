@@ -300,6 +300,21 @@ pub fn is_cached(id: ModelId) -> bool {
     model_dir(id).is_ok_and(|d| spec(id).files.iter().all(|f| d.join(f).is_file()))
 }
 
+/// Deletes what was downloaded of `id`. It is downloaded again when it is next needed.
+pub fn remove(id: ModelId) -> anyhow::Result<()> {
+    let dir = model_dir(id)?;
+    for name in spec(id).files {
+        let file = dir.join(name);
+        if file.exists() {
+            std::fs::remove_file(&file)
+                .with_context(|| format!("could not delete {}", file.display()))?;
+        }
+    }
+    // Only when nothing else is in it.
+    let _ = std::fs::remove_dir(&dir);
+    Ok(())
+}
+
 /// Downloads missing files; `progress` reports cumulative bytes over all files, at most every
 /// 200 ms. Concurrent calls for the same model (worker + Download button) wait for each other.
 pub fn ensure(

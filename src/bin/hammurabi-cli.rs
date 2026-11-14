@@ -1051,7 +1051,7 @@ fn transcribe_realtime(
             EngineEvent::Caption(c) => print_caption(&c, Some(at), live),
             EngineEvent::Status(s) => eprintln!("[{at:6.1}s] status: {}", s.text),
             EngineEvent::State(s) => eprintln!("[{at:6.1}s] state: {s:?}"),
-            EngineEvent::Speech(_) => {}
+            EngineEvent::Speech(_) | EngineEvent::Translated { .. } => {}
             EngineEvent::Stats { asr_ms: ms, .. } => asr_ms.add(Duration::from_millis(ms as u64)),
             EngineEvent::Progress(p) => {
                 // One line per 10% of each download.

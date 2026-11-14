@@ -109,7 +109,14 @@ pub enum EngineEvent {
     Progress(Progress),
     Caption(CaptionUpdate),
     Speech(Activity),
-    Stats { asr_ms: u32, device: String },
+    Stats {
+        asr_ms: u32,
+        device: String,
+    },
+    /// A caption was translated, in this long.
+    Translated {
+        ms: u32,
+    },
 }
 
 pub struct AsrRequest {
@@ -161,6 +168,8 @@ pub enum TranslatorEvent {
     Result {
         id: u64,
         text: Option<String>,
+        /// How long translating it took, when it was translated.
+        ms: Option<u32>,
     },
     /// Translations keep failing; they are tried again after a pause.
     Trouble(String),

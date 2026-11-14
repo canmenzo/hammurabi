@@ -1,7 +1,7 @@
 use eframe::egui;
 use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
-use hammurabi::settings::Settings;
+use hammurabi::settings::{AsrBackend, Settings};
 use hammurabi::tts::{Gender, Voice};
 use hammurabi::ui::settings_window::{
     ModelsStatus, Page, SettingsAction, SettingsWindow, apply_theme,
@@ -61,6 +61,9 @@ fn main() -> eframe::Result {
                 Some("general") => Page::General,
                 _ => Page::Listen,
             };
+            // A second word "screen" shows the page as it is when subtitles are read off the
+            // screen, and a third is the window to read them from.
+            let screen = std::env::args().nth(2).as_deref() == Some("screen");
             let mut win = SettingsWindow::default();
             win.page = page;
             Ok(Box::new(Demo {
@@ -69,17 +72,26 @@ fn main() -> eframe::Result {
                     translate: true,
                     target_language: "tr".into(),
                     speak: true,
+                    hint: "Lamar, Los Santos, Vice City, Trevor Philips".into(),
+                    asr_backend: if screen {
+                        AsrBackend::ScreenText
+                    } else {
+                        AsrBackend::Whisper
+                    },
+                    screen_window: std::env::args().nth(3).unwrap_or_default(),
                     ..Settings::default()
                 },
                 status: ModelsStatus {
                     cached: vec![ModelId::WhisperTurbo, ModelId::Madlad3bQ4k],
-                    downloading: Vec::new(),
+                    downloading: vec![(ModelId::WhisperLarge, 1_200_000_000, Some(3_090_000_000))],
                     devices: DeviceList {
                         inputs: vec![dev("a", "Microphone (USB)", true)],
                         outputs: vec![dev("b", "Speakers (Realtek)", true)],
                         system_audio: Ok(()),
                     },
                     compute: "CUDA 0".into(),
+                    asr_ms: Some(210.0),
+                    tr_ms: Some(1700.0),
                     autostart: false,
                     voices: vec![
                         Voice {

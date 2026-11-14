@@ -14,9 +14,18 @@ env:
 # Each build job uploads one archive as an artifact named release-*.
 # The release job collects every release-* artifact, so new build jobs (e.g. windows-cuda)
 # only need to upload under that name and be added to `needs`.
+#
+# The Windows programs and installers are signed by SignPath once the SIGNPATH_API_TOKEN secret
+# and the SIGNPATH_* variables exist (.github/actions/sign); until then they are built unsigned.
+# The Windows x64 job also builds the package for the Microsoft Store, as an artifact of the run
+# named store-windows-x64 that is not part of the release: it is uploaded to Partner Center by
+# hand, and the Store signs it.
 jobs:
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -26,6 +35,20 @@ jobs:
 
       - name: Build
         run: cargo build --release --bins
+
+      - name: Sign the programs
+        uses: ./.github/actions/sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          configuration: programs
+          name: unsigned-x64-programs
+          path: |
+            target/release/hammurabi.exe
+            target/release/hammurabi-cli.exe
+          directory: target/release
 
       - name: Package
         shell: pwsh
@@ -39,6 +62,18 @@ jobs:
         shell: pwsh
         run: packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-x64
 
+      - name: Sign the installer
+        uses: ./.github/actions/sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          configuration: installer
+          name: unsigned-x64-installer
+          path: dist/hammurabi-windows-x64-setup.exe
+          directory: dist
+
       - name: Try the installer
         shell: pwsh
         run: |
@@ -50,6 +85,23 @@ jobs:
           $deadline = (Get-Date).AddSeconds(30)
           while ((Test-Path "$app/hammurabi.exe") -and (Get-Date) -lt $deadline) { Start-Sleep 1 }
           if (Test-Path "$app/hammurabi.exe") { throw 'the uninstaller left the app behind' }
+
+      # The identity is the one Partner Center gives the product; without the variables the
+      # package is built with placeholders, which the Store does not take.
+      - name: Store package
+        shell: pwsh
+        env:
+          HAMMURABI_MSIX_NAME: ${{ vars.MSIX_NAME }}
+          HAMMURABI_MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          HAMMURABI_MSIX_PUBLISHER_NAME: ${{ vars.MSIX_PUBLISHER_NAME }}
+        run: packaging/windows/build-msix.ps1 -Stage dist/hammurabi-windows-x64
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: store-windows-x64
+          path: dist/hammurabi-windows-x64.msix
+          compression-level: 0
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -64,6 +116,9 @@ jobs:
   build-windows-cuda:
     # CUDA 12.9's nvcc rejects Visual Studio 2026 (windows-latest); windows-2022 has VS 2022.
     runs-on: windows-2022
+    permissions:
+      contents: read
+      actions: read
     env:
       CUDA_COMPUTE_CAP: '120'
       # cl.exe defaults to the static CRT (/MT), but ort's prebuilt ONNX Runtime needs /MD.
@@ -87,6 +142,20 @@ jobs:
       - name: Build
         run: cargo build --release --bins --features cuda
 
+      - name: Sign the programs
+        uses: ./.github/actions/sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          configuration: programs
+          name: unsigned-cuda-programs
+          path: |
+            target/release/hammurabi.exe
+            target/release/hammurabi-cli.exe
+          directory: target/release
+
       - name: Package
         shell: pwsh
         run: |
@@ -103,6 +172,18 @@ jobs:
         shell: pwsh
         run: packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-cuda
 
+      - name: Sign the installer
+        uses: ./.github/actions/sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          configuration: installer
+          name: unsigned-cuda-installer
+          path: dist/hammurabi-windows-cuda-setup.exe
+          directory: dist
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows-cuda
@@ -115,6 +196,9 @@ jobs:
   # Speaker's voice (omnivoice.cpp on GGML's Vulkan backend: NVIDIA, AMD and Intel GPUs).
   build-windows-gpu:
     runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read
     env:
       VULKAN_VERSION: '1.4.363.0'
     steps:
@@ -139,6 +223,20 @@ jobs:
       - name: Build
         run: cargo build --release --bins --features omnivoice
 
+      - name: Sign the programs
+        uses: ./.github/actions/sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          configuration: programs
+          name: unsigned-gpu-programs
+          path: |
+            target/release/hammurabi.exe
+            target/release/hammurabi-cli.exe
+          directory: target/release
+
       - name: Package
         shell: pwsh
         run: |
@@ -150,6 +248,18 @@ jobs:
       - name: Installer
         shell: pwsh
         run: packaging/windows/build-installer.ps1 -Stage dist/hammurabi-windows-gpu
+
+      - name: Sign the installer
+        uses: ./.github/actions/sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          configuration: installer
+          name: unsigned-gpu-installer
+          path: dist/hammurabi-windows-gpu-setup.exe
+          directory: dist
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

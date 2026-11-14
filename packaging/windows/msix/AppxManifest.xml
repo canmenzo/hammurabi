@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The package for the Microsoft Store. build-msix.ps1 fills the names between @ signs: the
+     identity is the one Partner Center gives the product, and the Store signs the package. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap10 desktop rescap">
+  <Identity Name="@NAME@" Publisher="@PUBLISHER@" Version="@VERSION@" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Hammurabi</DisplayName>
+    <PublisherDisplayName>@PUBLISHER_NAME@</PublisherDisplayName>
+    <Logo>StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <!-- 19041 is Windows 10 2004, the first to pass an argument to a startup task. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="Hammurabi" Executable="hammurabi.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Hammurabi"
+        Description="Live captions and translation for anything your computer plays"
+        BackgroundColor="transparent"
+        Square150x150Logo="Square150x150Logo.png"
+        Square44x44Logo="Square44x44Logo.png" />
+      <Extensions>
+        <!-- Start at login: a packaged app has no Run value in the registry. Off until the
+             user turns it on in Settings. -->
+        <desktop:Extension Category="windows.startupTask" Executable="hammurabi.exe" EntryPoint="Windows.FullTrustApplication" uap10:Parameters="--background">
+          <desktop:StartupTask TaskId="HammurabiStartup" Enabled="false" DisplayName="Hammurabi" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
+  </Capabilities>
+</Package>

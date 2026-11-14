@@ -1,0 +1,55 @@
+name: Sign with SignPath
+description: >
+  Has SignPath sign files and puts the signed ones where the unsigned were. Without an API
+  token it does nothing, so a release is built unsigned until the project is approved.
+inputs:
+  api-token:
+    description: The SIGNPATH_API_TOKEN secret. Empty skips signing.
+    required: false
+    default: ''
+  organization-id:
+    description: SignPath organization ID.
+    required: false
+    default: ''
+  project-slug:
+    description: SignPath project slug.
+    required: false
+    default: ''
+  signing-policy-slug:
+    description: SignPath signing policy slug.
+    required: false
+    default: ''
+  configuration:
+    description: Slug of the SignPath artifact configuration that says what is in the upload.
+    required: true
+  name:
+    description: A name for the upload, unlike every other artifact's of the run.
+    required: true
+  path:
+    description: The files to sign, all in one folder.
+    required: true
+  directory:
+    description: That folder; the signed files are put there.
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: upload
+      if: inputs.api-token != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        if-no-files-found: error
+
+    - if: inputs.api-token != ''
+      uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: ${{ inputs.organization-id }}
+        project-slug: ${{ inputs.project-slug }}
+        signing-policy-slug: ${{ inputs.signing-policy-slug }}
+        artifact-configuration-slug: ${{ inputs.configuration }}
+        github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+        wait-for-completion: true
+        output-artifact-directory: ${{ inputs.directory }}

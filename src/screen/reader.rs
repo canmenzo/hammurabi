@@ -2,6 +2,8 @@
 //! text recognition, the lines that are the subtitle are picked out of what it read, and the
 //! readings of one subtitle over time are made into one text, given on once.
 
+use std::collections::VecDeque;
+
 use super::prepare::Prep;
 use super::resize::Resize;
 
@@ -75,6 +77,37 @@ const READS_MAX: usize = 64;
 /// subtitles measure 0.45 to 1, a game's thin off-white ones 0.1 to 0.25.
 const WHITE_MIN: f32 = 0.35;
 
+// Captions that grow word by word from a left edge, as a video site's automatic ones do.
+/// A row is one of those once it has gained a word this many times: up to `GROW_WORDS` after
+/// the words it had, which stand as they were, and not in the middle of the picture, where a
+/// subtitle that stands is and reads now with a word more, now with one less. A row that reads
+/// with fewer words starts its count again. And it has to have moved up a row since, as one
+/// does when the next begins under it: text typed at a left edge grows too, but stays.
+const GROW_MIN: u32 = 3;
+const GROW_WORDS: usize = 3;
+/// and rows are looked for at the left edge it grew from for this long after the last one.
+const ROLL_KEEP_S: f64 = 8.0;
+/// The lowest row is given on as it is when no word has joined it for this long,
+const ROLL_PAUSE_S: f64 = 1.2;
+/// and what was not given on of a row that went away, after this long.
+const ROLL_GONE_S: f64 = 0.5;
+/// A row is kept this long after it was last seen, for what was not given on of it to be given
+/// once it went away. A reading is not of a row unseen for longer than `ROLL_GONE_S`.
+const ROLL_DONE_S: f64 = 12.0;
+/// A reading is of a row when one starts with the other, but for this share of the letters,
+const ROLL_ERR: f32 = 0.15;
+/// and a reading that lacks the row's end has at least this much of it.
+const ROLL_PART: f32 = 0.6;
+/// What stands further than this from a row's end, in row heights, is not of it: a word in
+/// the picture beside the captions. Unless it stands level with the row, as its own words do:
+/// then across this much, the hole a word struck out of the captions leaves.
+const ROLL_GAP: f32 = 0.8;
+const ROLL_LEVEL_GAP: f32 = 3.5;
+/// Level is within this much of a row's height, at its top and its bottom.
+const LEVEL: f32 = 0.15;
+/// A row's first word begins this near the left edge the captions grow from, in row heights.
+const EDGE_TOL: f32 = 0.3;
+
 /// The width the band is read at. What counts as white and how the text recognition reads
 /// were set on pictures this wide; a smaller window's band is enlarged to it first, which
 /// takes the words read wrong at 1280 wide from a third to a ninth.
@@ -93,6 +126,7 @@ pub struct Reader {
     /// How white the letters read lately were (`Prep::whiteness`); None before any were.
     white: Option<f32>,
     tracker: Tracker,
+    roller: Roller,
 }
 
 impl Reader {
@@ -112,6 +146,7 @@ impl Reader {
             plain: vec![0; to.0 * to.1],
             white: None,
             tracker: Tracker::default(),
+            roller: Roller::default(),
         }
     }
 
@@ -141,6 +176,16 @@ impl Reader {
     /// of it, with the time it was first seen.
     pub fn read(&mut self, t: f64, lines: &[Line], plain: &[Line]) -> Option<(f64, String)> {
         let width = self.width as f32;
+        // Captions that grow word by word are followed by themselves: they are not centred,
+        // and a row of them is not a subtitle until it is whole.
+        if self
+            .roller
+            .feed(t, &rows(plain, width, ROLL_GAP, ROLL_LEVEL_GAP), width)
+        {
+            // What the tracker had begun is the roller's, or old by the time it lets go.
+            self.tracker.cur = None;
+            return self.roller.out.pop_front();
+        }
         let block = pick(lines, width);
         self.prep.feedback(block.as_ref(), lines);
         let plain = pick(plain, width);
@@ -188,9 +233,10 @@ fn sim(a: &[char], b: &[char]) -> f32 {
     1.0 - lev(a, b) as f32 / a.len().max(b.len()) as f32
 }
 
-/// Which of the lines read in a band `w` wide are the subtitle: the lowest centred row and
-/// the centred rows right above it.
-fn pick(lines: &[Line], w: f32) -> Option<Block> {
+/// The rows of text in a band `w` wide that are as tall as a subtitle's, top to bottom: the
+/// pieces the recognition split a row into are one again, across a gap of up to `join` row
+/// heights, or `level` of them where the pieces stand level.
+fn rows(lines: &[Line], w: f32, join: f32, level: f32) -> Vec<Line> {
     let mut lines: Vec<&Line> = lines
         .iter()
         .filter(|l| {
@@ -208,7 +254,8 @@ fn pick(lines: &[Line], w: f32) -> Option<Block> {
     for l in lines {
         if let Some(r) = rows.last_mut() {
             let (hr, hl) = (r.y1 - r.y0, l.y1 - l.y0);
-            let gap = JOIN_GAP * hr.max(hl);
+            let even = (r.y0 - l.y0).abs().max((r.y1 - l.y1).abs()) <= LEVEL * hr.min(hl);
+            let gap = if even { level } else { join } * hr.max(hl);
             if ((r.y0 + r.y1) / 2.0 - (l.y0 + l.y1) / 2.0).abs() < 0.5 * hr.min(hl)
                 && l.x0 - r.x1 < gap
                 && r.x0 - l.x1 < gap
@@ -227,6 +274,13 @@ fn pick(lines: &[Line], w: f32) -> Option<Block> {
         }
         rows.push(l.clone());
     }
+    rows
+}
+
+/// Which of the lines read in a band `w` wide are the subtitle: the lowest centred row and
+/// the centred rows right above it.
+fn pick(lines: &[Line], w: f32) -> Option<Block> {
+    let mut rows = rows(lines, w, JOIN_GAP, JOIN_GAP);
     rows.retain(|r| ((r.x0 + r.x1) / 2.0 - w / 2.0).abs() <= C_TOL * w);
     let mut block = vec![rows.pop()?];
     while let Some(r) = rows.pop() {
@@ -247,6 +301,214 @@ fn pick(lines: &[Line], w: f32) -> Option<Block> {
         h: block.iter().map(|r| r.y1 - r.y0).fold(0.0, f32::max),
         rows: block,
     })
+}
+
+/// A row of captions that grow word by word.
+struct Rolled {
+    key: Vec<char>,
+    text: String,
+    x0: f32,
+    h: f32,
+    /// When it was first seen, last gained a word and was last seen.
+    born: f64,
+    grew: f64,
+    seen: f64,
+    /// How often it gained a word, and how many readings on end had it as it reads now.
+    grown: u32,
+    same: u32,
+    /// How many of its words were given on.
+    given: usize,
+    /// How many rows stood under it when it was last seen, and whether a row has begun under
+    /// it since it was first seen.
+    up: usize,
+    rose: bool,
+}
+
+impl Rolled {
+    /// Is `key`, read at `x0` and `up` rows from the lowest, this row: as it is, with more
+    /// words after it, or with its end not read? A row only ever moves up, so one that
+    /// begins like a row above it is another.
+    fn is(&self, key: &[char], x0: f32, up: usize) -> bool {
+        let n = self.key.len().min(key.len());
+        (x0 - self.x0).abs() <= 1.5 * self.h.max(H_MIN * WIDTH as f32)
+            && (key == self.key.as_slice()
+                || (up >= self.up
+                    && n as f32 >= ROLL_PART * self.key.len() as f32
+                    && lev(&self.key[..n], &key[..n]) as f32 <= (ROLL_ERR * n as f32).floor()))
+    }
+
+    /// Its words that were not given on yet, as given on now.
+    fn rest(&mut self) -> Option<(f64, String)> {
+        let words: Vec<&str> = words(&self.text).collect();
+        let fresh = words.get(self.given..).filter(|w| !w.is_empty())?.join(" ");
+        self.given = words.len();
+        Some((self.born, apostrophes(&commas(&fresh))))
+    }
+}
+
+/// A row's text and where it begins, without what the recognition read before the left edge
+/// at `x` the captions grow from: a mark, or a letter it made of the picture beside them.
+fn from_edge(line: &Line, x: f32, h: f32) -> (String, f32) {
+    let first = line
+        .words
+        .iter()
+        .take(3)
+        .position(|&(_, x0, _)| (x0 - x).abs() <= EDGE_TOL * h)
+        .unwrap_or(0);
+    let words: Vec<&str> = line.words[first..].iter().map(|w| w.0.as_str()).collect();
+    match first {
+        0 => (line.text.clone(), line.x0),
+        _ => (words.join(" "), line.words[first].1),
+    }
+}
+
+/// Does a row begin at `x`, give or take `h`? One of its first words does then: a mark the
+/// recognition read before the row (a dot, a dash) stands left of where it begins.
+fn begins_at(line: &Line, x: f32, h: f32) -> bool {
+    line.words
+        .iter()
+        .take(3)
+        .any(|&(_, x0, _)| (x0 - x).abs() <= h)
+}
+
+/// The words of a row: what has no letter or digit in it is a mark (">>" for another speaker).
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphanumeric))
+}
+
+/// Follows captions that grow word by word from a left edge and move up a row when the next
+/// one begins. Such a row is told by its growing and moving up; from then on the rows at its
+/// left edge are the captions, for as long as words join them. A row is given on when the next
+/// one has begun under it, or when no word has joined it for a while, and then only its words
+/// that were not given on before.
+#[derive(Default)]
+struct Roller {
+    rows: Vec<Rolled>,
+    /// The left edge the captions grow from, how tall they are, and when one was last there.
+    edge: Option<(f32, f32, f64)>,
+    out: VecDeque<(f64, String)>,
+}
+
+impl Roller {
+    /// `rows`: what `rows()` gave for the picture at `t` seconds, `w` wide. True while there
+    /// are such captions; what is to be given on of them is in `out` then.
+    fn feed(&mut self, t: f64, rows: &[Line], w: f32) -> bool {
+        self.rows.retain(|r| t - r.seen <= ROLL_DONE_S);
+        if self.edge.is_some_and(|(.., at)| t - at > ROLL_KEEP_S) {
+            self.edge = None;
+            // Taking over again has to be earned again.
+            for r in &mut self.rows {
+                r.grown = 0;
+                r.rose = false;
+            }
+        }
+        let edge = self.edge;
+        let rows: Vec<&Line> = rows
+            .iter()
+            .filter(|r| edge.is_none_or(|(x, h, _)| begins_at(r, x, h)))
+            .collect();
+        // Which row of `self.rows` each is, top to bottom: a row is taken once, by the
+        // reading that is most of it.
+        let mut taken: Vec<usize> = Vec::new();
+        for (i, line) in rows.iter().enumerate() {
+            let (text, x0) = match self.edge {
+                Some((x, h, _)) => from_edge(line, x, h),
+                None => (line.text.clone(), line.x0),
+            };
+            let (key, up) = (key(&text), rows.len() - 1 - i);
+            // Of two rows that begin alike, the one nearer to it in length.
+            let old = (0..self.rows.len())
+                .filter(|j| !taken.contains(j))
+                .filter(|&j| t - self.rows[j].seen <= ROLL_GONE_S)
+                .filter(|&j| self.rows[j].is(&key, x0, up))
+                .min_by_key(|&j| self.rows[j].key.len().abs_diff(key.len()));
+            let j = match old {
+                Some(j) => {
+                    let r = &mut self.rows[j];
+                    r.seen = t;
+                    r.rose |= up > r.up;
+                    r.up = up;
+                    // A row's first word may be a low one.
+                    r.h = r.h.max(line.y1 - line.y0);
+                    // A reading that lacks the row's end leaves it as it was.
+                    if key.len() + 2 >= r.key.len() {
+                        let (was, now): (Vec<&str>, Vec<&str>) =
+                            (words(&r.text).collect(), words(&text).collect());
+                        if now.len() > was.len() {
+                            let middle = ((line.x0 + line.x1) / 2.0 - w / 2.0).abs() <= C_TOL * w;
+                            let joined =
+                                now.len() - was.len() <= GROW_WORDS && now.starts_with(&was);
+                            r.grown += u32::from(joined && !middle);
+                            r.grew = t;
+                            r.same = 0;
+                        } else {
+                            if now.len() < was.len() {
+                                r.grown = 0;
+                            }
+                            if key != r.key {
+                                // Marks that come and go in its readings do not make it another.
+                                r.same = 0;
+                            }
+                        }
+                        r.same += 1;
+                        r.text = text;
+                        r.key = key;
+                    }
+                    j
+                }
+                None => {
+                    self.rows.push(Rolled {
+                        key,
+                        text,
+                        x0,
+                        h: line.y1 - line.y0,
+                        born: t,
+                        grew: t,
+                        seen: t,
+                        grown: 0,
+                        same: 1,
+                        given: 0,
+                        up,
+                        rose: false,
+                    });
+                    self.rows.len() - 1
+                }
+            };
+            taken.push(j);
+            let r = &mut self.rows[j];
+            if self.edge.is_none() && r.grown >= GROW_MIN && r.rose {
+                log::debug!("screen: captions grow from {:.0}: {:?}", r.x0, r.text);
+                self.edge = Some((r.x0, r.h, t));
+            }
+            let Some(edge) = &mut self.edge else {
+                continue;
+            };
+            if !begins_at(line, edge.0, edge.1) {
+                continue;
+            }
+            edge.1 = edge.1.max(r.h);
+            // A row that stands at the edge and does not grow, a label, does not keep it.
+            if t - r.grew <= ROLL_KEEP_S {
+                edge.2 = t;
+            }
+            // Whole when another row stands under it, or nothing has joined it for a while.
+            let whole = i + 1 < rows.len() || t - r.grew >= ROLL_PAUSE_S;
+            if whole && r.same >= 2 {
+                self.out.extend(r.rest());
+            }
+        }
+        if let Some(edge) = self.edge {
+            // What went away before it was given on.
+            for r in &mut self.rows {
+                let there = (r.x0 - edge.0).abs() <= 1.5 * edge.1;
+                if t - r.seen > ROLL_GONE_S && r.same >= 2 && there {
+                    self.out.extend(r.rest());
+                }
+            }
+        }
+        self.edge.is_some() || !self.out.is_empty()
+    }
 }
 
 /// The subtitle that stands: its readings since it appeared.
@@ -786,6 +1048,186 @@ mod tests {
                 (3, 4, B.to_string())
             ]
         );
+    }
+
+    /// What a roller gives on for pictures of (seconds, the rows read in them).
+    fn rolled(pictures: &[(f64, Vec<Line>)]) -> Vec<String> {
+        let mut roller = Roller::default();
+        let mut out = Vec::new();
+        for (t, lines) in pictures {
+            roller.feed(*t, &rows(lines, W, ROLL_GAP, ROLL_LEVEL_GAP), W);
+            out.extend(roller.out.drain(..).map(|(_, text)| text));
+        }
+        out
+    }
+
+    /// Pictures a tenth of a second apart of captions that grow a word every fifth of one, two
+    /// rows at most, each from the left edge at 300.
+    fn rolling(lines: &[&str]) -> Vec<(f64, Vec<Line>)> {
+        let mut pictures = Vec::new();
+        let mut t = 0.0;
+        for (i, text) in lines.iter().enumerate() {
+            let all: Vec<&str> = text.split(' ').collect();
+            for n in 1..=all.len() {
+                for _ in 0..2 {
+                    let mut rows = Vec::new();
+                    if i > 0 {
+                        rows.push(line_at(lines[i - 1], 150.0, Some(300.0)));
+                    }
+                    rows.push(line_at(&all[..n].join(" "), 190.0, Some(300.0)));
+                    pictures.push((t, rows));
+                    t += 0.1;
+                }
+            }
+        }
+        // The last row stands for two seconds more.
+        for _ in 0..20 {
+            let i = lines.len() - 1;
+            let mut rows = vec![line_at(lines[i], 190.0, Some(300.0))];
+            if i > 0 {
+                rows.insert(0, line_at(lines[i - 1], 150.0, Some(300.0)));
+            }
+            pictures.push((t, rows));
+            t += 0.1;
+        }
+        pictures
+    }
+
+    #[test]
+    fn captions_that_grow_word_by_word_are_given_row_by_row() {
+        let lines = [
+            ">> I would not like to see it as",
+            "a neighbour of theirs and so I",
+            "went to the meeting",
+        ];
+        assert_eq!(
+            rolled(&rolling(&lines)),
+            [
+                "I would not like to see it as",
+                "a neighbour of theirs and so I",
+                "went to the meeting",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_given_at_a_pause_goes_on_with_its_other_words_only() {
+        // Three words, a pause of two seconds, then two more and the next row.
+        let mut pictures = Vec::new();
+        let at = |n: usize| n as f64 / 10.0;
+        let row = |text: &str, y: f32| line_at(text, y, Some(300.0));
+        for (n, text) in ["so", "so I", "so I", "so I went", "so I went"]
+            .iter()
+            .enumerate()
+        {
+            pictures.push((
+                at(n),
+                vec![row("it was a long day and", 150.0), row(text, 190.0)],
+            ));
+        }
+        for n in 5..25 {
+            pictures.push((
+                at(n),
+                vec![row("it was a long day and", 150.0), row("so I went", 190.0)],
+            ));
+        }
+        for n in 25..30 {
+            pictures.push((
+                at(n),
+                vec![
+                    row("it was a long day and", 150.0),
+                    row("so I went home early", 190.0),
+                ],
+            ));
+        }
+        for n in 30..36 {
+            pictures.push((
+                at(n),
+                vec![row("so I went home early", 150.0), row("that", 190.0)],
+            ));
+        }
+        // The first row grew before these pictures and is followed once the next begins under
+        // it: else the row under it would have to grow thrice and move up.
+        let mut before = vec![
+            (-0.4, vec![row("it was", 190.0)]),
+            (-0.3, vec![row("it was a", 190.0)]),
+        ];
+        before.push((-0.2, vec![row("it was a long", 190.0)]));
+        before.push((-0.1, vec![row("it was a long day and", 190.0)]));
+        before.extend(pictures);
+        assert_eq!(
+            rolled(&before),
+            ["it was a long day and", "so I went", "home early"]
+        );
+    }
+
+    #[test]
+    fn a_subtitle_read_with_a_word_more_and_a_word_less_does_not_grow() {
+        // The recognition splits and joins a word of a row that stands, a dozen times.
+        let mut roller = Roller::default();
+        for n in 0..40 {
+            let text = if n % 3 == 0 {
+                "You are a racist and I don t like you"
+            } else {
+                "You are a racist and I dont like you"
+            };
+            assert!(!roller.feed(
+                f64::from(n) / 10.0,
+                &rows(&[line(text)], W, ROLL_GAP, ROLL_LEVEL_GAP),
+                W
+            ));
+        }
+        // Off centre too: the words it had do not stand as they were.
+        let mut roller = Roller::default();
+        for n in 0..40 {
+            let text = if n % 3 == 0 {
+                "You are a racist and I don t like you"
+            } else {
+                "You are a racist and I dont like you"
+            };
+            let lines = [line_at(text, 188.0, Some(300.0))];
+            assert!(!roller.feed(
+                f64::from(n) / 10.0,
+                &rows(&lines, W, ROLL_GAP, ROLL_LEVEL_GAP),
+                W
+            ));
+        }
+    }
+
+    #[test]
+    fn subtitles_that_stand_are_not_captions_that_grow() {
+        // A centred subtitle, and another under it later: neither gains a word.
+        let mut roller = Roller::default();
+        for n in 0..40 {
+            let lines = if n < 20 {
+                vec![line(A)]
+            } else {
+                vec![line(A), line_at(B, 230.0, None)]
+            };
+            assert!(!roller.feed(
+                f64::from(n) / 10.0,
+                &rows(&lines, W, ROLL_GAP, ROLL_LEVEL_GAP),
+                W
+            ));
+        }
+        assert!(roller.out.is_empty());
+    }
+
+    #[test]
+    fn text_typed_at_a_left_edge_is_not_captions_that_grow() {
+        // A row gains a word three times, and no row begins under it.
+        let typed = ["so", "so I", "so I went", "so I went home"];
+        let mut roller = Roller::default();
+        for n in 0..40u32 {
+            let text = typed[(n as usize / 4).min(typed.len() - 1)];
+            let lines = [line_at(text, 190.0, Some(300.0))];
+            assert!(!roller.feed(
+                f64::from(n) / 10.0,
+                &rows(&lines, W, ROLL_GAP, ROLL_LEVEL_GAP),
+                W
+            ));
+        }
+        assert!(roller.out.is_empty());
     }
 
     #[test]

@@ -281,7 +281,7 @@ fn main() -> anyhow::Result<()> {
             height,
         } => {
             if raw {
-                screen_raw(width, height)
+                screen_raw(width, height, cli.verbose)
             } else if list {
                 for (_, title) in hammurabi::screen::windows::list() {
                     println!("{title}");
@@ -1033,7 +1033,8 @@ fn transcribe_realtime(
             EngineEvent::State(EngineState::Error) => anyhow::bail!("engine error"),
             EngineEvent::Status(s) => {
                 eprintln!("status: {}", s.text);
-                tr_ready |= s.text.starts_with("Translation");
+                // Ready or given up, not about to be tried again.
+                tr_ready |= s.text.starts_with("Translation") && !s.text.ends_with("trying again");
             }
             _ => {}
         }
@@ -1136,7 +1137,7 @@ fn screen(settings: Settings, secs: u64) -> anyhow::Result<()> {
 /// The screen source's reading over pictures from a pipe, for measuring it on recorded video:
 /// a line for each subtitle with when it was first seen, when it was given on, and its text.
 #[cfg(windows)]
-fn screen_raw(width: usize, height: usize) -> anyhow::Result<()> {
+fn screen_raw(width: usize, height: usize, verbose: bool) -> anyhow::Result<()> {
     use hammurabi::screen::ocr::Ocr;
     use hammurabi::screen::reader::Reader;
     use std::io::Read;
@@ -1153,6 +1154,14 @@ fn screen_raw(width: usize, height: usize) -> anyhow::Result<()> {
         let t = Instant::now();
         let lines = ocr.read(prepared, size.0, size.1)?;
         let plain = ocr.read(plain, size.0, size.1)?;
+        if verbose {
+            // What was read in the picture as it is: where each line starts, and its text.
+            let lines: Vec<String> = plain
+                .iter()
+                .map(|l| format!("[{:.0},{:.0}] {}", l.x0, l.y0, l.text))
+                .collect();
+            eprintln!("{:.1}	{}", f64::from(n) / 10.0, lines.join(" | "));
+        }
         read += t.elapsed();
         let at = f64::from(n) / 10.0;
         if let Some((seen, text)) = reader.read(at, &lines, &plain) {

@@ -388,7 +388,7 @@ pub fn viewport_builder(settings: &Settings) -> ViewportBuilder {
         settings.overlay_pos,
     );
     ViewportBuilder::default()
-        .with_title("Hammurabi")
+        .with_title(crate::screen::CAPTIONS_WINDOW)
         .with_icon(super::icons::window_icon())
         .with_decorations(false)
         .with_transparent(true)

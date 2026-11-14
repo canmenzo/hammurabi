@@ -50,16 +50,20 @@ pub fn find(part: &str) -> Option<HWND> {
         .map(|(w, _)| w)
 }
 
-/// Keeps Hammurabi's own windows out of pictures taken of a display, or lets them in again:
-/// its captions are white text at the bottom of a display too, and would be read as a game's
-/// subtitles. They stay on the display itself. (Not before Windows 10 2004, where this fails
-/// and they are in the picture.)
+/// Keeps Hammurabi's captions out of pictures taken of a display, or lets them in again: they
+/// are white text at the bottom of a display too, and would be read as a game's subtitles.
+/// They stay on the display itself. Its other windows stay in the picture, so that a
+/// screenshot shows them. (Not before Windows 10 2004, where this fails and the captions are in
+/// the picture.)
 pub fn keep_own_out(out: bool) {
     unsafe extern "system" fn each(w: HWND, out: LPARAM) -> BOOL {
         let mut process = 0u32;
         unsafe { GetWindowThreadProcessId(w, Some(&mut process)) };
         if process == std::process::id() {
-            let affinity = if out.0 != 0 {
+            let mut title = [0u16; 32];
+            let n = unsafe { GetWindowTextW(w, &mut title) };
+            let captions = String::from_utf16_lossy(&title[..n.max(0) as usize]);
+            let affinity = if out.0 != 0 && captions == super::CAPTIONS_WINDOW {
                 WDA_EXCLUDEFROMCAPTURE
             } else {
                 WDA_NONE
@@ -71,8 +75,7 @@ pub fn keep_own_out(out: bool) {
     let _ = unsafe { EnumWindows(Some(each), LPARAM(isize::from(out))) };
 }
 
-/// Hammurabi's own windows stay out of pictures of a display for as long as one of these
-/// lives: reading and the settings window's preview may each hold one.
+/// Hammurabi's captions stay out of pictures of a display for as long as one of these lives.
 pub struct OwnOut(());
 
 static HOLDS: AtomicUsize = AtomicUsize::new(0);

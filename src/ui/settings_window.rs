@@ -401,7 +401,7 @@ impl SettingsWindow {
         grid(ui, "models", |ui| {
             for &id in ModelId::ALL {
                 ui.label(format!("{} ({})", spec(id).label, size_text(id)));
-                ui.horizontal(|ui| model_state(ui, id, m, actions));
+                ui.horizontal(|ui| model_state(ui, id, m, in_use(id, s, m), actions));
                 ui.end_row();
             }
         });
@@ -772,16 +772,55 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
 }
 
 /// A model's name and size, and `model_state`.
-fn model_status(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
+fn model_status(
+    ui: &mut Ui,
+    id: ModelId,
+    m: &ModelsStatus,
+    used: bool,
+    actions: &mut Vec<SettingsAction>,
+) {
     ui.horizontal(|ui| {
         ui.label(format!("{} ({})", spec(id).label, size_text(id)));
-        model_state(ui, id, m, actions);
+        model_state(ui, id, m, used, actions);
     });
 }
 
+/// Do the captions that run now have this model loaded? Its files cannot be deleted then.
+fn in_use(id: ModelId, s: &Settings, m: &ModelsStatus) -> bool {
+    if !(m.running || m.loading) {
+        return false;
+    }
+    let listens = s.asr_backend == AsrBackend::Whisper;
+    match id {
+        ModelId::Madlad3bQ4k => {
+            s.translate && !matches!(s.translator, TranslatorChoice::Llm { .. })
+        }
+        ModelId::Gemma12b | ModelId::GemmaE4b => {
+            s.translate
+                && matches!(s.translator, TranslatorChoice::Natural { light } if id == ModelId::natural(light))
+        }
+        // Large hands over to Turbo when it falls behind.
+        ModelId::WhisperTurbo if listens && s.model == ModelChoice::Large => true,
+        ModelId::WhisperTiny
+        | ModelId::WhisperBase
+        | ModelId::WhisperSmall
+        | ModelId::WhisperTurbo
+        | ModelId::WhisperLarge => listens && id == ModelId::whisper(s.model, m.compute != "CPU"),
+        // The voices of Read aloud.
+        _ => s.speak,
+    }
+}
+
 /// Whether a model is downloaded, with what can be done about it: a Download button, how far
-/// its download is, or a Delete button that asks once more before it deletes.
-fn model_state(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
+/// its download is, or a Delete button that asks once more before it deletes. One that is
+/// `used` by the captions running now says so instead.
+fn model_state(
+    ui: &mut Ui,
+    id: ModelId,
+    m: &ModelsStatus,
+    used: bool,
+    actions: &mut Vec<SettingsAction>,
+) {
     match m.downloading.iter().find(|d| d.0 == id) {
         Some(&(_, done, total)) => {
             let total = total.filter(|t| *t > 0);
@@ -797,6 +836,11 @@ fn model_state(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<Set
         }
         _ if m.cached.contains(&id) => {
             ui.colored_label(Color32::from_rgb(90, 190, 110), "Downloaded");
+            if used {
+                ui.weak("in use")
+                    .on_hover_text("Captions are using it. Stop them to delete it.");
+                return;
+            }
             let key = egui::Id::unique(("delete-model", spec(id).label));
             let now = ui.input(|i| i.time);
             let asked = ui
@@ -807,12 +851,9 @@ fn model_state(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<Set
             } else {
                 "Delete".to_string()
             };
-            let button = ui
-                .add_enabled(!(m.running || m.loading), egui::Button::new(text))
-                .on_hover_text(
-                    "Frees the disk space. It is downloaded again when it is next needed.",
-                )
-                .on_disabled_hover_text("Stop captions to delete a model.");
+            let button = ui.button(text).on_hover_text(
+                "Frees the disk space. It is downloaded again when it is next needed.",
+            );
             if button.clicked() {
                 if asked {
                     actions.push(SettingsAction::DeleteModel(id));
@@ -978,7 +1019,8 @@ fn speech(
                         *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
                     }
                 });
-            model_state(ui, ModelId::whisper(s.model, gpu), m, actions);
+            let id = ModelId::whisper(s.model, gpu);
+            model_state(ui, id, m, in_use(id, s, m), actions);
         });
         ui.end_row();
 
@@ -1219,16 +1261,19 @@ fn translation(
             }
             ui.end_row();
 
+            let used = [ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b]
+                .map(|id| in_use(id, s, m));
             match &mut s.translator {
                 TranslatorChoice::Builtin => {
                     ui.label("Model");
-                    model_status(ui, ModelId::Madlad3bQ4k, m, actions);
+                    model_status(ui, ModelId::Madlad3bQ4k, m, used[0], actions);
                     ui.end_row();
                 }
                 TranslatorChoice::Natural { light } => {
                     ui.label("Model");
                     ui.vertical(|ui| {
-                        model_status(ui, ModelId::natural(*light), m, actions);
+                        let used = used[1 + usize::from(*light)];
+                        model_status(ui, ModelId::natural(*light), m, used, actions);
                         *changed |= ui
                             .checkbox(light, "Smaller model")
                             .on_hover_text(
@@ -1395,7 +1440,10 @@ fn read_aloud(
             "Natural voices that run on this computer, for 22 languages. Others use system voices.",
         );
         if s.speak_engine == tts::Engine::Supertonic {
-            indented(ui, |ui| model_status(ui, ModelId::Supertonic, m, actions));
+            let used = in_use(ModelId::Supertonic, s, m);
+            indented(ui, |ui| {
+                model_status(ui, ModelId::Supertonic, m, used, actions)
+            });
             if !m.cached.contains(&ModelId::Supertonic) {
                 indented(ui, |ui| {
                     ui.colored_label(WARN, "System voices read until it is downloaded.");
@@ -1539,7 +1587,10 @@ fn speaker_voice(
                 .changed();
         });
     } else {
-        indented(ui, |ui| model_status(ui, ModelId::OmniVoice, m, actions));
+        let used = in_use(ModelId::OmniVoice, s, m);
+        indented(ui, |ui| {
+            model_status(ui, ModelId::OmniVoice, m, used, actions)
+        });
         if m.cached.contains(&ModelId::OmniVoice) {
             indented(ui, |ui| {
                 ui.label(if m.voice_learned {

@@ -15,6 +15,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 - Words to expect are tags: Enter or a comma adds what was typed, the cross on a tag removes it, and the list opens and closes. A long list in one line could not be read.
 - Settings > Listen shows only what applies: while subtitles are read off the screen or Windows Live Captions listens, the speech model's settings are hidden instead of greyed out, where they could be seen but not clicked.
+- While a display is read, only Hammurabi's captions are kept out of pictures of it. Its Settings window was kept out too, so it vanished from every screenshot.
 - "Runs on" says what the speech model runs on in words ("Your NVIDIA graphics card") instead of "CUDA 0".
 
 ## [0.7.2] - 2026-11-13

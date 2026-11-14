@@ -50,8 +50,6 @@ impl Preview {
 }
 
 fn run(window: &str, tx: &Sender<Result<Picture, String>>, seen: &AtomicBool, wake: &dyn Fn()) {
-    // The settings window itself would cover the picture of a display.
-    let _own = window.is_empty().then(windows::OwnOut::hold);
     let mut capture = None;
     let mut unseen = 0;
     while unseen < UNSEEN {

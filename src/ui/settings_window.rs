@@ -862,14 +862,7 @@ fn speech(
 
         ui.label("Words to expect");
         ui.add_enabled_ui(!lc, |ui| {
-            *changed |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut s.hint)
-                        .hint_text("Names and unusual words, e.g. Lamar, Los Santos")
-                        .desired_width(260.0),
-                )
-                .on_hover_text("Helps the speech model hear and spell names, places and slang.")
-                .changed();
+            ui.vertical(|ui| hint_tags(ui, &mut s.hint, changed));
         });
         ui.end_row();
 
@@ -920,6 +913,112 @@ fn speech(
         ui.label(&m.compute);
         ui.end_row();
     });
+}
+
+/// The words to expect (kept as one text, commas between them) as tags under a heading that
+/// opens: Enter or a comma adds what was typed, the cross on a tag removes it.
+fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
+    let mut words = hint_words(hint);
+    let was = words.len();
+    let id = ui.scope_id().with("hint-new");
+    let mut new: String = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+    let title = match was {
+        0 => "None yet".to_string(),
+        1 => "1 word".to_string(),
+        n => format!("{n} words"),
+    };
+    egui::CollapsingHeader::new(title)
+        .id_salt("hint")
+        .default_open(was == 0)
+        .show(ui, |ui| {
+            ui.set_max_width(380.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                let mut gone = None;
+                for (i, word) in words.iter().enumerate() {
+                    if tag(ui, i, word) {
+                        gone = Some(i);
+                    }
+                }
+                if let Some(i) = gone {
+                    words.remove(i);
+                }
+            });
+            let field = ui
+                .add(
+                    egui::TextEdit::singleline(&mut new)
+                        .hint_text("A name or word, then Enter")
+                        .desired_width(260.0),
+                )
+                .on_hover_text(
+                    "Helps the speech model hear and spell names, places and slang. \
+                     Several at once go in with commas between them.",
+                );
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            if enter || new.contains(',') {
+                // What stands after the last comma is still being typed.
+                let cut = if enter {
+                    new.len()
+                } else {
+                    new.rfind(',').map_or(0, |i| i + 1)
+                };
+                for word in hint_words(&new[..cut]) {
+                    if !words.iter().any(|w| w.eq_ignore_ascii_case(&word)) {
+                        words.push(word);
+                    }
+                }
+                new = new[cut..].trim_start().to_string();
+                if enter {
+                    field.request_focus();
+                }
+            }
+        });
+    ui.data_mut(|d| d.insert_temp(id, new));
+    if words != hint_words(hint) {
+        *hint = words.join(", ");
+        *changed = true;
+    }
+}
+
+fn hint_words(hint: &str) -> Vec<String> {
+    hint.split(',')
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// A word with a cross to its right; true when the cross was clicked.
+fn tag(ui: &mut Ui, i: usize, word: &str) -> bool {
+    const CROSS: f32 = 22.0;
+    let v = ui.visuals().clone();
+    let font = TextStyle::Body.resolve(ui.style());
+    let text = ui
+        .painter()
+        .layout_no_wrap(word.to_string(), font, v.text_color());
+    let size = vec2(10.0 + text.size().x + CROSS, 24.0);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let cross = rect.with_min_x(rect.right() - CROSS);
+    let resp = ui
+        .interact(cross, ui.scope_id().with(("tag", i)), Sense::click())
+        .on_hover_cursor(CursorIcon::PointingHand);
+    resp.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, format!("Remove {word}")));
+    let painter = ui.painter();
+    painter.rect_filled(rect, 12, v.widgets.inactive.weak_bg_fill);
+    let at = pos2(rect.left() + 10.0, rect.center().y - text.size().y / 2.0);
+    painter.galley(at, text, v.text_color());
+    let stroke = Stroke::new(
+        1.5,
+        if resp.hovered() {
+            v.strong_text_color()
+        } else {
+            v.weak_text_color()
+        },
+    );
+    let (c, d) = (cross.center() - vec2(2.0, 0.0), 3.5);
+    painter.line_segment([c - vec2(d, d), c + vec2(d, d)], stroke);
+    painter.line_segment([c - vec2(d, -d), c + vec2(d, -d)], stroke);
+    resp.clicked()
 }
 
 fn translation(

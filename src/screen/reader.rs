@@ -103,8 +103,9 @@ const ROLL_PART: f32 = 0.6;
 /// then across this much, the hole a word struck out of the captions leaves.
 const ROLL_GAP: f32 = 0.8;
 const ROLL_LEVEL_GAP: f32 = 3.5;
-/// Level is within this much of a row's height, at its top and its bottom.
-const LEVEL: f32 = 0.15;
+/// Level is within this much of a row's height, at its top and its bottom: the pieces of a row
+/// that is moving up are read a few pixels apart.
+const LEVEL: f32 = 0.3;
 /// A row's first word begins this near the left edge the captions grow from, in row heights.
 const EDGE_TOL: f32 = 0.3;
 
@@ -327,13 +328,14 @@ struct Rolled {
 impl Rolled {
     /// Is `key`, read at `x0` and `up` rows from the lowest, this row: as it is, with more
     /// words after it, or with its end not read? A row only ever moves up, so one that
-    /// begins like a row above it is another.
+    /// begins like a row above it is another. A new row begins at the bottom, so above it
+    /// even the first word or two of a row are that row.
     fn is(&self, key: &[char], x0: f32, up: usize) -> bool {
         let n = self.key.len().min(key.len());
         (x0 - self.x0).abs() <= 1.5 * self.h.max(H_MIN * WIDTH as f32)
             && (key == self.key.as_slice()
                 || (up >= self.up
-                    && n as f32 >= ROLL_PART * self.key.len() as f32
+                    && (up > 0 || n as f32 >= ROLL_PART * self.key.len() as f32)
                     && lev(&self.key[..n], &key[..n]) as f32 <= (ROLL_ERR * n as f32).floor()))
     }
 
@@ -499,14 +501,21 @@ impl Roller {
             }
         }
         if let Some(edge) = self.edge {
-            // What went away before it was given on.
+            // What went away before it was given on: at once when another row stood under it,
+            // which made it whole; else once it has been gone a while.
             for r in &mut self.rows {
                 let there = (r.x0 - edge.0).abs() <= 1.5 * edge.1;
-                if t - r.seen > ROLL_GONE_S && r.same >= 2 && there {
+                let gone = t - r.seen > ROLL_GONE_S || (r.up > 0 && r.seen < t);
+                if gone && r.same >= 2 && there {
                     self.out.extend(r.rest());
                 }
             }
         }
+        // In the order they were first seen: rows seen before the captions were told apart
+        // are given on together once they are.
+        self.out
+            .make_contiguous()
+            .sort_by(|a, b| a.0.total_cmp(&b.0));
         self.edge.is_some() || !self.out.is_empty()
     }
 }
@@ -1158,6 +1167,46 @@ mod tests {
         assert_eq!(
             rolled(&before),
             ["it was a long day and", "so I went", "home early"]
+        );
+    }
+
+    #[test]
+    fn a_row_read_in_pieces_while_it_moves_up_is_given_once() {
+        // The lower row grows, the next begins under it, and for two pictures only the first
+        // words of the row that moved up are read, a few pixels off its place.
+        let row = |text: &str, y: f32| line_at(text, y, Some(300.0));
+        // The upper row was the lower one before.
+        let mut pictures = vec![(-0.1, vec![row("buying a new car", 190.0)])];
+        let mut t = 0.0;
+        for text in [
+            "why",
+            "why the",
+            "why the am",
+            "why the am i",
+            "why the am i the only one",
+        ] {
+            for _ in 0..2 {
+                pictures.push((t, vec![row("buying a new car", 150.0), row(text, 190.0)]));
+                t += 0.1;
+            }
+        }
+        pictures.push((t, vec![row("why the", 156.0), row("this", 196.0)]));
+        pictures.push((t + 0.1, vec![row("why the", 158.0), row("this", 198.0)]));
+        for n in 2u32..30 {
+            let lower = ["this", "this cause", "this cause we", "this cause we got"]
+                [(n as usize / 4).min(3)];
+            pictures.push((
+                t + f64::from(n) / 10.0,
+                vec![row("why the am i the only one", 150.0), row(lower, 190.0)],
+            ));
+        }
+        assert_eq!(
+            rolled(&pictures),
+            [
+                "buying a new car",
+                "why the am i the only one",
+                "this cause we got"
+            ]
         );
     }
 

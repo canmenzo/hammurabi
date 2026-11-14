@@ -677,7 +677,7 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
-        if self.settings.check_updates {
+        if self.settings.check_updates && !platform::packaged() {
             let due = *self.next_update_check.get_or_insert(now);
             if now >= due {
                 self.next_update_check = Some(now + update::INTERVAL);

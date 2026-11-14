@@ -1,4 +1,5 @@
-//! Start at login: HKCU Run value (Windows), LaunchAgent (macOS), XDG autostart entry (Linux).
+//! Start at login: HKCU Run value (Windows; the package's startup task when installed from the
+//! Microsoft Store), LaunchAgent (macOS), XDG autostart entry (Linux).
 //! `is_enabled` reads the OS state and is true only when the entry launches this executable.
 //! Entries from before `--background` existed still count; the app rewrites them on start.
 
@@ -23,6 +24,8 @@ fn exe() -> anyhow::Result<PathBuf> {
 
 #[cfg(windows)]
 mod imp {
+    use windows::ApplicationModel::{StartupTask, StartupTaskState};
+    use windows::core::HSTRING;
     use windows_registry::CURRENT_USER;
 
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -39,7 +42,29 @@ mod imp {
         ))
     }
 
+    /// The startup task the package declares (packaging/windows/msix/AppxManifest.xml): a
+    /// packaged app's Run value is not read at login.
+    const TASK: &str = "HammurabiStartup";
+
+    /// Asks the package's startup task, on a thread of its own: Windows answers through a
+    /// call that is waited for, which the window's thread must not do.
+    fn with_task<T: Send + 'static>(
+        ask: impl FnOnce(StartupTask) -> windows::core::Result<T> + Send + 'static,
+    ) -> anyhow::Result<T> {
+        std::thread::spawn(move || ask(StartupTask::GetAsync(&HSTRING::from(TASK))?.join()?))
+            .join()
+            .map_err(|_| anyhow::anyhow!("the startup task could not be asked"))?
+            .map_err(Into::into)
+    }
+
+    fn enabled(state: StartupTaskState) -> bool {
+        state == StartupTaskState::Enabled || state == StartupTaskState::EnabledByPolicy
+    }
+
     pub fn is_enabled() -> bool {
+        if crate::ui::platform::packaged() {
+            return with_task(|task| task.State()).is_ok_and(enabled);
+        }
         let ours = CURRENT_USER
             .open(RUN)
             .and_then(|k| k.get_string(NAME))
@@ -58,6 +83,18 @@ mod imp {
     }
 
     pub fn set(on: bool) -> anyhow::Result<()> {
+        if crate::ui::platform::packaged() {
+            if !on {
+                return with_task(|task| task.Disable());
+            }
+            // Turned off in Windows' own settings, it can only be turned on again there.
+            let state = with_task(|task| task.RequestEnableAsync()?.join())?;
+            anyhow::ensure!(
+                enabled(state),
+                "Windows keeps Hammurabi from starting at login. Allow it in Windows Settings > Apps > Startup."
+            );
+            return Ok(());
+        }
         let _ = CURRENT_USER
             .options()
             .write()

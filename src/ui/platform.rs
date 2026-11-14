@@ -1,3 +1,21 @@
+/// Was Hammurabi installed as a package, from the Microsoft Store? The Store updates it then,
+/// and it starts at login through the package's startup task instead of the registry.
+pub fn packaged() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::APPMODEL_ERROR_NO_PACKAGE;
+        use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+        static PACKAGED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *PACKAGED.get_or_init(|| {
+            let mut len = 0u32;
+            // SAFETY: with no buffer given, only the length is written.
+            unsafe { GetCurrentPackageFullName(&mut len, None) != APPMODEL_ERROR_NO_PACKAGE }
+        })
+    }
+    #[cfg(not(windows))]
+    false
+}
+
 /// `NativeOptions::event_loop_builder` hook: force X11 on Linux when DISPLAY is set, macOS Accessory policy.
 pub fn configure_event_loop(builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {
     #[cfg(target_os = "linux")]

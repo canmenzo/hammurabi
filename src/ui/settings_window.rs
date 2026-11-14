@@ -386,12 +386,15 @@ impl SettingsWindow {
         {
             actions.push(SettingsAction::ToggleAutostart);
         }
-        *changed |= ui
-            .checkbox(&mut s.check_updates, "Check for updates")
-            .on_hover_text(
-                "Asks GitHub once a day whether a newer version is out. Nothing else is sent.",
-            )
-            .changed();
+        // The Microsoft Store updates a copy installed from it.
+        if !super::platform::packaged() {
+            *changed |= ui
+                .checkbox(&mut s.check_updates, "Check for updates")
+                .on_hover_text(
+                    "Asks GitHub once a day whether a newer version is out. Nothing else is sent.",
+                )
+                .changed();
+        }
 
         section(ui, "Shortcuts");
         let toggle = s.hotkey_toggle.clone();

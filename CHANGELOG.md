@@ -4,6 +4,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-16
+
 ### Added
 
 - Subtitles on screen shows what it reads: under the subtitle area in Settings > Listen there is now a small live picture of the window or display, with the part that is read lit. Its edges can be dragged, so the area is set by looking instead of by guessing a percentage.
@@ -197,7 +199,8 @@ First public release.
 - `hammurabi-cli` for listing devices, recording, transcribing WAV files and downloading models.
 - Release builds: Windows x64 (CPU), Windows CUDA for NVIDIA RTX 50 series, macOS Apple silicon (Metal) and Linux x64.
 
-[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/canmenzo/hammurabi/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.3
 [0.7.2]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.2
 [0.7.1]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.1
 [0.7.0]: https://github.com/canmenzo/hammurabi/releases/tag/v0.7.0

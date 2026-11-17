@@ -58,6 +58,10 @@ fn main() -> eframe::Result {
         opts,
         Box::new(|cc| {
             apply_theme(&cc.egui_ctx);
+            // The app's language as a locale, e.g. "tr": for screenshots of a translation.
+            if let Ok(lang) = std::env::var("HAMMURABI_DEMO_LANG") {
+                hammurabi::i18n::set(Some(hammurabi::i18n::from_locale(&lang)));
+            }
             // The page to open, for screenshots: listen, translate, voice, captions or general.
             let page = match std::env::args().nth(1).as_deref() {
                 Some("translate") => Page::Translate,
@@ -125,7 +129,7 @@ fn main() -> eframe::Result {
                     reading: None,
                     previewing: None,
                     voice_learned: false,
-                    update: hammurabi::ui::update::Status::UpToDate,
+                    update: hammurabi::ui::update::Status::Downloading("0.7.5".into(), 42),
                 },
             }))
         }),

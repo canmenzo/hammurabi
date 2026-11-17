@@ -118,5 +118,11 @@ footer .social a{display:inline-flex;align-items:center;justify-content:center;w
 footer .social a:hover{color:var(--text);transform:none}
 footer .social svg{width:20px;height:20px}
 .nav-end{display:flex;align-items:center;gap:8px}
-.lang{padding:6px 8px;border-radius:8px;font-size:13px;line-height:20px;font-weight:600;color:var(--soft);text-decoration:none;transition:color .5s var(--ease)}
-.lang:hover{color:var(--text)}
+.langs{position:fixed;top:29px;right:24px;z-index:6;display:flex;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:9999px;background:color-mix(in srgb,var(--bg) 80%,transparent);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+.langs a,.langs span{display:block;width:24px;height:16px;border-radius:3px;overflow:hidden}
+.langs svg{display:block;width:100%;height:100%}
+.langs a{opacity:.45;transition:opacity .5s var(--ease),transform .5s var(--ease)}
+.langs a:hover{opacity:1;transform:translateY(-1px)}
+.langs span{box-shadow:0 0 0 2px var(--accent)}
+@media(max-width:640px){.langs{right:12px}.langs span{display:none}}
+@media(max-width:420px){nav.pill{margin-left:16px}}

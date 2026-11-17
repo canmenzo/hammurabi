@@ -98,7 +98,9 @@ fn main() -> eframe::Result {
                         outputs: vec![dev("b", "Speakers (Realtek)", true)],
                         system_audio: Ok(()),
                     },
-                    compute: "CUDA 0".into(),
+                    compute: std::env::var("HAMMURABI_DEMO_COMPUTE")
+                        .unwrap_or_else(|_| "CUDA 0".into()),
+                    gpu: hammurabi::device::gpu(),
                     asr_ms: Some(210.0),
                     tr_ms: Some(1700.0),
                     autostart: false,
@@ -129,7 +131,11 @@ fn main() -> eframe::Result {
                     reading: None,
                     previewing: None,
                     voice_learned: false,
-                    update: hammurabi::ui::update::Status::Downloading("0.7.5".into(), 42),
+                    update: if std::env::var_os("HAMMURABI_DEMO_IDLE").is_some() {
+                        hammurabi::ui::update::Status::Idle
+                    } else {
+                        hammurabi::ui::update::Status::Downloading("0.7.5".into(), 42)
+                    },
                 },
             }))
         }),

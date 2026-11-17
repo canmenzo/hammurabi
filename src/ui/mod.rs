@@ -141,6 +141,7 @@ impl App {
                     system_audio: Ok(()),
                 },
                 compute: crate::device::label(),
+                gpu: crate::device::gpu(),
                 asr_ms: None,
                 tr_ms: None,
                 autostart: autostart::is_enabled(),
@@ -205,14 +206,25 @@ impl App {
             app.handle(UiAction::OpenSettings, &ctx);
         }
         let version = env!("CARGO_PKG_VERSION");
+        // Running as what the app last installed: that install took.
+        let installed = app.settings.update_tried.as_deref()
+            == Some(&update::setup_file(version, update::build()));
+        if installed {
+            app.settings.update_tried = None;
+        }
+        if app.settings.build.as_deref() == Some(update::build()) {
+            app.settings.build = None;
+        }
         if app.settings.last_version.as_deref() != Some(version) {
             if app.settings.last_version.is_some() {
                 app.info(tf(T::UpdatedTo, &[&version]));
             }
             app.settings.last_version = Some(version.into());
-            if let Err(e) = config::save(&app.settings) {
-                log::error!("config save failed: {e:#}");
-            }
+        } else if installed {
+            app.info(t(T::NowOnGpu).into());
+        }
+        if let Err(e) = config::save(&app.settings) {
+            log::error!("config save failed: {e:#}");
         }
         log::info!("hammurabi ready (tray: {})", app.tray.is_some());
         app
@@ -534,14 +546,18 @@ impl App {
     }
 
     fn on_update(&mut self, mut status: update::Status) {
-        if let update::Status::Ready(r, _) = &status
-            && self.settings.update_tried.as_ref() == Some(&r.version)
+        if let update::Status::Ready(r, path) = &status
+            && path.file_name().and_then(|n| n.to_str()) == self.settings.update_tried.as_deref()
         {
-            log::warn!(
-                "the install of v{} did not take, offering it instead",
-                r.version
-            );
-            status = update::Status::Available(r.clone());
+            log::warn!("the install of {} did not take", path.display());
+            // A build asked for in Settings is not asked for again.
+            self.settings.build = None;
+            self.changed();
+            status = if r.version == env!("CARGO_PKG_VERSION") {
+                update::Status::Failed
+            } else {
+                update::Status::Available(r.clone())
+            };
         }
         if let update::Status::Available(release) = &status {
             log::info!("update available: v{} {}", release.version, release.url);
@@ -580,7 +596,7 @@ impl App {
         self.next_update_check = Some(Instant::now() + update::INTERVAL);
         self.models.update = update::Status::Checking;
         let (tx, c) = (self.app_tx.clone(), ctx.clone());
-        update::spawn(move |s| {
+        update::spawn(self.settings.build.clone(), move |s| {
             let _ = tx.send(AppEvent::Update(s));
             c.request_repaint();
         });
@@ -737,13 +753,18 @@ impl eframe::App for App {
             let version = &release.version;
             match self.install_at {
                 None => {
-                    let text = tf(T::UpdatingTo, &[version]);
+                    let text = if self.settings.build.is_some() {
+                        t(T::SwitchingToGpu).into()
+                    } else {
+                        tf(T::UpdatingTo, &[version])
+                    };
                     self.info(text);
                     self.install_at = Some(now + Duration::from_secs(3));
                     ctx.request_repaint_after(Duration::from_secs(3));
                 }
                 Some(t) if now >= t => {
-                    self.settings.update_tried = Some(version.clone());
+                    self.settings.update_tried =
+                        path.file_name().map(|n| n.to_string_lossy().into_owned());
                     match update::install(&path, self.settings_open) {
                         Ok(()) => {
                             log::info!("installing the update with {}", path.display());
@@ -751,7 +772,7 @@ impl eframe::App for App {
                         }
                         Err(e) => {
                             log::warn!("could not start the update: {e:#}");
-                            self.on_update(update::Status::Available(release));
+                            self.on_update(update::Status::Ready(release, path));
                         }
                     }
                 }
@@ -985,6 +1006,12 @@ impl eframe::App for App {
                         self.check_updates(&ctx);
                     }
                     SettingsAction::OpenUpdate => self.handle(UiAction::OpenUpdate, &ctx),
+                    SettingsAction::SwitchToGpu => {
+                        self.settings.build = Some("cuda".into());
+                        self.changed();
+                        self.update_asked = true;
+                        self.check_updates(&ctx);
+                    }
                 }
             }
             if close {

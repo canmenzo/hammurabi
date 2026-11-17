@@ -19,7 +19,7 @@
 | macOS, Apple silicon | [`hammurabi-macos-arm64.zip`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip) |
 | Linux x64 | [`hammurabi-linux-x64.tar.gz`](https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz) |
 
-Listening runs on a graphics card only in the RTX 50 download and on Macs; elsewhere it runs on the processor, where the Tiny and Base speech models keep up best. Subtitles on screen and the Natural translator work with any graphics card.
+Listening runs on a graphics card only in the RTX 50 download and on Macs; elsewhere it runs on the processor, where the Tiny and Base speech models keep up best. Subtitles on screen and the Natural translator work with any graphics card. Settings marks the speech and translation models that suit your graphics card, and a copy of the regular Windows build installed on an RTX 50 series card offers to switch itself to the RTX 50 build.
 
 The builds are not code signed yet:
 

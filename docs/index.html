@@ -38,7 +38,7 @@
 </nav>
 <main id="main">
 <header class="hero" id="top">
-<p class="status"><span class="dot"></span>Version 0.7.7 is out</p>
+<p class="status"><span class="dot"></span>Version 0.7.8 is out</p>
 <h1>Live captions for everything your computer plays</h1>
 <p class="sub">Hammurabi turns system audio and your microphone into captions on screen, translated if you want. It runs on Windows, macOS and Linux, entirely on your machine.</p>
 <div class="cta"><a class="btn lg" id="dl" href="https://github.com/canmenzo/hammurabi/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">Download</span></a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">View on GitHub</a></div>
@@ -59,7 +59,7 @@
 <div class="card rv" id="os-mac"><h3>macOS on Apple silicon</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">hammurabi-macos-arm64.zip</a></p><p>Uses the GPU through Metal. Move the app to Applications. It is not notarized, so macOS blocks the first launch: run <code>xattr -dr com.apple.quarantine /Applications/Hammurabi.app</code>, or open it once, click <strong>Done</strong>, then click <strong>Open Anyway</strong> in <strong>System Settings &gt; Privacy &amp; Security</strong>. When you start captions, allow <strong>System Audio Recording</strong>.</p></div>
 <div class="card rv" id="os-linux"><h3>Linux x64</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">hammurabi-linux-x64.tar.gz</a></p><p>Extract it and run <code>./hammurabi</code>. System audio needs PulseAudio or PipeWire with <code>pipewire-pulse</code>. Use an X11 session: Wayland blocks always-on-top windows and global hotkeys.</p></div>
 </div>
-<div class="note rv"><strong>First run.</strong> Hammurabi downloads its speech model the first time it needs one: about 300 MB for the CPU default, 1.6 GB for the GPU default. The built-in translation model is about 1.7 GB more, or 5 to 7 GB for the Natural translator, and only downloads if you use translation, which starts off on an English system. Settings marks the models that suit your PC. Downloads resume if they are interrupted.</div>
+<div class="note rv"><strong>First run.</strong> Hammurabi downloads its speech model the first time it needs one: about 300 MB for the CPU default, 1.6 GB for the GPU default. The built-in translation model is about 1.7 GB more, or 5 to 7 GB for the Natural translator, and only downloads if you use translation, which starts off on an English system. Settings marks the models that suit your graphics card, and if you installed the regular build on an RTX 50 series card, it switches to the CUDA build in one click. Downloads resume if they are interrupted.</div>
 </section>
 
 <section class="wrap" id="features">

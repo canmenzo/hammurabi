@@ -29,6 +29,8 @@ pub struct ModelsStatus {
     pub devices: DeviceList,
     /// Compute device label, e.g. "CPU".
     pub compute: String,
+    /// The graphics card, whatever this build computes on.
+    pub gpu: Option<crate::device::Gpu>,
     /// How long the speech model takes over a run and the translator over a caption, in
     /// milliseconds, smoothed. None while captions are off.
     pub asr_ms: Option<f32>,
@@ -67,6 +69,8 @@ pub enum SettingsAction {
     RelearnVoice,
     CheckUpdates,
     OpenUpdate,
+    /// Install the CUDA build over this one.
+    SwitchToGpu,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -468,11 +472,8 @@ impl SettingsWindow {
                 ],
             ),
         ];
-        // What a new install starts with: Auto's speech model and the Fast translator.
-        let recommended = [
-            ModelId::whisper(ModelChoice::Auto, m.compute != "CPU"),
-            ModelId::Madlad3bQ4k,
-        ];
+        gpu_build(ui, m, actions);
+        let recommended = recommended(m);
         let accent = ui.visuals().selection.bg_fill;
         grid(ui, "models", |ui| {
             for (heading, ids) in groups {
@@ -1093,6 +1094,50 @@ fn translate_advice(s: &Settings, m: &ModelsStatus) -> &'static str {
         TranslatorChoice::Builtin => T::AdviceGpuBusy,
         TranslatorChoice::Llm { .. } => T::AdviceServerSlow,
     })
+}
+
+/// What suits this computer: Auto's speech model, and the Natural translator when the graphics
+/// card has room for it beside the speech model.
+fn recommended(m: &ModelsStatus) -> [ModelId; 2] {
+    const GB: u64 = 1 << 30;
+    let gpu = m.compute != "CPU";
+    // Turbo in half precision and its working memory.
+    let speech = if gpu { 5 * GB / 2 } else { 0 };
+    let free = m.gpu.as_ref().map_or(0, |g| g.vram).saturating_sub(speech);
+    let translator = if !cfg!(windows) {
+        ModelId::Madlad3bQ4k
+    } else if free >= 9 * GB {
+        ModelId::Gemma12b
+    } else if free >= 13 * GB / 2 {
+        ModelId::GemmaE4b
+    } else {
+        ModelId::Madlad3bQ4k
+    };
+    [ModelId::whisper(ModelChoice::Auto, gpu), translator]
+}
+
+/// Offers the CUDA build on an RTX 50 card that runs the processor build; the updater installs
+/// it over this one.
+fn gpu_build(ui: &mut Ui, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
+    use super::update::{self, Status};
+    let Some(gpu) = m.gpu.as_ref().filter(|g| update::gpu_build_helps(Some(g))) else {
+        return;
+    };
+    ui.add(egui::Label::new(tf(T::GpuBuildHelps, &[&gpu.name])).wrap());
+    ui.horizontal(|ui| match &m.update {
+        Status::Checking | Status::Downloading(..) | Status::Ready(..) => {
+            ui.weak(update_text(&m.update).unwrap_or_default());
+        }
+        _ if update::installed() => {
+            if ui.button(t(T::SwitchToGpu)).clicked() {
+                actions.push(SettingsAction::SwitchToGpu);
+            }
+        }
+        _ => {
+            ui.hyperlink_to(t(T::GetGpuBuild), "https://hammurabi.menzo.dev/#download");
+        }
+    });
+    ui.add_space(8.0);
 }
 
 /// What the speech model runs on, in words.
@@ -2182,6 +2227,7 @@ mod tests {
                 system_audio: Ok(()),
             },
             compute: compute.into(),
+            gpu: None,
             asr_ms: None,
             tr_ms: None,
             autostart: false,
@@ -2195,6 +2241,36 @@ mod tests {
             voice_learned: false,
             update: super::super::update::Status::Idle,
         }
+    }
+
+    #[test]
+    fn recommends_by_graphics_card() {
+        let with = |compute: &str, mib: u64| {
+            let mut m = status(Vec::new(), compute);
+            m.gpu = (mib > 0).then(|| crate::device::Gpu {
+                name: "card".into(),
+                vram: mib << 20,
+            });
+            recommended(&m)
+        };
+        let natural = |id| {
+            if cfg!(windows) {
+                id
+            } else {
+                ModelId::Madlad3bQ4k
+            }
+        };
+        use ModelId::*;
+        // An RTX 5080 (16 GB) with the CUDA build, and with the processor build.
+        assert_eq!(with("CUDA 0", 16303), [WhisperTurbo, natural(Gemma12b)]);
+        assert_eq!(with("CPU", 16303), [WhisperBase, natural(Gemma12b)]);
+        // 12 GB with the speech model on it too, and 8 GB.
+        assert_eq!(with("CUDA 0", 12227), [WhisperTurbo, natural(Gemma12b)]);
+        assert_eq!(with("CUDA 0", 8151), [WhisperTurbo, Madlad3bQ4k]);
+        assert_eq!(with("CPU", 8151), [WhisperBase, natural(GemmaE4b)]);
+        // No card, or one with little memory of its own.
+        assert_eq!(with("CPU", 0), [WhisperBase, Madlad3bQ4k]);
+        assert_eq!(with("CPU", 128), [WhisperBase, Madlad3bQ4k]);
     }
 
     #[test]

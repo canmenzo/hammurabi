@@ -35,18 +35,21 @@ pub enum Status {
 }
 
 /// Checks on a background thread, downloading the new setup program when this copy can install
-/// it, and reports each step.
-pub fn spawn(report: impl Fn(Status) + Send + 'static) {
+/// it, and reports each step. `build` (see [`build`]) asks for another build of the latest
+/// release even when it is this version.
+pub fn spawn(build: Option<String>, report: impl Fn(Status) + Send + 'static) {
     let _ = std::thread::Builder::new()
         .name("hm-update".into())
         .spawn(move || {
             report(Status::Checking);
+            let build = build.unwrap_or_else(|| self::build().into());
+            let switch = build != self::build();
             let status = match latest() {
-                Ok(r) if newer(&r.version, env!("CARGO_PKG_VERSION")) => {
-                    match setup_asset().filter(|_| installed()) {
-                        Some(asset) => {
+                Ok(r) if newer(&r.version, env!("CARGO_PKG_VERSION")) || switch => {
+                    match (cfg!(windows) && installed()).then_some(&build) {
+                        Some(build) => {
                             let mut shown = None;
-                            let got = download(&r.version, asset, &mut |done, total| {
+                            let got = download(&r.version, build, &mut |done, total| {
                                 let pct = total.map(|t| (done * 100 / t.max(1)).min(100) as u8);
                                 if pct != shown {
                                     shown = pct;
@@ -83,21 +86,31 @@ pub fn spawn(report: impl Fn(Status) + Send + 'static) {
         });
 }
 
-/// The release asset of the setup program for this build.
-fn setup_asset() -> Option<&'static str> {
-    if !cfg!(windows) {
-        None
-    } else if cfg!(feature = "cuda") {
-        Some("hammurabi-windows-cuda-setup.exe")
+/// Which Windows download this is, as its setup program is named.
+pub fn build() -> &'static str {
+    if cfg!(feature = "cuda") {
+        "cuda"
     } else if cfg!(feature = "omnivoice") {
-        Some("hammurabi-windows-gpu-setup.exe")
+        "gpu"
     } else {
-        Some("hammurabi-windows-x64-setup.exe")
+        "x64"
     }
 }
 
+/// The setup program of `version` and `build`, as it is saved in the updates folder; what
+/// `update_tried` holds once it was run.
+pub fn setup_file(version: &str, build: &str) -> String {
+    format!("hammurabi-{version}-{build}-setup.exe")
+}
+
+/// This copy runs on the processor while the computer has the graphics card the CUDA build is
+/// made for, which hears several times faster.
+pub fn gpu_build_helps(gpu: Option<&crate::device::Gpu>) -> bool {
+    cfg!(windows) && build() == "x64" && gpu.is_some_and(|g| g.rtx50())
+}
+
 /// Installed by the setup program, whose uninstaller sits beside the exe; an unzipped copy is not.
-fn installed() -> bool {
+pub fn installed() -> bool {
     std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.join("unins000.exe").is_file()))
@@ -108,12 +121,14 @@ fn installed() -> bool {
 /// release's SHA256SUMS.txt; older downloads there are removed.
 fn download(
     version: &str,
-    asset: &str,
+    build: &str,
     progress: &mut dyn FnMut(u64, Option<u64>),
 ) -> anyhow::Result<PathBuf> {
+    let asset = format!("hammurabi-windows-{build}-setup.exe");
+    let asset = asset.as_str();
     let dir = crate::paths::updates_dir()?;
-    let dest = dir.join(format!("hammurabi-{version}-setup.exe"));
-    let part = dir.join(format!("hammurabi-{version}-setup.exe.part"));
+    let dest = dir.join(setup_file(version, build));
+    let part = dir.join(format!("{}.part", setup_file(version, build)));
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         if e.path() != dest && e.path() != part {
             let _ = std::fs::remove_file(e.path());
@@ -246,7 +261,7 @@ mod tests {
     #[test]
     #[ignore = "downloads a release from GitHub"]
     fn downloads_setup() {
-        let path = download("0.7.3", "hammurabi-windows-x64-setup.exe", &mut |_, _| {}).unwrap();
+        let path = download("0.7.3", "x64", &mut |_, _| {}).unwrap();
         assert!(path.is_file());
     }
 

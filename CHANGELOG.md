@@ -4,6 +4,16 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-11-17
+
+### Changed
+
+- Settings recommends models by the graphics card in the computer, not only by the build. A card with room for it beside the speech model gets the Natural translator (the large one from about 9 GB free, the small one from 6.5 GB) instead of the Fast translator.
+
+### Added
+
+- The regular Windows build installed on an NVIDIA RTX 50 series card says in Settings that the RTX 50 build hears much faster, and switches to it in one click: the updater downloads and installs it over this copy, keeping settings and models, and restarts it. A copy that was not installed with the setup program links to the download instead.
+
 ## [0.7.7] - 2026-11-17
 
 ### Fixed

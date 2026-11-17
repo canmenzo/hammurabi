@@ -43,6 +43,59 @@ pub fn label() -> String {
     }
 }
 
+/// The graphics card with the most memory of its own, read from the hardware whatever this build
+/// computes on: what the models are recommended by.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gpu {
+    pub name: String,
+    /// Dedicated memory in bytes.
+    pub vram: u64,
+}
+
+impl Gpu {
+    /// An NVIDIA RTX 50 series card, the generation the CUDA build is compiled for. "RTX 500" is
+    /// an older workstation card.
+    pub fn rtx50(&self) -> bool {
+        let name = self.name.to_ascii_uppercase();
+        let model = |after: &str| {
+            name.split(after)
+                .nth(1)
+                .and_then(|rest| rest.split(' ').next())
+                .is_some_and(|n| n.len() == 4 && n.starts_with("50"))
+        };
+        name.contains("NVIDIA") && (model("RTX ") || name.contains("BLACKWELL"))
+    }
+}
+
+#[cfg(windows)]
+pub fn gpu() -> Option<Gpu> {
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
+    };
+    // Microsoft's own renderer, listed when a driver is missing.
+    const MICROSOFT: u32 = 0x1414;
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.ok()?;
+    (0..)
+        .map_while(|i| unsafe { factory.EnumAdapters1(i) }.ok())
+        .filter_map(|a| unsafe { a.GetDesc1() }.ok())
+        .filter(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 && d.VendorId != MICROSOFT)
+        .map(|d| {
+            let end = d.Description.iter().position(|&c| c == 0).unwrap_or(128);
+            Gpu {
+                name: String::from_utf16_lossy(&d.Description[..end])
+                    .trim()
+                    .into(),
+                vram: d.DedicatedVideoMemory as u64,
+            }
+        })
+        .max_by_key(|g| g.vram)
+}
+
+#[cfg(not(windows))]
+pub fn gpu() -> Option<Gpu> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -57,5 +110,26 @@ mod tests {
     fn gpu_when_built_for_it() {
         let (_, label) = super::best_device(true);
         assert_ne!(label, "CPU");
+    }
+
+    #[test]
+    fn knows_rtx50() {
+        let gpu = |name: &str| super::Gpu {
+            name: name.into(),
+            vram: 0,
+        };
+        assert!(gpu("NVIDIA GeForce RTX 5080").rtx50());
+        assert!(gpu("NVIDIA GeForce RTX 5070 Ti Laptop GPU").rtx50());
+        assert!(gpu("NVIDIA RTX PRO 6000 Blackwell Workstation Edition").rtx50());
+        assert!(!gpu("NVIDIA RTX 500 Ada Generation Laptop GPU").rtx50());
+        assert!(!gpu("NVIDIA GeForce RTX 4090").rtx50());
+        assert!(!gpu("AMD Radeon RX 7900 XTX").rtx50());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "prints this machine's graphics card"]
+    fn finds_gpu() {
+        println!("{:?}", super::gpu());
     }
 }

@@ -192,9 +192,12 @@ pub struct Settings {
     pub update_notified: Option<String>,
     /// The version that last ran, so the first start after an update can say so.
     pub last_version: Option<String>,
-    /// The last version whose setup program the app started. Starting again below it means that
-    /// install failed, so that version is then only offered, not installed again.
+    /// The setup program the app last started (`update::setup_file`). Starting again as
+    /// something else means that install failed, so it is then only offered, not run again.
     pub update_tried: Option<String>,
+    /// The Windows build asked for in Settings ("cuda"), installed by the updater; None once it
+    /// runs.
+    pub build: Option<String>,
     /// The app's own language; None = the system's.
     pub ui_language: Option<Lang>,
 }
@@ -242,6 +245,7 @@ impl Default for Settings {
             update_notified: None,
             last_version: None,
             update_tried: None,
+            build: None,
             ui_language: None,
         }
     }

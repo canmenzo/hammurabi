@@ -37,7 +37,7 @@
 </nav>
 <main id="main">
 <header class="hero" id="top">
-<p class="status"><span class="dot"></span>0.7.7 sürümü çıktı</p>
+<p class="status"><span class="dot"></span>0.7.8 sürümü çıktı</p>
 <h1>Bilgisayarınızda çalan her şey için canlı altyazı</h1>
 <p class="sub">Hammurabi, sistem sesini ve mikrofonunuzu ekranda altyazıya dönüştürür, isterseniz çevirir de. Windows, macOS ve Linux'ta, tamamen kendi bilgisayarınızda çalışır.</p>
 <div class="cta"><a class="btn lg" id="dl" href="https://github.com/canmenzo/hammurabi/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">İndir</span></a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">GitHub'da görüntüle</a></div>
@@ -58,7 +58,7 @@
 <div class="card rv" id="os-mac"><h3>Apple silicon üzerinde macOS</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">hammurabi-macos-arm64.zip</a></p><p>GPU'yu Metal üzerinden kullanır. Uygulamayı Uygulamalar klasörüne taşıyın. Apple onayından (notarization) geçmediği için macOS ilk açılışı engeller: <code>xattr -dr com.apple.quarantine /Applications/Hammurabi.app</code> komutunu çalıştırın ya da uygulamayı bir kez açıp <strong>Bitti</strong> düğmesine tıklayın, ardından <strong>Sistem Ayarları &gt; Gizlilik ve Güvenlik</strong> bölümünde <strong>Yine de Aç</strong> düğmesine tıklayın. Altyazıları başlattığınızda <strong>Sistem Sesi Kaydı</strong> iznini verin.</p></div>
 <div class="card rv" id="os-linux"><h3>Linux x64</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">hammurabi-linux-x64.tar.gz</a></p><p>Arşivi açın ve <code>./hammurabi</code> komutunu çalıştırın. Sistem sesi için PulseAudio ya da <code>pipewire-pulse</code> ile PipeWire gerekir. X11 oturumu kullanın: Wayland, her zaman üstte kalan pencereleri ve genel kısayolları engeller.</p></div>
 </div>
-<div class="note rv"><strong>İlk çalıştırma.</strong> Hammurabi, konuşma modelini ilk ihtiyaç duyduğunda indirir: işlemci için varsayılan model yaklaşık 300 MB, ekran kartı için varsayılan model 1,6 GB tutar. Yerleşik çeviri modeli yaklaşık 1,7 GB daha tutar, Doğal çevirici ise 5 ile 7 GB. Bunlar yalnızca çeviriyi kullanırsanız iner; sistem dili İngilizce olan bilgisayarlarda çeviri kapalı başlar. Ayarlar, bilgisayarınıza uygun modelleri işaretler. İndirme yarıda kesilirse kaldığı yerden devam eder.</div>
+<div class="note rv"><strong>İlk çalıştırma.</strong> Hammurabi, konuşma modelini ilk ihtiyaç duyduğunda indirir: işlemci için varsayılan model yaklaşık 300 MB, ekran kartı için varsayılan model 1,6 GB tutar. Yerleşik çeviri modeli yaklaşık 1,7 GB daha tutar, Doğal çevirici ise 5 ile 7 GB. Bunlar yalnızca çeviriyi kullanırsanız iner; sistem dili İngilizce olan bilgisayarlarda çeviri kapalı başlar. Ayarlar, ekran kartınıza uygun modelleri işaretler; RTX 50 serisi bir kartta normal sürümü kurduysanız tek tıkla CUDA sürümüne geçer. İndirme yarıda kesilirse kaldığı yerden devam eder.</div>
 </section>
 
 <section class="wrap" id="features">

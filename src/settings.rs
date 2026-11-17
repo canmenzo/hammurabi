@@ -198,6 +198,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
+        let target_language = default_target(sys_locale::get_locale().as_deref());
         Self {
             source: AudioSource::System,
             input_device: None,
@@ -212,8 +213,10 @@ impl Default for Settings {
             screen_left: 0.0,
             screen_right: 1.0,
             trim_audio: true,
-            translate: true,
-            target_language: default_target(sys_locale::get_locale().as_deref()),
+            // Most of what an English system plays is English already, so it starts without the
+            // 1.7 GB translation model.
+            translate: target_language != "en",
+            target_language,
             translator: TranslatorChoice::Builtin,
             instant: false,
             speak: false,

@@ -168,6 +168,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Microsoft Visual C++ Redistributable (Windows builds)
+
+The Windows builds ship `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll` beside the program, so it starts on a PC without the Visual C++ Redistributable installed. They are Copyright (c) Microsoft Corporation and redistributed as the Visual Studio license terms allow for these files.
+
 ## omnivoice.cpp and ggml (Speaker's voice, `omnivoice` builds only)
 
 Windows builds with the `omnivoice` feature statically link omnivoice.cpp

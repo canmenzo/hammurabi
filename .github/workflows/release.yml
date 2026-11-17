@@ -65,6 +65,13 @@ jobs:
           $stage = "dist/hammurabi-windows-x64"
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
+          # The Visual C++ runtime goes beside the exe (ONNX Runtime needs the DLL one), so a PC
+          # without the Visual C++ Redistributable can start it.
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          foreach ($dll in 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item (Join-Path $crt.FullName $dll) $stage
+          }
           Compress-Archive -Path $stage -DestinationPath dist/hammurabi-windows-x64.zip
 
       - name: Installer
@@ -171,6 +178,13 @@ jobs:
           $stage = "dist/hammurabi-windows-cuda"
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
+          # The Visual C++ runtime goes beside the exe (ONNX Runtime needs the DLL one), so a PC
+          # without the Visual C++ Redistributable can start it.
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          foreach ($dll in 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item (Join-Path $crt.FullName $dll) $stage
+          }
           # The exe links these at load time; they are redistributable under the CUDA EULA.
           foreach ($dll in 'cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll', 'curand64_10.dll') {
             Copy-Item (Join-Path $env:CUDA_PATH "bin/$dll") $stage
@@ -252,6 +266,13 @@ jobs:
           $stage = "dist/hammurabi-windows-gpu"
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item target/release/hammurabi.exe, target/release/hammurabi-cli.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $stage
+          # The Visual C++ runtime goes beside the exe (ONNX Runtime needs the DLL one), so a PC
+          # without the Visual C++ Redistributable can start it.
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          foreach ($dll in 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item (Join-Path $crt.FullName $dll) $stage
+          }
           Compress-Archive -Path $stage -DestinationPath dist/hammurabi-windows-gpu.zip
 
       - name: Installer

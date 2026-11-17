@@ -4,6 +4,12 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-17
+
+### Fixed
+
+- Hammurabi starts on a Windows PC without the Visual C++ Redistributable. It stopped with "MSVCP140.dll was not found"; the Windows builds now carry the four runtime files beside the program.
+
 ## [0.7.5] - 2026-11-17
 
 ### Added

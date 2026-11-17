@@ -4,6 +4,16 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-11-17
+
+### Added
+
+- Hammurabi speaks Turkish, Spanish, Portuguese and Chinese as well as English: Settings, the tray menu, the welcome note and the messages over the captions. It opens in the system's language when it is one of these, and Settings > General has a Language choice.
+
+### Fixed
+
+- The CUDA build on a graphics card it was not built for (anything but the RTX 50 series) runs on the CPU instead of failing at the first caption.
+
 ## [0.7.4] - 2026-11-17
 
 ### Added

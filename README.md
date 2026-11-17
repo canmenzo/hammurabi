@@ -31,6 +31,8 @@ The builds are not code signed yet:
 
 Press `Alt+Shift+T` to start or stop captions, and drag a caption to move them. Right-click the tray icon for everything else.
 
+The app speaks English, Turkish, Spanish, Portuguese and Chinese, in your system's language when it is one of them. Change it in Settings > General.
+
 The first start downloads a speech model (up to about 1.6 GB). Translation downloads another 1.7 GB, or 5 to 7 GB for the Natural translator.
 
 ## 🎥 Streaming

@@ -15,6 +15,7 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, DeviceId, Host};
 use crossbeam_channel::Sender;
 
+use crate::i18n::{self, t, tf};
 use crate::types::{AudioChunk, AudioSource, SourceKind};
 
 /// Set by a stream's error callback when its device went away; the capture must be restarted.
@@ -89,9 +90,13 @@ impl AudioCapture {
             r.or_else(|e| {
                 log::warn!("{what} {id}: {e:#}");
                 let s = open(None)?;
-                notes.push(format!(
-                    "The selected {what} is not available, using the default"
-                ));
+                notes.push(
+                    t(match kind {
+                        SourceKind::System => i18n::T::SelectedOutputMissing,
+                        SourceKind::Microphone => i18n::T::SelectedMicMissing,
+                    })
+                    .into(),
+                );
                 Ok(s)
             })
         })?;
@@ -135,12 +140,10 @@ fn open_stream(
     Ok(stream)
 }
 
-fn source_name(kind: SourceKind, start: bool) -> &'static str {
-    match (kind, start) {
-        (SourceKind::System, true) => "System audio",
-        (SourceKind::System, false) => "system audio",
-        (SourceKind::Microphone, true) => "Microphone",
-        (SourceKind::Microphone, false) => "the microphone",
+fn source_name(kind: SourceKind) -> &'static str {
+    match kind {
+        SourceKind::System => "System audio",
+        SourceKind::Microphone => "Microphone",
     }
 }
 
@@ -167,28 +170,24 @@ fn open_sources<T>(
         let e = &failed[0].1;
         let s = open(SourceKind::Microphone)
             .map_err(|m| anyhow!("system audio: {e}; microphone: {m:#}"))?;
-        let note = format!("System audio unavailable ({e}), using the microphone");
+        let note = tf(i18n::T::SystemAudioUsingMic, &[e]);
         return Ok((vec![s], vec![note]));
     }
     if opened.is_empty() {
         let all: Vec<String> = failed
             .iter()
-            .map(|(k, e)| format!("{}: {e}", source_name(*k, true)))
+            .map(|(k, e)| format!("{}: {e}", source_name(*k)))
             .collect();
         anyhow::bail!("{}", all.join("; "));
     }
     let notes = failed
         .into_iter()
         .map(|(k, e)| {
-            let other = match k {
-                SourceKind::System => SourceKind::Microphone,
-                SourceKind::Microphone => SourceKind::System,
+            let key = match k {
+                SourceKind::System => i18n::T::SystemAudioMicOnly,
+                SourceKind::Microphone => i18n::T::MicSystemOnly,
             };
-            format!(
-                "{} unavailable ({e}), using {} only",
-                source_name(k, true),
-                source_name(other, false)
-            )
+            tf(key, &[&e])
         })
         .collect();
     Ok((opened, notes))

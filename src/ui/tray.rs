@@ -2,14 +2,15 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem,
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use super::UiAction;
+use crate::i18n::{T, t, tf};
 use crate::settings::{Settings, TARGET_LANGS, lang_name};
 use crate::tts::{self, PERSONAS};
 use crate::types::AudioSource;
 
-const SOURCES: [(AudioSource, &str, &str); 3] = [
-    (AudioSource::System, "src:system", "System audio"),
-    (AudioSource::Microphone, "src:mic", "Microphone"),
-    (AudioSource::Both, "src:both", "Both"),
+const SOURCES: [(AudioSource, &str, T); 3] = [
+    (AudioSource::System, "src:system", T::SystemAudio),
+    (AudioSource::Microphone, "src:mic", T::Microphone),
+    (AudioSource::Both, "src:both", T::Both),
 ];
 
 pub struct Tray {
@@ -27,8 +28,16 @@ pub struct Tray {
     #[cfg(omnivoice)]
     speaker_voice: (CheckMenuItem, MenuItem),
     autostart: CheckMenuItem,
-    update: Option<MenuItem>,
+    settings: MenuItem,
+    about: MenuItem,
+    logs: MenuItem,
+    quit: MenuItem,
+    update: Option<(MenuItem, String)>,
     active: Option<bool>,
+}
+
+fn about_text() -> String {
+    tf(T::AboutX, &[&env!("CARGO_PKG_VERSION")])
 }
 
 fn icon(active: bool) -> Option<Icon> {
@@ -38,39 +47,44 @@ fn icon(active: bool) -> Option<Icon> {
 
 impl Tray {
     pub fn new() -> anyhow::Result<Self> {
-        let start = MenuItem::with_id("start", "Start captions", true, None);
+        let start = MenuItem::with_id("start", t(T::StartCaptions), true, None);
         let sources: Vec<_> = SOURCES
             .iter()
-            .map(|(_, id, label)| CheckMenuItem::with_id(*id, *label, true, false, None))
+            .map(|(_, id, label)| CheckMenuItem::with_id(*id, t(*label), true, false, None))
             .collect();
-        let translate = CheckMenuItem::with_id("translate", "Translate", true, false, None);
+        let translate = CheckMenuItem::with_id("translate", t(T::Translate), true, false, None);
         let targets: Vec<_> = TARGET_LANGS
             .iter()
             .map(|c| CheckMenuItem::with_id(format!("lang:{c}"), lang_name(c), true, false, None))
             .collect();
-        let speak = CheckMenuItem::with_id("speak", "Read aloud", true, false, None);
+        let speak = CheckMenuItem::with_id("speak", t(T::PageReadAloud), true, false, None);
         let personas: Vec<_> = PERSONAS
             .iter()
             .map(|p| CheckMenuItem::with_id(format!("voice:{}", p.id), p.name(), true, false, None))
             .collect();
-        let autostart = CheckMenuItem::with_id("autostart", "Start at login", true, false, None);
+        let autostart = CheckMenuItem::with_id("autostart", t(T::StartAtLogin), true, false, None);
+        let settings = MenuItem::with_id("settings", t(T::SettingsMenu), true, None);
+        let about = MenuItem::with_id("about", about_text(), true, None);
+        let logs = MenuItem::with_id("logs", t(T::OpenLogs), true, None);
+        let quit = MenuItem::with_id("quit", t(T::Quit), true, None);
 
-        let source_menu = Submenu::new("Source", true);
+        // Their texts are set by `sync`.
+        let source_menu = Submenu::new("", true);
         for s in &sources {
             source_menu.append(s)?;
         }
-        let target_menu = Submenu::new("Target language", true);
-        for t in &targets {
-            target_menu.append(t)?;
+        let target_menu = Submenu::new("", true);
+        for item in &targets {
+            target_menu.append(item)?;
         }
-        let voice_menu = Submenu::new("Voice", true);
+        let voice_menu = Submenu::new("", true);
         for p in &personas {
             voice_menu.append(p)?;
         }
         #[cfg(omnivoice)]
         let speaker_voice = (
-            CheckMenuItem::with_id("speaker-voice", "Speaker's voice", true, false, None),
-            MenuItem::with_id("relearn", "Learn the voice again", true, None),
+            CheckMenuItem::with_id("speaker-voice", t(T::SpeakersVoice), true, false, None),
+            MenuItem::with_id("relearn", t(T::LearnVoiceAgain), true, None),
         );
         #[cfg(omnivoice)]
         voice_menu.append_items(&[
@@ -87,18 +101,13 @@ impl Tray {
             &speak,
             &voice_menu,
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id("settings", "Settings…", true, None),
+            &settings,
             &autostart,
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id(
-                "about",
-                format!("About Hammurabi v{}", env!("CARGO_PKG_VERSION")),
-                true,
-                None,
-            ),
-            &MenuItem::with_id("logs", "Open logs", true, None),
+            &about,
+            &logs,
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id("quit", "Quit", true, None),
+            &quit,
         ])?;
 
         let mut builder = TrayIconBuilder::new()
@@ -128,6 +137,10 @@ impl Tray {
             #[cfg(omnivoice)]
             speaker_voice,
             autostart,
+            settings,
+            about,
+            logs,
+            quit,
             update: None,
             active: Some(false),
         })
@@ -165,55 +178,65 @@ impl Tray {
     /// Adds "Update available" above About, once.
     pub fn show_update(&mut self, version: &str) -> anyhow::Result<()> {
         if self.update.is_none() {
-            let item = MenuItem::with_id(
-                "update",
-                format!("Update available: v{version}"),
-                true,
-                None,
-            );
+            let item =
+                MenuItem::with_id("update", tf(T::UpdateAvailableX, &[&version]), true, None);
             // The menu ends with About, Open logs, separator, Quit.
             let about = self.menu.items().len() - 4;
             self.menu.insert(&item, about)?;
-            self.update = Some(item);
+            self.update = Some((item, version.into()));
         }
         Ok(())
     }
 
-    /// Muda toggles check items on click, so every check is rewritten from state.
+    /// Muda toggles check items on click, so every check is rewritten from state. Every text is
+    /// set again too, for a change of the app's language.
     pub fn sync(&mut self, s: &Settings, running: bool, autostart: bool, tooltip: &str) {
-        self.start.set_text(if running {
-            "Stop captions"
+        self.start.set_text(t(if running {
+            T::StopCaptions
         } else {
-            "Start captions"
-        });
+            T::StartCaptions
+        }));
         for (item, (src, _, label)) in self.sources.iter().zip(SOURCES.iter()) {
+            item.set_text(t(*label));
             item.set_checked(s.source == *src);
             if s.source == *src {
-                self.source_menu.set_text(format!("Source: {label}"));
+                self.source_menu.set_text(tf(T::SourceX, &[&t(*label)]));
             }
         }
+        self.translate.set_text(t(T::Translate));
         self.translate.set_checked(s.translate);
         self.target_menu
-            .set_text(format!("Translate to: {}", lang_name(&s.target_language)));
+            .set_text(tf(T::TranslateToX, &[&lang_name(&s.target_language)]));
         self.target_menu.set_enabled(s.translate);
         for (item, code) in self.targets.iter().zip(TARGET_LANGS.iter()) {
             item.set_checked(s.target_language == *code);
         }
+        self.speak.set_text(t(T::PageReadAloud));
         self.speak.set_checked(s.speak);
         let persona = tts::persona(&s.speak_persona);
         for (item, p) in self.personas.iter().zip(PERSONAS.iter()) {
+            item.set_text(p.name());
             item.set_checked(persona.id == p.id);
         }
-        self.voice_menu
-            .set_text(format!("Voice: {}", persona.name()));
+        self.voice_menu.set_text(tf(T::VoiceX, &[&persona.name()]));
         self.voice_menu.set_enabled(s.speak);
         #[cfg(omnivoice)]
         {
             let on = s.speak_engine == tts::Engine::Speaker;
+            self.speaker_voice.0.set_text(t(T::SpeakersVoice));
             self.speaker_voice.0.set_checked(on);
+            self.speaker_voice.1.set_text(t(T::LearnVoiceAgain));
             self.speaker_voice.1.set_enabled(on && s.speak);
         }
+        self.autostart.set_text(t(T::StartAtLogin));
         self.autostart.set_checked(autostart);
+        self.settings.set_text(t(T::SettingsMenu));
+        self.about.set_text(about_text());
+        self.logs.set_text(t(T::OpenLogs));
+        self.quit.set_text(t(T::Quit));
+        if let Some((item, version)) = &self.update {
+            item.set_text(tf(T::UpdateAvailableX, &[version]));
+        }
         let _ = self.icon.set_tooltip(Some(tooltip));
         if self.active != Some(running) {
             self.active = Some(running);

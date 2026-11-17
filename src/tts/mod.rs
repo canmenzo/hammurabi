@@ -20,6 +20,7 @@ use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
 use crate::audio::duck::Ducker;
+use crate::i18n::{self, Lang, T, t, tf};
 use crate::models::{self, ModelId};
 use crate::settings::lang_name;
 use supertonic::Supertonic;
@@ -54,7 +55,7 @@ pub struct Voice {
 pub struct Persona {
     pub id: &'static str,
     names: [&'static str; 3],
-    pub description: &'static str,
+    pub description: T,
     /// Preferred voice gender; None = any.
     pub gender: Option<Gender>,
     /// Multipliers, 1.0 = normal.
@@ -67,7 +68,7 @@ pub const CUSTOM: &str = "custom";
 const fn def(
     id: &'static str,
     names: [&'static str; 3],
-    description: &'static str,
+    description: T,
     gender: Option<Gender>,
     rate: f32,
     pitch: f32,
@@ -91,7 +92,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         "lale",
         ["Iris", "Lale", "Alba"],
-        "Clear and natural",
+        T::PersonaLale,
         F,
         1.0,
         1.0,
@@ -99,7 +100,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         "ayla",
         ["Ruby", "Ayla", "Carmen"],
-        "Cheerful and warm",
+        T::PersonaAyla,
         F,
         1.05,
         1.15,
@@ -107,7 +108,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         "deniz",
         ["Owen", "Deniz", "Bruno"],
-        "Calm and steady",
+        T::PersonaDeniz,
         M,
         0.95,
         0.95,
@@ -115,7 +116,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         "ates",
         ["Miles", "Ateş", "Rodrigo"],
-        "Deep and reassuring",
+        T::PersonaAtes,
         M,
         1.0,
         0.8,
@@ -123,7 +124,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         "bilge",
         ["Grace", "Bilge", "Inés"],
-        "Slow and patient, easy to follow",
+        T::PersonaBilge,
         F,
         0.8,
         1.0,
@@ -131,7 +132,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         "ruzgar",
         ["Skye", "Rüzgar", "Ariel"],
-        "Fast, keeps up with quick talkers",
+        T::PersonaRuzgar,
         None,
         1.35,
         1.05,
@@ -139,7 +140,7 @@ pub const PERSONAS: [Persona; 7] = [
     def(
         CUSTOM,
         ["Custom", "Özel", "Personalizada"],
-        "Your own voice and speed",
+        T::PersonaCustom,
         None,
         1.0,
         1.0,
@@ -147,18 +148,17 @@ pub const PERSONAS: [Persona; 7] = [
 ];
 
 impl Persona {
-    /// The name in the system's language, as Babil shows it in the browser's.
+    /// The name in the app's language, as Babil shows it in the browser's.
     pub fn name(&self) -> &'static str {
-        let locale = sys_locale::get_locale().unwrap_or_default();
-        self.names[name_index(&locale)]
+        self.names[name_index(i18n::lang())]
     }
 }
 
-fn name_index(locale: &str) -> usize {
-    match locale.split(['-', '_']).next().unwrap_or("") {
-        "tr" => 1,
-        "es" => 2,
-        _ => 0,
+fn name_index(lang: Lang) -> usize {
+    match lang {
+        Lang::Tr => 1,
+        Lang::Es | Lang::Pt => 2,
+        Lang::En | Lang::Zh => 0,
     }
 }
 
@@ -398,11 +398,7 @@ pub fn resolve<'a>(
 }
 
 pub fn missing_voice(lang: &str) -> String {
-    format!(
-        "No {} voice is installed for reading aloud. {}",
-        lang_name(lang),
-        imp::VOICE_HINT
-    )
+    tf(T::MissingVoice, &[&lang_name(lang), &t(imp::VOICE_HINT)])
 }
 
 /// Speaks `text` and returns when it is done or `cancel` is set. `rate`, `pitch`: 1.0 = normal.
@@ -858,9 +854,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                     }
                     Err(e) => {
                         ov_failed = true;
-                        warn(format!(
-                            "Speaker's voice could not start, reading with other voices: {e:#}"
-                        ));
+                        warn(tf(T::SpeakerVoiceCouldNotStart, &[&format!("{e:#}")]));
                     }
                 }
                 continue;
@@ -889,11 +883,11 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
             match &mut ov {
                 Some(o) => {
                     report(Activity::Reading(
-                        if o.has_voice() {
-                            "the speaker's voice"
+                        t(if o.has_voice() {
+                            T::TheSpeakersVoice
                         } else {
-                            "OmniVoice's own voice"
-                        }
+                            T::OmniVoiceOwnVoice
+                        })
                         .into(),
                     ));
                     match speak_cloned(
@@ -905,15 +899,12 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                         (style.output(), style.duck),
                     ) {
                         Ok(()) => continue,
-                        Err(e) => warn(format!(
-                            "Speaker's voice could not read aloud, using other voices: {e:#}"
-                        )),
+                        Err(e) => warn(tf(T::SpeakerVoiceCouldNotRead, &[&format!("{e:#}")])),
                     }
                 }
-                None if !models::is_cached(ModelId::OmniVoice) => warn(
-                    "Speaker's voice is not downloaded yet (Settings > Read aloud), using other voices"
-                        .into(),
-                ),
+                None if !models::is_cached(ModelId::OmniVoice) => {
+                    warn(t(T::SpeakerVoiceNotDownloaded).into())
+                }
                 None => {}
             }
         }
@@ -937,9 +928,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                     if !loaded {
                         models::remove_corrupt(ModelId::Supertonic);
                     }
-                    warn(format!(
-                        "Supertonic could not read aloud, using a system voice: {e:#}"
-                    ));
+                    warn(tf(T::SupertonicFailed, &[&format!("{e:#}")]));
                 }
             }
         }
@@ -952,7 +941,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
             }
         };
         report(Activity::Reading(
-            voice.map_or_else(|| "a system voice".into(), |v| v.name.clone()),
+            voice.map_or_else(|| t(T::ASystemVoice).into(), |v| v.name.clone()),
         ));
         duck(shared, &mut ducker, style.duck);
         shared.lock().gate.speaking = true;
@@ -970,7 +959,7 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
             ended: Some(Instant::now()),
         };
         if let Err(e) = r {
-            warn(format!("Reading aloud failed: {e:#}"));
+            warn(tf(T::ReadingFailed, &[&format!("{e:#}")]));
         }
     }
 }
@@ -1244,10 +1233,11 @@ mod tests {
             ids,
             ["lale", "ayla", "deniz", "ates", "bilge", "ruzgar", "custom"]
         );
-        assert_eq!(persona("ates").names[name_index("tr-TR")], "Ateş");
-        assert_eq!(persona("ruzgar").names[name_index("en-US")], "Skye");
-        assert_eq!(persona("bilge").names[name_index("es_ES")], "Inés");
-        assert_eq!(persona("lale").names[name_index("hi-IN")], "Iris");
+        assert_eq!(persona("ates").names[name_index(Lang::Tr)], "Ateş");
+        assert_eq!(persona("ruzgar").names[name_index(Lang::En)], "Skye");
+        assert_eq!(persona("bilge").names[name_index(Lang::Es)], "Inés");
+        assert_eq!(persona("bilge").names[name_index(Lang::Pt)], "Inés");
+        assert_eq!(persona("lale").names[name_index(Lang::Zh)], "Iris");
         assert_eq!(persona("nope").id, "lale");
     }
 

@@ -20,6 +20,7 @@ use tray_icon::menu::{MenuEvent, MenuId};
 
 use crate::audio::{self, DeviceList};
 use crate::config;
+use crate::i18n::{self, T, t, tf};
 use crate::models::{self, ModelId};
 use crate::pipeline::{Engine, EngineHandle};
 use crate::settings::{Settings, lang_name};
@@ -110,6 +111,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings) -> Self {
         let ctx = cc.egui_ctx.clone();
+        i18n::set(settings.ui_language);
         settings_window::apply_theme(&ctx);
         let first_run = crate::paths::config_file().is_ok_and(|p| !p.exists());
         let (app_tx, app_rx) = crossbeam_channel::unbounded();
@@ -205,7 +207,7 @@ impl App {
         let version = env!("CARGO_PKG_VERSION");
         if app.settings.last_version.as_deref() != Some(version) {
             if app.settings.last_version.is_some() {
-                app.info(format!("Hammurabi is updated to v{version}."));
+                app.info(tf(T::UpdatedTo, &[&version]));
             }
             app.settings.last_version = Some(version.into());
             if let Err(e) = config::save(&app.settings) {
@@ -244,7 +246,7 @@ impl App {
         if self.settings.browser_source && self.web.is_none() {
             match web::Web::spawn() {
                 Ok(w) => self.web = Some(w),
-                Err(e) => return self.warn(format!("The captions page could not start: {e}")),
+                Err(e) => return self.warn(tf(T::WebPageFailed, &[&e])),
             }
         }
         if let Some(w) = &self.web {
@@ -340,7 +342,7 @@ impl App {
             }
             UiAction::ToggleAutostart => {
                 if let Err(e) = autostart::set(!self.models.autostart) {
-                    self.warn(format!("Could not change start at login: {e:#}"));
+                    self.warn(tf(T::AutostartFailed, &[&format!("{e:#}")]));
                 }
                 self.models.autostart = autostart::is_enabled();
                 log::info!("start at login: {}", self.models.autostart);
@@ -384,11 +386,11 @@ impl App {
         if again {
             self.running = false;
             self.state = EngineState::Idle;
-            self.warn("Captions stopped after an internal error. See the log for details.".into());
+            self.warn(t(T::InternalErrorStopped).into());
         } else {
             self.engine()
                 .send(EngineCommand::Start(self.settings.clone()));
-            self.warn("Captions hit an internal error and restarted.".into());
+            self.warn(t(T::InternalErrorRestarted).into());
         }
     }
 
@@ -448,14 +450,19 @@ impl App {
                             .iter()
                             .map(|&(m, done, total)| {
                                 let pct = total
-                                    .map(|t| format!(" {}%", done * 100 / t.max(1)))
+                                    .map(|all| {
+                                        format!(
+                                            " {}",
+                                            tf(T::Percent, &[&(done * 100 / all.max(1))])
+                                        )
+                                    })
                                     .unwrap_or_default();
-                                format!("{}{pct}", purpose(m))
+                                format!("{}{pct}", t(purpose(m).0))
                             })
                             .collect();
                         // Each progress moves its model to the end; sorted, they keep their places.
                         parts.sort();
-                        Some(format!("Downloading: {}", parts.join(", ")))
+                        Some(tf(T::Downloading, &[&parts.join(", ")]))
                     }
                     ProgressPhase::Downloading => {
                         self.refresh_models();
@@ -463,7 +470,7 @@ impl App {
                     }
                     ProgressPhase::Loading => {
                         self.refresh_models();
-                        Some(format!("Loading the {}…", purpose(p.model)))
+                        Some(t(purpose(p.model).1).into())
                     }
                 };
                 if let Some(text) = text {
@@ -544,10 +551,7 @@ impl App {
                 log::warn!("tray update item failed: {e:#}");
             }
             if self.settings.update_notified.as_ref() != Some(&release.version) {
-                self.info(format!(
-                    "Hammurabi v{} is available. Open the tray menu to get it.",
-                    release.version
-                ));
+                self.info(tf(T::UpdateAvailableNote, &[&release.version]));
                 self.settings.update_notified = Some(release.version.clone());
                 if let Err(e) = config::save(&self.settings) {
                     log::error!("config save failed: {e:#}");
@@ -584,18 +588,18 @@ impl App {
 
     fn tooltip(&self) -> String {
         let state = match (self.running, self.state) {
-            (false, _) => "Idle",
-            (true, EngineState::Loading) => "Loading…",
-            (true, _) => "Captions on",
+            (false, _) => T::Idle,
+            (true, EngineState::Loading) => T::Loading,
+            (true, _) => T::CaptionsOnShort,
         };
-        let mut t = format!("Hammurabi: {state}");
+        let mut tip = format!("Hammurabi: {}", t(state));
         if self.settings.translate {
-            t += &format!(" → {}", lang_name(&self.settings.target_language));
+            tip += &format!(" → {}", lang_name(&self.settings.target_language));
         }
         if !self.status.is_empty() {
-            t += &format!("\n{}", self.status);
+            tip += &format!("\n{}", self.status);
         }
-        t
+        tip
     }
 }
 
@@ -642,16 +646,18 @@ fn install_handlers(ctx: &Context, tx: Sender<AppEvent>) {
     }));
 }
 
-/// What a model is for, as status lines name it.
-fn purpose(id: ModelId) -> &'static str {
+/// What a model is for, as status lines name it: in a list of downloads, and loading.
+fn purpose(id: ModelId) -> (T, T) {
     match id {
-        ModelId::Madlad3bQ4k | ModelId::Gemma12b | ModelId::GemmaE4b => "translation model",
+        ModelId::Madlad3bQ4k | ModelId::Gemma12b | ModelId::GemmaE4b => {
+            (T::PurposeTranslation, T::LoadingTranslation)
+        }
         ModelId::WhisperTiny
         | ModelId::WhisperBase
         | ModelId::WhisperSmall
         | ModelId::WhisperTurbo
-        | ModelId::WhisperLarge => "speech model",
-        _ => "voices",
+        | ModelId::WhisperLarge => (T::PurposeSpeech, T::LoadingSpeech),
+        _ => (T::PurposeVoices, T::LoadingVoices),
     }
 }
 
@@ -662,6 +668,8 @@ fn smoothed(was: Option<f32>, ms: u32) -> f32 {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // A language picked in Settings shows from the next frame on.
+        i18n::set(self.settings.ui_language);
         while let Ok(ev) = self.app_rx.try_recv() {
             let action = match ev {
                 AppEvent::Menu(id) => tray::Tray::action(&id),
@@ -729,8 +737,7 @@ impl eframe::App for App {
             let version = &release.version;
             match self.install_at {
                 None => {
-                    let text =
-                        format!("Updating Hammurabi to v{version}. It restarts in a moment.");
+                    let text = tf(T::UpdatingTo, &[version]);
                     self.info(text);
                     self.install_at = Some(now + Duration::from_secs(3));
                     ctx.request_repaint_after(Duration::from_secs(3));
@@ -937,11 +944,7 @@ impl eframe::App for App {
                         // After Stop the translator's server can still hold the file open.
                         if let Err(e) = models::remove(id) {
                             log::warn!("could not delete {id:?}: {e:#}");
-                            self.warn(
-                                "Hammurabi still has that model open. Quit it from the tray icon, \
-                                 open it again and delete the model before starting captions."
-                                    .into(),
-                            );
+                            self.warn(t(T::ModelStillOpen).into());
                         }
                         self.refresh_models();
                     }

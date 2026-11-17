@@ -2,6 +2,7 @@ pub mod asr;
 pub mod audio;
 pub mod config;
 pub mod device;
+pub mod i18n;
 pub mod models;
 pub mod paths;
 pub mod pipeline;

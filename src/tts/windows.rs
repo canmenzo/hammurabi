@@ -6,8 +6,7 @@ use windows::core::HSTRING;
 
 use super::{Gender, Output, Voice, decode_wav, lang_matches, play_rendered};
 
-pub const VOICE_HINT: &str =
-    "Add one in Windows Settings > Time & language > Speech > Manage voices.";
+pub const VOICE_HINT: crate::i18n::T = crate::i18n::T::VoiceHintWindows;
 
 fn info(v: &VoiceInformation) -> windows::core::Result<Voice> {
     Ok(Voice {

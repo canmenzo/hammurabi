@@ -125,7 +125,7 @@ mod source {
         // A window comes and goes (a game restarted, a projector closed by mistake), and a
         // display can stop giving pictures: what is read is read whenever it is there.
         let name = if display {
-            "the main display".to_string()
+            crate::i18n::t(crate::i18n::T::TheMainDisplay).to_string()
         } else {
             format!("\"{window}\"")
         };

@@ -10,7 +10,7 @@ use objc2_foundation::NSString;
 
 use super::{Gender, Output, POLL, Voice, decode_wav, play_rendered};
 
-pub const VOICE_HINT: &str = "Add one in System Settings > Accessibility > Spoken Content (Read & Speak) > System voice > Manage Voices.";
+pub const VOICE_HINT: crate::i18n::T = crate::i18n::T::VoiceHintMac;
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn voices() -> Vec<Voice> {

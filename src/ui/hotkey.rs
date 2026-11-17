@@ -2,6 +2,7 @@ use global_hotkey::GlobalHotKeyManager;
 use global_hotkey::hotkey::HotKey;
 
 use super::UiAction;
+use crate::i18n::{T, t, tf};
 use crate::settings::Settings;
 
 /// Global hotkeys; must be created on the main (event loop) thread.
@@ -15,7 +16,7 @@ impl Hotkeys {
     pub fn new() -> (Self, Option<String>) {
         let (manager, err) = match GlobalHotKeyManager::new() {
             Ok(m) => (Some(m), None),
-            Err(e) => (None, Some(format!("Global hotkeys unavailable: {e}"))),
+            Err(e) => (None, Some(tf(T::HotkeysUnavailable, &[&e]))),
         };
         let hk = Self {
             manager,
@@ -51,10 +52,7 @@ impl Hotkeys {
             }
             Err(e) => {
                 log::warn!("hotkey {text} not registered: {e}");
-                Some(
-                    "That shortcut is taken by another app. Pick another in Settings > General."
-                        .into(),
-                )
+                Some(t(T::ShortcutTaken).into())
             }
         }
     }

@@ -20,6 +20,7 @@ use crate::asr::AsrWorker;
 #[cfg(all(windows, feature = "win-livecaptions"))]
 use crate::asr::livecaptions::{LcEvent, LiveCaptions};
 use crate::audio::{AudioCapture, Frames16k};
+use crate::i18n::{self, T, t, tf};
 use crate::models::{self, ModelId};
 use crate::screen::ScreenEvent;
 #[cfg(windows)]
@@ -318,7 +319,7 @@ impl Core {
             if c.lagging {
                 self.events.status(
                     StatusLevel::Warning,
-                    "Your computer can't keep up, choose a smaller model".into(),
+                    t(T::CantKeepUp).into(),
                     Some(Duration::from_secs(5)),
                 );
             }
@@ -1228,11 +1229,8 @@ impl Engine {
                 true
             }
             Err(e) => {
-                self.events().status(
-                    StatusLevel::Error,
-                    format!("Audio capture failed: {e}"),
-                    None,
-                );
+                self.events()
+                    .status(StatusLevel::Error, tf(T::AudioCaptureFailed, &[&e]), None);
                 self.events().send(EngineEvent::State(EngineState::Error));
                 false
             }
@@ -1270,15 +1268,12 @@ impl Engine {
             };
             self.events().status(
                 level,
-                "Audio device changed, captions continue".into(),
+                t(T::AudioDeviceChanged).into(),
                 Some(Duration::from_secs(3)),
             );
         } else if !std::mem::replace(&mut self.capture_lost, true) {
-            self.events().status(
-                StatusLevel::Warning,
-                "Audio device lost, waiting for it".into(),
-                None,
-            );
+            self.events()
+                .status(StatusLevel::Warning, t(T::AudioDeviceLost).into(), None);
         }
     }
 
@@ -1297,7 +1292,7 @@ impl Engine {
             .asr_busy
             .is_some_and(|t| now.saturating_duration_since(t) > ASR_STUCK)
         {
-            self.restart_asr("Speech model stopped answering, reloading");
+            self.restart_asr(T::SpeechStoppedAnswering);
         }
     }
 
@@ -1317,20 +1312,20 @@ impl Engine {
         log::warn!("the Large speech model is too slow here, Turbo takes over");
         self.events().status(
             StatusLevel::Warning,
-            "Large speech model is too slow here, using Turbo".into(),
+            t(T::LargeTooSlow).into(),
             Some(Duration::from_secs(8)),
         );
         self.ensure_workers();
     }
 
-    fn restart_asr(&mut self, why: &str) {
-        log::error!("{why}");
+    fn restart_asr(&mut self, why: T) {
+        log::error!("{}", i18n::en(why));
         self.asr = None;
         self.asr_errors = 0;
         self.asr_busy = None;
         self.events().status(
             StatusLevel::Warning,
-            why.into(),
+            t(why).into(),
             Some(Duration::from_secs(5)),
         );
         self.ensure_workers();
@@ -1353,7 +1348,7 @@ impl Engine {
         if asr || tr {
             self.events().status(
                 StatusLevel::Warning,
-                "Download paused, it continues on the next Start".into(),
+                t(T::DownloadPaused).into(),
                 Some(Duration::from_secs(4)),
             );
         }
@@ -1449,7 +1444,7 @@ impl Engine {
                     self.events().send(EngineEvent::State(EngineState::Running));
                     self.events().status(
                         StatusLevel::Info,
-                        format!("Listening with {model}"),
+                        tf(T::ListeningWith, &[&model]),
                         Some(Duration::from_secs(3)),
                     );
                 }
@@ -1471,7 +1466,7 @@ impl Engine {
                     device: self.asr_device.clone(),
                 });
                 if self.asr_errors >= ASR_MAX_ERRORS {
-                    self.restart_asr("Speech model keeps failing, reloading");
+                    self.restart_asr(T::SpeechKeepsFailing);
                 } else if self
                     .asr
                     .as_ref()
@@ -1492,7 +1487,7 @@ impl Engine {
                     log::error!("speech model failed, trying again: {e}");
                     self.events().status(
                         StatusLevel::Warning,
-                        "Speech model failed, trying again".into(),
+                        t(T::SpeechFailedRetry).into(),
                         Some(ASR_RETRY_AFTER),
                     );
                     return;
@@ -1500,11 +1495,8 @@ impl Engine {
                 if self.running {
                     self.stop();
                 }
-                self.events().status(
-                    StatusLevel::Error,
-                    format!("Speech model failed: {e}"),
-                    None,
-                );
+                self.events()
+                    .status(StatusLevel::Error, tf(T::SpeechFailed, &[&e]), None);
                 self.events().send(EngineEvent::State(EngineState::Error));
             }
         }
@@ -1539,7 +1531,7 @@ impl Engine {
         {
             self.events().status(
                 StatusLevel::Warning,
-                "Subtitles can only be read off the screen on Windows, listening instead".into(),
+                t(T::ScreenWindowsOnly).into(),
                 Some(Duration::from_secs(8)),
             );
             false
@@ -1572,7 +1564,7 @@ impl Engine {
                     };
                     self.events().status(
                         level,
-                        format!("Running: reading subtitles from {from}"),
+                        tf(T::RunningScreen, &[&from]),
                         Some(Duration::from_secs(3)),
                     );
                 }
@@ -1583,9 +1575,9 @@ impl Engine {
                     self.events().send(EngineEvent::State(EngineState::Running));
                     // A window's name comes in quotes; the display's is "the main display".
                     let text = if from.starts_with('"') {
-                        format!("Waiting for the window {from} to read subtitles from")
+                        tf(T::WaitingForWindow, &[&from])
                     } else {
-                        format!("Waiting for {from} to read subtitles from")
+                        tf(T::WaitingFor, &[&from])
                     };
                     self.events().status(StatusLevel::Warning, text, None);
                 }
@@ -1595,7 +1587,7 @@ impl Engine {
                     self.screen_notice = true;
                     self.events().status(
                         StatusLevel::Warning,
-                        format!("The window {from} is minimized: bring it back to have its subtitles read"),
+                        tf(T::WindowMinimized, &[&from]),
                         None,
                     );
                 }
@@ -1613,11 +1605,8 @@ impl Engine {
                 if self.running {
                     log::error!("reading subtitles off the screen failed: {e}");
                     self.stop();
-                    self.events().status(
-                        StatusLevel::Error,
-                        format!("Cannot read subtitles off the screen: {e}"),
-                        None,
-                    );
+                    self.events()
+                        .status(StatusLevel::Error, tf(T::ScreenFailed, &[&e]), None);
                     self.events().send(EngineEvent::State(EngineState::Error));
                 }
             }
@@ -1653,7 +1642,7 @@ impl Engine {
         if self.wants_lc() {
             self.events().status(
                 StatusLevel::Warning,
-                "Windows Live Captions is not supported on this system, using Whisper".into(),
+                t(T::LiveCaptionsUnsupported).into(),
                 Some(Duration::from_secs(8)),
             );
         }
@@ -1678,7 +1667,7 @@ impl Engine {
                     self.events().send(EngineEvent::State(EngineState::Running));
                     self.events().status(
                         StatusLevel::Info,
-                        "Running: Windows Live Captions".into(),
+                        t(T::RunningLiveCaptions).into(),
                         Some(Duration::from_secs(3)),
                     );
                 }
@@ -1711,7 +1700,7 @@ impl Engine {
         }
         self.events().status(
             StatusLevel::Warning,
-            format!("Windows Live Captions unavailable ({e}), using Whisper"),
+            tf(T::LiveCaptionsUnavailable, &[&e]),
             Some(Duration::from_secs(10)),
         );
         self.core.reset();
@@ -1736,7 +1725,7 @@ impl Engine {
                 self.tr_retry_at = None;
                 self.events().status(
                     StatusLevel::Info,
-                    "Translation ready".into(),
+                    t(T::TranslationReady).into(),
                     Some(Duration::from_secs(3)),
                 );
             }
@@ -1748,17 +1737,9 @@ impl Engine {
             }
             TranslatorEvent::Trouble(e) => {
                 let text = match self.core.settings.translator {
-                    TranslatorChoice::Natural { light: false } => {
-                        "The Natural translator is too slow here. It needs a graphics card with \
-                         8 GB free. Try its smaller model, or Fast."
-                            .into()
-                    }
-                    TranslatorChoice::Natural { light: true } => {
-                        "The Natural translator is too slow here. Its smaller model needs a \
-                         graphics card with 3.5 GB free. Try Fast."
-                            .into()
-                    }
-                    _ => format!("Translation is failing, trying again: {e}"),
+                    TranslatorChoice::Natural { light: false } => t(T::NaturalTooSlow).into(),
+                    TranslatorChoice::Natural { light: true } => t(T::NaturalLightTooSlow).into(),
+                    _ => tf(T::TranslationFailingRetry, &[&e]),
                 };
                 self.events()
                     .status(StatusLevel::Warning, text, Some(Duration::from_secs(8)));
@@ -1773,14 +1754,14 @@ impl Engine {
                     log::error!("translator failed, trying again: {e}");
                     self.events().status(
                         StatusLevel::Warning,
-                        "Translation failed, trying again".into(),
+                        t(T::TranslationFailedRetry).into(),
                         Some(ASR_RETRY_AFTER),
                     );
                     return;
                 }
                 self.events().status(
                     StatusLevel::Warning,
-                    format!("Translation unavailable: {e}"),
+                    tf(T::TranslationUnavailable, &[&e]),
                     Some(Duration::from_secs(10)),
                 );
             }
@@ -1802,10 +1783,14 @@ impl Engine {
             match models::ensure(id, &mut progress, &cancel) {
                 Ok(_) => ev.status(
                     StatusLevel::Info,
-                    "Download finished".into(),
+                    t(T::DownloadFinished).into(),
                     Some(Duration::from_secs(3)),
                 ),
-                Err(e) => ev.status(StatusLevel::Error, format!("Download failed: {e:#}"), None),
+                Err(e) => ev.status(
+                    StatusLevel::Error,
+                    tf(T::DownloadFailed, &[&format!("{e:#}")]),
+                    None,
+                ),
             }
         });
     }

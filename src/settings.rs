@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Lang;
 use crate::screen::Area;
 use crate::tts::{self, Style};
 use crate::types::AudioSource;
@@ -194,6 +195,8 @@ pub struct Settings {
     /// The last version whose setup program the app started. Starting again below it means that
     /// install failed, so that version is then only offered, not installed again.
     pub update_tried: Option<String>,
+    /// The app's own language; None = the system's.
+    pub ui_language: Option<Lang>,
 }
 
 impl Default for Settings {
@@ -239,6 +242,7 @@ impl Default for Settings {
             update_notified: None,
             last_version: None,
             update_tried: None,
+            ui_language: None,
         }
     }
 }
@@ -347,10 +351,15 @@ mod tests {
             overlay_pos: Some([10.0, 20.0]),
             speak_engine: tts::Engine::Speaker,
             omnivoice_accepted: true,
+            ui_language: Some(Lang::Pt),
             ..Settings::default()
         };
         let text = toml::to_string(&s).unwrap();
+        assert!(text.contains("ui_language = \"pt-BR\""), "{text}");
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
+        // A config from before the language setting follows the system.
+        let old = "translate = true\ntarget_language = \"tr\"";
+        assert_eq!(toml::from_str::<Settings>(old).unwrap().ui_language, None);
         assert_eq!(
             toml::from_str::<Settings>("").unwrap().migrated(),
             Settings::default()

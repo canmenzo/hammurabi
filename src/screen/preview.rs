@@ -76,7 +76,7 @@ fn picture(window: &str, capture: &mut Option<Capture>) -> Option<Result<Picture
         } else {
             match windows::find(window) {
                 Some(w) => Target::Window(w),
-                None => return Some(Err("That window is not open, or is minimized.".into())),
+                None => return Some(Err(crate::i18n::t(crate::i18n::T::WindowNotOpen).into())),
             }
         };
         match Capture::start(&target) {

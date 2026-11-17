@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{Gender, Output, POLL, Voice, decode_wav, play_rendered};
 
-pub const VOICE_HINT: &str = "Install a voice for it in speech-dispatcher or espeak-ng.";
+pub const VOICE_HINT: crate::i18n::T = crate::i18n::T::VoiceHintLinux;
 
 pub fn voices() -> Vec<Voice> {
     Command::new("spd-say")

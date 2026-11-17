@@ -4,6 +4,21 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-17
+
+### Added
+
+- Hammurabi updates itself. A copy installed with the Windows installer checks for a new version every 6 hours, downloads the installer for its own build, checks it against the release's checksums and installs it while captions are off. The installer's progress shows, Hammurabi starts again where it was, in the tray or with Settings open, and says which version it is now. Settings shows the download next to the version, and Settings > General has a Check for updates button. If an install fails, that version is offered by hand instead of tried again. The portable zips, macOS and Linux keep saying when a new version is out.
+- Settings > General marks the speech model and translator that suit this PC.
+
+### Changed
+
+- On an English system, translation starts off, so a first start downloads only the speech model instead of 1.7 GB more.
+- A model download is a slim bar with its percentage and megabytes, the same height as the Download button. Deleting a model asks first in a proper dialog that says how much space it frees.
+- The status line under the captions switch wraps instead of cutting off what is below it, and lists downloads as "Downloading: speech model 2%, translation model 0%".
+- Sizes no longer say "about", the words field says "Add a word", and the Settings window is titled Hammurabi with Settings as its heading.
+- The update check reads the latest release from GitHub's release page instead of its API, which allows only 60 requests an hour from one address.
+
 ## [0.7.3] - 2026-11-16
 
 ### Added

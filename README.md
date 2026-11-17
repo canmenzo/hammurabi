@@ -23,7 +23,7 @@ Listening runs on a graphics card only in the RTX 50 download and on Macs; elsew
 
 The builds are not code signed yet:
 
-- **Windows:** run the installer. It installs for your user, no administrator rights needed. On "Windows protected your PC", click **More info > Run anyway**.
+- **Windows:** run the installer. It installs for your user, no administrator rights needed, and Hammurabi updates itself from then on, while captions are off. On "Windows protected your PC", click **More info > Run anyway**.
 - **macOS:** move `Hammurabi.app` to Applications, run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app`, and allow **System Audio Recording** when asked.
 - **Linux:** run `tar -xzf hammurabi-linux-x64.tar.gz && ./hammurabi-linux-x64/hammurabi`. Use X11, and PulseAudio or `pipewire-pulse` for system audio.
 

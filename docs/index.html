@@ -33,7 +33,7 @@
 </nav>
 <main id="main">
 <header class="hero" id="top">
-<p class="status"><span class="dot"></span>Version 0.7.3 is out</p>
+<p class="status"><span class="dot"></span>Version 0.7.4 is out</p>
 <h1>Live captions for everything your computer plays</h1>
 <p class="sub">Hammurabi turns system audio and your microphone into captions on screen, translated if you want. It runs on Windows, macOS and Linux, entirely on your machine.</p>
 <div class="cta"><a class="btn lg" id="dl" href="https://github.com/canmenzo/hammurabi/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">Download</span></a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">View on GitHub</a></div>
@@ -48,13 +48,13 @@
 <p class="eyebrow rv">Download</p>
 <h2 class="rv">Pick your system, install, run</h2>
 <div class="grid os">
-<div class="card rv" id="os-win"><h3>Windows 10 and 11</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64-setup.exe">hammurabi-windows-x64-setup.exe</a></p><p>Works on any 64-bit PC. The installer sets it up for your user, with no administrator rights needed. SmartScreen may say the app is unrecognized: click <strong>More info</strong>, then <strong>Run anyway</strong>.</p></div>
+<div class="card rv" id="os-win"><h3>Windows 10 and 11</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64-setup.exe">hammurabi-windows-x64-setup.exe</a></p><p>Works on any 64-bit PC. The installer sets it up for your user, with no administrator rights needed, and Hammurabi updates itself from then on. SmartScreen may say the app is unrecognized: click <strong>More info</strong>, then <strong>Run anyway</strong>.</p></div>
 <div class="card rv" id="os-cuda"><span class="tag">NVIDIA RTX 50 series</span><h3>Windows with CUDA</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda-setup.exe">hammurabi-windows-cuda-setup.exe</a></p><p>Runs Whisper and translation on an RTX 50 series card: translated captions a bit over half a second after the words. Needs a recent NVIDIA driver. Older cards use the regular Windows build.</p></div>
 <div class="card rv" id="os-gpu"><span class="tag">Speaker's voice</span><h3>Windows with any GPU</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-gpu-setup.exe">hammurabi-windows-gpu-setup.exe</a></p><p>Adds Speaker's voice, which reads each caption in the voice of the person speaking. Needs a GPU with Vulkan and about 1 to 2.5 GB of free VRAM. Its voice model is for personal, non-commercial use only.</p></div>
 <div class="card rv" id="os-mac"><h3>macOS on Apple silicon</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">hammurabi-macos-arm64.zip</a></p><p>Uses the GPU through Metal. Move the app to Applications. It is not notarized, so macOS blocks the first launch: run <code>xattr -dr com.apple.quarantine /Applications/Hammurabi.app</code>, or open it once, click <strong>Done</strong>, then click <strong>Open Anyway</strong> in <strong>System Settings &gt; Privacy &amp; Security</strong>. When you start captions, allow <strong>System Audio Recording</strong>.</p></div>
 <div class="card rv" id="os-linux"><h3>Linux x64</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">hammurabi-linux-x64.tar.gz</a></p><p>Extract it and run <code>./hammurabi</code>. System audio needs PulseAudio or PipeWire with <code>pipewire-pulse</code>. Use an X11 session: Wayland blocks always-on-top windows and global hotkeys.</p></div>
 </div>
-<div class="note rv"><strong>First run.</strong> Hammurabi downloads its speech model the first time it needs one: about 300 MB for the CPU default, 1.6 GB for the GPU default. The built-in translation model is about 1.7 GB more, or 5 to 7 GB for the Natural translator, and only downloads if you turn translation on. Downloads resume if they are interrupted.</div>
+<div class="note rv"><strong>First run.</strong> Hammurabi downloads its speech model the first time it needs one: about 300 MB for the CPU default, 1.6 GB for the GPU default. The built-in translation model is about 1.7 GB more, or 5 to 7 GB for the Natural translator, and only downloads if you use translation, which starts off on an English system. Settings marks the models that suit your PC. Downloads resume if they are interrupted.</div>
 </section>
 
 <section class="wrap" id="features">
@@ -93,7 +93,7 @@
 <section class="wrap" id="privacy">
 <p class="eyebrow rv">Privacy</p>
 <h2 class="rv">Your audio stays on your computer</h2>
-<p class="lead rv">Speech recognition and translation both run locally, so nothing you hear or say is uploaded for processing. There is no account to create and no server of ours in the loop. The only network traffic is model downloads from Hugging Face and a check for new versions on GitHub. If you choose a local LLM for translation, captions go to that server on your machine. Read aloud uses the offline voices built into your operating system. The code is public on GitHub, so you can check it yourself. The <a href="/privacy">privacy policy</a> has the details.</p>
+<p class="lead rv">Speech recognition and translation both run locally, so nothing you hear or say is uploaded for processing. There is no account to create and no server of ours in the loop. The only network traffic is model downloads from Hugging Face and a check for new versions on GitHub, which on Windows also downloads the new installer. If you choose a local LLM for translation, captions go to that server on your machine. Read aloud uses the offline voices built into your operating system. The code is public on GitHub, so you can check it yourself. The <a href="/privacy">privacy policy</a> has the details.</p>
 </section>
 
 <section class="wrap" id="faq">

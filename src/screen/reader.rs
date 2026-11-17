@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 
 use super::prepare::Prep;
 use super::resize::Resize;
+use super::{Area, Spot};
 
 /// A line of text as it stands in the band, in pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -128,6 +129,22 @@ pub struct Reader {
     white: Option<f32>,
     tracker: Tracker,
     roller: Roller,
+    /// What the subtitle being read covers.
+    spot: Option<Bounds>,
+}
+
+/// What rows of text cover, in pixels: left, top, right and bottom, and the height of the
+/// tallest.
+type Bounds = ([f32; 4], f32);
+
+fn bounds<'a>(rows: impl IntoIterator<Item = &'a Line>) -> Option<Bounds> {
+    rows.into_iter().fold(None, |b, r| {
+        let ([x0, y0, x1, y1], h) = b.unwrap_or(([f32::MAX, f32::MAX, 0.0, 0.0], 0.0));
+        Some((
+            [x0.min(r.x0), y0.min(r.y0), x1.max(r.x1), y1.max(r.y1)],
+            h.max(r.y1 - r.y0),
+        ))
+    })
 }
 
 impl Reader {
@@ -148,7 +165,24 @@ impl Reader {
             white: None,
             tracker: Tracker::default(),
             roller: Roller::default(),
+            spot: None,
         }
+    }
+
+    /// The subtitle being read, as fractions of the pictures `prepare` gives. None while there
+    /// is none, and while one was read in a single picture: that may be something else.
+    pub fn spot(&self) -> Option<Spot> {
+        let ([x0, y0, x1, y1], h) = self.spot?;
+        let (w, ht) = (self.width as f32, self.height as f32);
+        Some(Spot {
+            area: Area {
+                left: x0 / w,
+                top: y0 / ht,
+                right: x1 / w,
+                bottom: y1 / ht,
+            },
+            row: h / ht,
+        })
     }
 
     /// The width and height of the pictures `prepare` gives.
@@ -179,12 +213,14 @@ impl Reader {
         let width = self.width as f32;
         // Captions that grow word by word are followed by themselves: they are not centred,
         // and a row of them is not a subtitle until it is whole.
-        if self
-            .roller
-            .feed(t, &rows(plain, width, ROLL_GAP, ROLL_LEVEL_GAP), width)
-        {
+        let rolled = rows(plain, width, ROLL_GAP, ROLL_LEVEL_GAP);
+        if self.roller.feed(t, &rolled, width) {
             // What the tracker had begun is the roller's, or old by the time it lets go.
             self.tracker.cur = None;
+            self.spot = self
+                .roller
+                .edge
+                .and_then(|(x, h, _)| bounds(rolled.iter().filter(|r| begins_at(r, x, h))));
             return self.roller.out.pop_front();
         }
         let block = pick(lines, width);
@@ -199,7 +235,15 @@ impl Reader {
         } else {
             block
         };
-        self.tracker.feed(t, block, self.prep.changed)
+        let out = self.tracker.feed(t, block, self.prep.changed);
+        // A subtitle that goes on in another reading keeps its cover.
+        self.spot = self
+            .tracker
+            .cur
+            .as_ref()
+            .filter(|c| c.reads.len() >= 2 || self.spot.is_some())
+            .map(|c| c.bounds);
+        out
     }
 }
 
@@ -525,6 +569,8 @@ struct Track {
     t0: f64,
     last: f64,
     reads: Vec<Block>,
+    /// What all its readings cover.
+    bounds: Bounds,
     /// The reading seen most often, which the next ones are held against.
     best: usize,
     emitted: bool,
@@ -579,6 +625,10 @@ impl Tracker {
                         c.best -= usize::from(old < c.best);
                     }
                 }
+                if let Some(([x0, y0, x1, y1], h)) = bounds(&block.rows) {
+                    let ([a0, b0, a1, b1], g) = c.bounds;
+                    c.bounds = ([a0.min(x0), b0.min(y0), a1.max(x1), b1.max(y1)], g.max(h));
+                }
                 c.reads.push(block);
                 c.last = t;
                 c
@@ -586,6 +636,7 @@ impl Tracker {
             cur => cur.insert(Track {
                 t0: t,
                 last: t,
+                bounds: bounds(&block.rows).unwrap_or_default(),
                 reads: vec![block],
                 best: 0,
                 emitted: false,
@@ -1277,6 +1328,38 @@ mod tests {
             ));
         }
         assert!(roller.out.is_empty());
+    }
+
+    #[test]
+    fn the_cover_is_what_the_rows_of_the_subtitle_read_cover() {
+        let mut reader = Reader::new(1920, 300);
+        let two = vec![line_at(A, 148.0, None), line(B)];
+        reader.read(0.0, &two, &two);
+        // Read once, it may be something else.
+        assert_eq!(reader.spot(), None);
+        reader.read(0.1, &two, &two);
+        // A is the wider row: 23 letters of 14 pixels, centred; B's bottom is the lowest.
+        let spot = reader.spot().unwrap();
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        let Area {
+            left,
+            top,
+            right,
+            bottom,
+        } = spot.area;
+        assert!(
+            near(left, 799.0 / 1920.0)
+                && near(right, 1121.0 / 1920.0)
+                && near(top, 148.0 / 300.0)
+                && near(bottom, 218.0 / 300.0)
+                && near(spot.row, 0.1),
+            "{spot:?}"
+        );
+        // A picture without it does not end it, one long after does.
+        reader.read(0.2, &[], &[]);
+        assert_eq!(reader.spot(), Some(spot));
+        reader.read(0.8, &[], &[]);
+        assert_eq!(reader.spot(), None);
     }
 
     #[test]

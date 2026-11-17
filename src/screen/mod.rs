@@ -34,6 +34,46 @@ impl Area {
         right: 1.0,
         bottom: 1.0,
     };
+
+    /// `inner`, a part of this area given as fractions of it, as fractions of what this is part of.
+    pub fn outer(&self, inner: Area) -> Area {
+        let x = |f: f32| self.left + f * (self.right - self.left);
+        let y = |f: f32| self.top + f * (self.bottom - self.top);
+        Area {
+            left: x(inner.left),
+            top: y(inner.top),
+            right: x(inner.right),
+            bottom: y(inner.bottom),
+        }
+    }
+
+    /// This part of `rect` (left, top, right, bottom), in whole pixels that hold all of it.
+    pub fn of(&self, [l, t, r, b]: [i32; 4]) -> [i32; 4] {
+        let (w, h) = ((r - l) as f32, (b - t) as f32);
+        [
+            l + (self.left * w).floor() as i32,
+            t + (self.top * h).floor() as i32,
+            l + (self.right * w).ceil() as i32,
+            t + (self.bottom * h).ceil() as i32,
+        ]
+    }
+}
+
+/// The subtitle that stands in the picture read, as fractions of that picture: what its rows
+/// cover, and how tall the tallest of them is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub area: Area,
+    pub row: f32,
+}
+
+/// Where subtitles are read now.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Place {
+    /// The picture's place on the desktop in pixels: left, top, right, bottom. None while
+    /// there is no picture.
+    pub picture: Option<[i32; 4]>,
+    pub subtitle: Option<Spot>,
 }
 
 pub enum ScreenEvent {
@@ -46,6 +86,8 @@ pub enum ScreenEvent {
     Minimized(String),
     /// A subtitle, once.
     Line(String),
+    /// Where the picture is, or the subtitle in it, changed.
+    Place(Place),
     Error(String),
 }
 
@@ -63,7 +105,7 @@ mod source {
     use super::capture::{Capture, Target};
     use super::ocr::Ocr;
     use super::reader::Reader;
-    use super::{Area, ScreenEvent, windows};
+    use super::{Area, Place, ScreenEvent, Spot, windows};
 
     /// A picture is read this often: what the reader's counts of pictures are set for.
     const EVERY: Duration = Duration::from_millis(100);
@@ -148,6 +190,7 @@ mod source {
                         tx,
                         stop,
                     )?;
+                    let _ = tx.send(ScreenEvent::Place(Place::default()));
                     // What gave no picture, a window or the display, is looked for again after
                     // a while: at once, a window that is open but gives none would be captured
                     // anew many times a second.
@@ -191,6 +234,7 @@ mod source {
         let mut pictures = 0u32;
         let display = window.is_none();
         let mut minimized = false;
+        let mut place = Place::default();
         while !stop.load(Ordering::Relaxed) {
             let t = Instant::now();
             // Once a second, for the windows opened since.
@@ -258,8 +302,53 @@ mod source {
                     }
                 }
             }
+            let now = Place {
+                picture: capture.place().filter(|_| !minimized),
+                subtitle: reader.as_ref().and_then(|(.., r)| r.spot()).map(|s| Spot {
+                    area: band.outer(s.area),
+                    row: s.row * (band.bottom - band.top),
+                }),
+            };
+            if now != place {
+                place = now;
+                let _ = tx.send(ScreenEvent::Place(place));
+            }
             std::thread::sleep(EVERY.saturating_sub(t.elapsed()));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_part_of_the_band_is_a_part_of_the_picture_and_of_the_desktop() {
+        let band = Area {
+            left: 0.125,
+            top: 0.75,
+            right: 0.875,
+            bottom: 1.0,
+        };
+        let spot = band.outer(Area {
+            left: 0.25,
+            top: 0.5,
+            right: 0.75,
+            bottom: 1.0,
+        });
+        assert_eq!(
+            spot,
+            Area {
+                left: 0.3125,
+                top: 0.875,
+                right: 0.6875,
+                bottom: 1.0
+            }
+        );
+        // A window on a display above and left of the main one.
+        assert_eq!(spot.of([-1920, -1080, 0, 0]), [-1320, -135, -600, 0]);
+        // Part pixels are covered whole.
+        assert_eq!(spot.of([0, 0, 1001, 1001]), [312, 875, 689, 1001]);
     }
 }

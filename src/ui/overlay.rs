@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use eframe::egui::text::LayoutJob;
 use eframe::egui::{
-    self, Color32, CornerRadius, CursorIcon, FontId, Galley, Pos2, Rect, Ui, Vec2, ViewportBuilder,
-    vec2,
+    self, Align, Color32, CornerRadius, CursorIcon, FontId, Galley, Pos2, Rect, Ui, Vec2,
+    ViewportBuilder, pos2, vec2,
 };
 
+use crate::screen::{Area, Place, Spot};
 use crate::settings::{CaptionStyle, Edge, Settings};
 use crate::types::{CaptionUpdate, Status, StatusLevel};
 
@@ -21,6 +23,14 @@ const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 8.0;
 const BLOCK_GAP: f32 = 6.0;
 const LINE_GAP: f32 = 2.0;
+// A cover's sizes, in heights of the subtitle's row: its letters, and the room it leaves around
+// the subtitle across and above and below, for the letters' shadows and outlines.
+const COVER_FONT: f32 = 1.2;
+const COVER_PAD_X: f32 = 0.5;
+const COVER_PAD_Y: f32 = 0.3;
+/// A subtitle that comes this long after the cover was last up starts with an empty one, not
+/// with the translation of the one before.
+const COVER_GAP: Duration = Duration::from_millis(500);
 
 struct Line {
     original: String,
@@ -84,6 +94,18 @@ struct StatusPill {
     expires: Option<Instant>,
 }
 
+/// Subtitles read off the screen, covered by their translations (`Settings::covers`).
+#[derive(Default)]
+struct Cover {
+    place: Place,
+    /// The subtitle covered last, which the cover stays over while its translation holds.
+    spot: Option<Spot>,
+    /// When the subtitle on the screen went.
+    gone: Option<Instant>,
+    /// The translation in the cover: its caption, its text, and until when it holds.
+    text: Option<(u64, String, Instant)>,
+}
+
 #[derive(Default)]
 pub struct OverlayState {
     cues: Vec<Cue>,
@@ -92,6 +114,7 @@ pub struct OverlayState {
     hold_secs: f32,
     /// The bubbles painted last, in window coordinates.
     bubbles: Vec<Rect>,
+    cover: Cover,
 }
 
 impl OverlayState {
@@ -109,6 +132,12 @@ impl OverlayState {
                 let hold = Duration::from_secs_f32(
                     self.hold_secs.max(line.chars() as f32 / 15.0).max(0.0),
                 );
+                // Covering, a caption comes once its translation is in: one without a
+                // translation has none coming, and shows as it was read.
+                if settings.covers() && self.cover.text.as_ref().is_none_or(|t| t.0 <= id) {
+                    let text = line.translated.as_ref().unwrap_or(&line.original);
+                    self.cover.text = Some((id, text.clone(), now + hold));
+                }
                 if let Some(c) = self.cues.iter_mut().find(|c| c.id == id) {
                     let mut line = line;
                     if line.original != c.line.original {
@@ -145,8 +174,41 @@ impl OverlayState {
             CaptionUpdate::Clear => {
                 self.cues.clear();
                 self.live = None;
+                self.cover = Cover::default();
             }
         }
+    }
+
+    /// Where subtitles are read off the screen now.
+    pub fn place(&mut self, place: Place, now: Instant) {
+        let c = &mut self.cover;
+        match place.subtitle {
+            Some(spot) => {
+                // When the cover went: once the subtitle went and its translation stopped holding.
+                let went = c.gone.map(|g| c.text.as_ref().map_or(g, |t| g.max(t.2)));
+                if went.is_some_and(|w| now.saturating_duration_since(w) >= COVER_GAP) {
+                    c.text = None;
+                }
+                c.gone = None;
+                c.spot = Some(spot);
+            }
+            None => c.gone = c.gone.or(Some(now)),
+        }
+        c.place = place;
+    }
+
+    /// The picture subtitles are read in, on the desktop in pixels, while there is one.
+    pub fn picture(&self) -> Option<[i32; 4]> {
+        self.cover.place.picture
+    }
+
+    /// The cover, while the subtitle stands or its translation holds: over what, and the
+    /// translation in it. Never the subtitle itself: empty until its translation is in.
+    pub fn covered(&self, now: Instant) -> Option<(Spot, Option<&str>)> {
+        let c = &self.cover;
+        let held = c.text.as_ref().is_some_and(|t| now < t.2);
+        let spot = c.place.subtitle.or(c.spot.filter(|_| held))?;
+        Some((spot, c.text.as_ref().map(|t| t.1.as_str())))
     }
 
     pub fn set_status(&mut self, status: Status, now: Instant) {
@@ -183,7 +245,8 @@ impl OverlayState {
             }
         });
         let status = self.status.as_ref().and_then(|s| s.expires);
-        cues.chain(status).min()
+        let cover = self.cover.text.as_ref().map(|t| t.2).filter(|&t| now < t);
+        cues.chain(status).chain(cover).min()
     }
 
     pub fn bubbles(&self) -> &[Rect] {
@@ -191,8 +254,16 @@ impl OverlayState {
     }
 
     /// `sample`: a translation to show as a sample caption while nothing else is on screen.
-    /// Returns whether a bubble was just pressed, which starts dragging the window.
-    pub fn paint(&mut self, ui: &mut Ui, style: &CaptionStyle, sample: Option<&str>) -> bool {
+    /// `cover`: the window stands over this band of the picture subtitles are read in, and
+    /// covers them in place of captions. Returns whether a bubble was just pressed, which
+    /// starts dragging the window.
+    pub fn paint(
+        &mut self,
+        ui: &mut Ui,
+        style: &CaptionStyle,
+        sample: Option<&str>,
+        cover: Option<Area>,
+    ) -> bool {
         let now = Instant::now();
         self.cues.retain(|c| now < c.hold_end() + FADE);
         if self
@@ -215,9 +286,36 @@ impl OverlayState {
             translated: Some(t.into()),
             same_lang: false,
         });
+        let trans_color = parse_color(&style.trans_color);
+        if let Some(band) = cover
+            && let Some((spot, text)) = self.covered(now)
+        {
+            let r = in_window(rect, band, spot.area);
+            let row = spot.row / (band.bottom - band.top) * rect.height();
+            let pad = vec2(COVER_PAD_X, COVER_PAD_Y) * row;
+            let mut job = LayoutJob::simple(
+                text.unwrap_or_default().to_owned(),
+                FontId::proportional(COVER_FONT * row),
+                Color32::WHITE,
+                (0.9 * rect.width()).max(r.width()),
+            );
+            job.halign = Align::Center;
+            let g = painter.layout_job(job);
+            // Over the subtitle and the room around it, and as large as its translation needs,
+            // growing up from the subtitle's bottom as subtitles do.
+            let size = (r.size() + 2.0 * pad).max(g.size() + 2.0 * pad);
+            let b = Rect::from_min_size(
+                pos2(r.center().x - size.x / 2.0, r.bottom() + pad.y - size.y),
+                size,
+            );
+            painter.rect_filled(b, CornerRadius::same(4), Color32::BLACK);
+            let at = pos2(b.center().x, b.center().y - g.size().y / 2.0);
+            paint_text(&painter, at, &g, trans_color, style.edge, 1.0);
+        }
+
         let mut blocks: Vec<(&Line, f32)> = Vec::new();
         let skip = self.cues.len().saturating_sub(style.cues.max(1) as usize);
-        for c in &self.cues[skip..] {
+        for c in self.cues[skip..].iter().filter(|_| cover.is_none()) {
             let left = (c.hold_end() + FADE).saturating_duration_since(now);
             let age = now.saturating_duration_since(c.shown);
             let mut alpha = 1.0;
@@ -231,7 +329,8 @@ impl OverlayState {
             }
             blocks.push((&c.line, alpha));
         }
-        if let Some(l) = self.live.as_ref().or(sample.as_ref()) {
+        let live = self.live.as_ref().filter(|_| cover.is_none());
+        if let Some(l) = live.or(sample.as_ref()) {
             blocks.push((l, 1.0));
         }
 
@@ -285,7 +384,6 @@ impl OverlayState {
             draw(vec![(g, color)], Color32::from_black_alpha(215), 1.0, true);
         }
 
-        let trans_color = parse_color(&style.trans_color);
         let orig_color = parse_color(&style.orig_color);
         for (i, (line, alpha)) in blocks.into_iter().rev().enumerate() {
             let lines = line
@@ -374,6 +472,17 @@ fn paint_text(
         }
     }
     p.galley_with_override_text_color(pos, g.clone(), color);
+}
+
+/// Where `area` of a picture is in a window that stands over `band` of it, both as fractions of
+/// the picture: the window's size in points holds its scale.
+fn in_window(window: Rect, band: Area, area: Area) -> Rect {
+    let x = |f: f32| window.left() + (f - band.left) / (band.right - band.left) * window.width();
+    let y = |f: f32| window.top() + (f - band.top) / (band.bottom - band.top) * window.height();
+    Rect::from_min_max(
+        pos2(x(area.left), y(area.top)),
+        pos2(x(area.right), y(area.bottom)),
+    )
 }
 
 fn parse_color(s: &str) -> Color32 {
@@ -476,7 +585,7 @@ mod tests {
             ..Default::default()
         };
         ctx.run_ui(input, |ui| {
-            overlay.paint(ui, &settings.caption, None);
+            overlay.paint(ui, &settings.caption, None, None);
         })
         .drop_without_applying_deltas();
 
@@ -496,6 +605,118 @@ mod tests {
                 && newest.right() <= window.right(),
             "{bubbles:?}"
         );
+    }
+
+    #[test]
+    fn a_part_of_the_picture_is_found_in_the_window_at_any_scale() {
+        // A 2560 by 1440 picture; the window stands over its band, 2048 by 360 pixels.
+        let band = Area {
+            left: 0.1,
+            top: 0.75,
+            right: 0.9,
+            bottom: 1.0,
+        };
+        let spot = Area {
+            left: 0.4,
+            top: 0.85,
+            right: 0.6,
+            bottom: 0.9,
+        };
+        for scale in [1.0, 1.25, 1.5] {
+            let window = Rect::from_min_size(Pos2::ZERO, vec2(2048.0, 360.0) / scale);
+            let r = in_window(window, band, spot);
+            let want = Rect::from_min_max(pos2(768.0, 144.0), pos2(1280.0, 216.0));
+            assert!(
+                (r.min - want.min / scale).length() < 0.01
+                    && (r.max - want.max / scale).length() < 0.01,
+                "{scale}: {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cover_shows_translations_only_and_follows_the_subtitle() {
+        let settings = Settings {
+            asr_backend: crate::settings::AsrBackend::ScreenText,
+            translate: true,
+            target_language: "tr".into(),
+            ..Settings::default()
+        };
+        let spot = |left: f32| Spot {
+            area: Area {
+                left,
+                top: 0.85,
+                right: left + 0.2,
+                bottom: 0.9,
+            },
+            row: 0.03,
+        };
+        let at = |picture: bool, s: Option<Spot>| Place {
+            picture: picture.then_some([0, 0, 1920, 1080]),
+            subtitle: s,
+        };
+        let final_ = |id, original: &str, translated: Option<&str>| CaptionUpdate::Final {
+            id,
+            original: original.into(),
+            translated: translated.map(String::from),
+            lang: "en".into(),
+        };
+        let secs = Duration::from_secs_f32;
+        let t0 = Instant::now();
+        let mut o = OverlayState::default();
+        // Up as soon as the subtitle is, empty until its translation is in.
+        o.place(at(true, Some(spot(0.4))), t0);
+        assert_eq!(o.covered(t0), Some((spot(0.4), None)));
+        o.apply(
+            final_(1, "Hello there.", Some("Merhaba.")),
+            &settings,
+            t0 + secs(0.5),
+        );
+        assert_eq!(
+            o.covered(t0 + secs(0.5)),
+            Some((spot(0.4), Some("Merhaba.")))
+        );
+        // It follows the subtitle, and stays where it was while the translation holds.
+        o.place(at(true, Some(spot(0.3))), t0 + secs(0.6));
+        o.place(at(true, None), t0 + secs(1.0));
+        assert_eq!(
+            o.covered(t0 + secs(4.0)),
+            Some((spot(0.3), Some("Merhaba.")))
+        );
+        assert_eq!(o.covered(t0 + secs(4.6)), None);
+        // The next subtitle soon after has the last translation until its own is in,
+        o.place(at(true, Some(spot(0.4))), t0 + secs(4.8));
+        assert_eq!(
+            o.covered(t0 + secs(4.8)),
+            Some((spot(0.4), Some("Merhaba.")))
+        );
+        // which is the subtitle as read when none is coming.
+        o.apply(final_(2, "Yo.", None), &settings, t0 + secs(5.5));
+        assert_eq!(o.covered(t0 + secs(5.5)), Some((spot(0.4), Some("Yo."))));
+        // One long after starts empty.
+        o.place(at(true, None), t0 + secs(6.0));
+        o.place(at(true, Some(spot(0.4))), t0 + secs(12.0));
+        assert_eq!(o.covered(t0 + secs(12.0)), Some((spot(0.4), None)));
+
+        // Captions are not drawn as well; the cover is.
+        let window = Rect::from_min_size(Pos2::ZERO, vec2(1920.0, 300.0));
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(window),
+            ..Default::default()
+        };
+        let band = Area {
+            left: 0.0,
+            top: 0.75,
+            right: 1.0,
+            bottom: 1.0,
+        };
+        let output = ctx.run_ui(input, |ui| {
+            o.paint(ui, &settings.caption, None, Some(band));
+        });
+        assert!(o.bubbles().is_empty());
+        assert!(!output.shapes.is_empty());
+        output.drop_without_applying_deltas();
     }
 
     #[test]

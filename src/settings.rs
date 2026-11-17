@@ -147,6 +147,8 @@ pub struct Settings {
     /// page does not fill its window, and its subtitles are centred in the video.
     pub screen_left: f32,
     pub screen_right: f32,
+    /// Translations of subtitles read off the screen stand over them, hiding them (`covers`).
+    pub screen_cover: bool,
     /// Encode only the speech plus a margin instead of Whisper's full 30 s window (much faster on CPU).
     pub trim_audio: bool,
     pub translate: bool,
@@ -218,6 +220,7 @@ impl Default for Settings {
             screen_bottom: 1.0,
             screen_left: 0.0,
             screen_right: 1.0,
+            screen_cover: true,
             trim_audio: true,
             // Most of what an English system plays is English already, so it starts without the
             // 1.7 GB translation model.
@@ -259,6 +262,11 @@ impl Settings {
             right: self.screen_right,
             bottom: self.screen_bottom,
         }
+    }
+
+    /// A subtitle read off the screen is covered by its translation, in place of a caption.
+    pub fn covers(&self) -> bool {
+        self.asr_backend == AsrBackend::ScreenText && self.screen_cover && self.translate
     }
 
     /// Configs from before personas keep the voice and speed picked there, as Custom.

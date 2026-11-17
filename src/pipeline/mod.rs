@@ -285,12 +285,16 @@ impl Core {
         self.rolling.reseed(text, now);
     }
 
-    /// A subtitle read off the screen: a caption as it stands, a long one sentence by sentence.
+    /// A subtitle read off the screen: a caption as it stands, a long one translated sentence
+    /// by sentence.
     fn screen_line(&mut self, text: String, now: Instant) {
         let lang = self.settings.spoken_language.clone();
-        let out = self
-            .asm
-            .external(pieces(&text), None, lang.as_deref().unwrap_or("en"), now);
+        let lang = lang.as_deref().unwrap_or("en");
+        let out = if self.settings.covers() {
+            self.asm.subtitle(pieces(&text), lang, now)
+        } else {
+            self.asm.external(pieces(&text), None, lang, now)
+        };
         self.apply(out);
     }
 
@@ -536,9 +540,9 @@ impl Core {
         }
     }
 
-    /// Captions show translations alone, not what was said.
+    /// Captions show translations alone, not what was said. A subtitle's translation covers it.
     fn translation_only(&self) -> bool {
-        self.settings.translate && !self.settings.caption.show_original
+        self.settings.translate && (!self.settings.caption.show_original || self.settings.covers())
     }
 
     /// Asks for the translation of the first of `whole`, the sentences the live line has whole,
@@ -1604,6 +1608,11 @@ impl Engine {
                     self.core.screen_line(text, Instant::now());
                 }
             }
+            ScreenEvent::Place(p) => {
+                if self.running {
+                    self.events().send(EngineEvent::Place(p));
+                }
+            }
             ScreenEvent::Error(e) => {
                 #[cfg(windows)]
                 {
@@ -1901,6 +1910,74 @@ mod tests {
         assert_eq!(
             pieces("No. No, I'm not calling anybody that, I would never say such a thing. Ever."),
             ["No. No, I'm not calling anybody that, I would never say such a thing. Ever."]
+        );
+    }
+
+    #[test]
+    fn a_covered_subtitle_waits_for_its_translation_and_is_one_caption() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let settings = Settings {
+            translate: true,
+            target_language: "tr".into(),
+            asr_backend: AsrBackend::ScreenText,
+            ..Settings::default()
+        };
+        let mut c = Core::new(
+            settings,
+            Events {
+                tx,
+                notify: Arc::new(|| {}),
+            },
+            false,
+        );
+        c.tr_ready = true;
+        let t = Instant::now();
+        let long =
+            "This chump change. How am I gonna knock a bad bitch, if I don't got a fat pocket?";
+        c.screen_line("Hey.".into(), t);
+        c.screen_line(long.into(), t);
+        let finals = || {
+            rx.try_iter()
+                .filter_map(|e| match e {
+                    EngineEvent::Caption(CaptionUpdate::Final {
+                        id,
+                        original,
+                        translated,
+                        ..
+                    }) => Some((id, original, translated)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        // Not shown before its translation, which would show the English it covers.
+        assert_eq!(finals(), []);
+        let asked: Vec<(u64, String)> = c.tr_out.iter().map(|r| (r.id, r.text.clone())).collect();
+        assert_eq!(
+            asked.iter().map(|a| a.1.as_str()).collect::<Vec<_>>(),
+            [
+                "Hey.",
+                "This chump change.",
+                "How am I gonna knock a bad bitch, if I don't got a fat pocket?"
+            ]
+        );
+        c.translation(asked[0].0, Some("Hey.".into()));
+        c.translation(asked[1].0, Some("Bu bozuk para.".into()));
+        c.translation(asked[2].0, None);
+        // Each subtitle a caption of its own, though they came together.
+        let tr = |s: &str| Some(s.to_string());
+        assert_eq!(
+            finals(),
+            [
+                (1, "Hey.".into(), tr("Hey.")),
+                (2, long.into(), tr("Bu bozuk para.")),
+                (
+                    2,
+                    long.into(),
+                    tr(
+                        "Bu bozuk para. How am I gonna knock a bad bitch, if I don't got a fat pocket?"
+                    )
+                ),
+            ]
         );
     }
 

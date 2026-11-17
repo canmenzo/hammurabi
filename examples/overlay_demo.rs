@@ -127,7 +127,7 @@ impl eframe::App for Demo {
             self.placed = true;
         }
         let style = self.settings.caption.clone();
-        self.overlay.paint(ui, &style, None);
+        self.overlay.paint(ui, &style, None, None);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

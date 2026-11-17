@@ -4,6 +4,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- Subtitles on screen can show only the translation: with **Cover the game's subtitles** (Settings > Listen, under the picture of what is read; on by default) the translation stands in a black box right over the game's own subtitle and hides it, on the screen and on the captions web page. The box comes up with the subtitle, empty until its translation is in, follows it, and goes after the usual time on screen once the subtitle is gone.
+
 ## [0.7.8] - 2026-11-17
 
 ### Changed

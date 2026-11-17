@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use crate::screen::Spot;
 use crate::settings::Settings;
 use crate::types::CaptionUpdate;
 
@@ -20,6 +21,7 @@ struct Shared {
     pages: Vec<TcpStream>,
     /// Sent to a page when it connects.
     style: String,
+    cover: String,
 }
 
 pub struct Web {
@@ -70,8 +72,27 @@ impl Web {
             "cues": c.cues,
             "hold": c.hold_secs,
             "edge": format!("{:?}", c.edge),
+            "cover": s.covers(),
         });
         self.send(&style, true);
+    }
+
+    /// The cover over the subtitle read off the screen (`OverlayState::covered`), when it
+    /// changed. The page is taken to show the whole picture read, as a game's capture does.
+    pub fn cover(&self, cover: Option<(Spot, Option<&str>)>) {
+        let event = match cover {
+            Some((s, text)) => {
+                let a = s.area;
+                json!({"t": "cover", "box": [a.left, a.top, a.right, a.bottom], "row": s.row, "tr": text})
+            }
+            None => json!({"t": "cover"}),
+        }
+        .to_string();
+        let mut s = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+        if s.cover != event {
+            s.pages.retain_mut(|p| write_event(p, &event).is_ok());
+            s.cover = event;
+        }
     }
 
     pub fn caption(&self, c: &CaptionUpdate, target: &str) {
@@ -122,8 +143,10 @@ fn serve(mut stream: TcpStream, shared: &Mutex<Shared>) -> std::io::Result<()> {
             b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n",
         )?;
         let mut s = shared.lock().unwrap_or_else(|p| p.into_inner());
-        if !s.style.is_empty() {
-            write_event(&mut stream, &s.style)?;
+        for event in [&s.style, &s.cover] {
+            if !event.is_empty() {
+                write_event(&mut stream, event)?;
+            }
         }
         s.pages.push(stream);
         return Ok(());
@@ -183,5 +206,43 @@ mod tests {
         );
         assert_eq!(e["tr"], "N'aber kanka?");
         assert_eq!(e["same"], false);
+
+        // A cover: where, and the translation only; empty while it is not in.
+        let spot = Spot {
+            area: crate::screen::Area {
+                left: 0.375,
+                top: 0.875,
+                right: 0.625,
+                bottom: 0.9375,
+            },
+            row: 0.03125,
+        };
+        web.cover(Some((spot, None)));
+        let e = next();
+        assert_eq!(e["t"], "cover");
+        assert_eq!(e["box"], json!([0.375, 0.875, 0.625, 0.9375]));
+        assert_eq!(e["row"], 0.03125);
+        assert!(e["tr"].is_null());
+        // Sent when it changes only.
+        web.cover(Some((spot, None)));
+        web.cover(Some((spot, Some("N'aber kanka?"))));
+        assert_eq!(next()["tr"], "N'aber kanka?");
+        // A page that connects later has it at once, after the style.
+        let mut late = BufReader::new(get("/events"));
+        let mut lines = Vec::new();
+        while lines.len() < 2 {
+            let mut line = String::new();
+            late.read_line(&mut line).unwrap();
+            if let Some(data) = line.strip_prefix("data: ") {
+                lines.push(serde_json::from_str::<serde_json::Value>(data).unwrap());
+            }
+        }
+        assert_eq!(
+            (&lines[0]["t"], &lines[1]["t"]),
+            (&json!("style"), &json!("cover"))
+        );
+        assert_eq!(lines[1]["tr"], "N'aber kanka?");
+        web.cover(None);
+        assert_eq!(next(), json!({"t": "cover"}));
     }
 }

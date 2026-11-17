@@ -8,13 +8,14 @@ use windows::Graphics::Capture::{
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
-use windows::Win32::Foundation::{HMODULE, HWND};
+use windows::Win32::Foundation::{HMODULE, HWND, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BOX, D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAP_READ,
     D3D11_MAPPED_SUBRESOURCE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
 };
+use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::Graphics::Gdi::HMONITOR;
@@ -204,6 +205,27 @@ impl Capture {
             height: h,
             bgra,
         }))
+    }
+
+    /// Where the picture is on the desktop, in pixels: left, top, right, bottom.
+    pub fn place(&self) -> Option<[i32; 4]> {
+        let Some(w) = self.window else {
+            // The main display's top left corner is the desktop's origin.
+            return Some([0, 0, self.size.Width, self.size.Height]);
+        };
+        // A window's picture is its frame as drawn, without the borders it has to be resized
+        // by, which Windows does not draw. In pixels, however the window is scaled.
+        let mut r = RECT::default();
+        unsafe {
+            DwmGetWindowAttribute(
+                w,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                (&raw mut r).cast(),
+                size_of::<RECT>() as u32,
+            )
+        }
+        .ok()?;
+        Some([r.left, r.top, r.right, r.bottom])
     }
 
     /// False once the window is gone.

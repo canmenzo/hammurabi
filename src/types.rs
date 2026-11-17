@@ -117,6 +117,8 @@ pub enum EngineEvent {
     Translated {
         ms: u32,
     },
+    /// Where subtitles are read off the screen, and the one there now.
+    Place(crate::screen::Place),
 }
 
 pub struct AsrRequest {

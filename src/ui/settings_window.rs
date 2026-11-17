@@ -818,6 +818,13 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     ui.label("");
     screen_preview(ui, s, changed);
     ui.end_row();
+
+    ui.label("");
+    *changed |= ui
+        .checkbox(&mut s.screen_cover, t(T::CoverSubtitles))
+        .on_hover_text(t(T::CoverSubtitlesHint))
+        .changed();
+    ui.end_row();
 }
 
 /// What is read, as a small picture with the subtitle area lit: its edges can be dragged. The

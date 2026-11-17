@@ -422,6 +422,24 @@ impl Assembler {
         out
     }
 
+    /// The sentences of one subtitle read off the screen as a caption of their own, which its
+    /// translation covers: neither joined to the one before, nor split.
+    pub fn subtitle(&mut self, sentences: Vec<String>, lang: &str, now: Instant) -> Vec<Out> {
+        self.next_id += 1;
+        let mut said: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        for s in sentences {
+            said.extend(s.split_whitespace().map(String::from));
+            out.push(Out::Sentence {
+                id: self.next_id,
+                text: said.join(" "),
+                lang: Some(lang.to_string()),
+            });
+        }
+        self.last_caption = Some((self.next_id, said, now, Some(lang.to_string())));
+        out
+    }
+
     /// False for "Please. Please." or a sentence the final repeats: one caption is enough.
     fn fresh(&mut self, words: &[String], now: Instant) -> bool {
         let lower = words.join(" ").trim().to_lowercase();

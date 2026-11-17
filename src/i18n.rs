@@ -366,6 +366,14 @@ texts! {
         "A parte iluminada é lida. Arraste as bordas de cima e de baixo em volta das legendas, e as laterais até as do vídeo quando ele não preencher a janela.",
         "亮起的部分会被读取。拖动其上下边缘框住字幕；视频未填满窗口时，再把左右边缘拖到视频边缘。",
     ],
+    CoverSubtitles => ["Cover the game's subtitles", "Oyunun altyazısını kapat", "Tapar los subtítulos del juego", "Cobrir as legendas do jogo", "遮住游戏的字幕"],
+    CoverSubtitlesHint => [
+        "The translation stands right over the game's own subtitle and hides it, so only the translation shows: on the screen and on the captions web page.",
+        "Çeviri, oyunun kendi altyazısının tam üstünde durur ve onu gizler; böylece hem ekranda hem altyazı web sayfasında yalnızca çeviri görünür.",
+        "La traducción se pone justo encima del subtítulo del juego y lo oculta, así solo se ve la traducción: en pantalla y en la página web de subtítulos.",
+        "A tradução fica bem em cima da legenda do próprio jogo e a esconde, então só a tradução aparece: na tela e na página web de legendas.",
+        "译文正好盖在游戏自带的字幕上并将其遮住，屏幕上和字幕网页上都只显示译文。",
+    ],
     WindowNotOpen => ["That window is not open, or is minimized.", "Bu pencere açık değil ya da simge durumuna küçültülmüş.", "Esa ventana no está abierta o está minimizada.", "Essa janela não está aberta ou está minimizada.", "该窗口未打开或已最小化。"],
 
     // Speech recognition

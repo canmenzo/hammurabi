@@ -542,6 +542,7 @@ impl App {
                 self.models.tr_ms = Some(smoothed(self.models.tr_ms, ms));
             }
             EngineEvent::Translated { .. } => {}
+            EngineEvent::Place(p) => self.overlay.place(p, now),
         }
     }
 
@@ -815,10 +816,20 @@ impl eframe::App for App {
             platform::configure_overlay_window(frame);
         }
 
-        // Crossing monitors mid-drag changes the size to lay out for, but not the saved position.
-        if !self.dragging
+        // Covering subtitles read off the screen, the window stands over where they are read.
+        let band = self.settings.screen_area();
+        let cover = self
+            .overlay
+            .picture()
+            .filter(|_| self.running && self.settings.covers());
+        if let Some(picture) = cover {
+            platform::place_overlay(frame, band.of(picture));
+            self.layout = None;
+        } else if !self.dragging
             && let Some(monitor) = ctx.input(|i| i.viewport().monitor_size)
         {
+            // Crossing monitors mid-drag changes the size to lay out for, but not the saved
+            // position.
             let layout = overlay::layout_for_monitor(
                 monitor,
                 &self.settings.caption,
@@ -830,7 +841,9 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(layout.1));
             }
         }
-        let passthrough = self.settings.overlay_locked || !(self.dragging || self.pointer.over());
+        let passthrough = cover.is_some()
+            || self.settings.overlay_locked
+            || !(self.dragging || self.pointer.over());
         if self.passthrough != passthrough {
             self.passthrough = passthrough;
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(passthrough));
@@ -839,13 +852,22 @@ impl eframe::App for App {
         // Styling captions shows them where they will appear.
         let sample = (self.settings_open && self.settings_win.page == Page::Captions)
             .then(|| tts::sample(&self.settings.target_language, "Hammurabi"));
-        let pressed = self
-            .overlay
-            .paint(ui, &self.settings.caption, sample.as_deref());
+        let pressed = self.overlay.paint(
+            ui,
+            &self.settings.caption,
+            sample.as_deref(),
+            cover.map(|_| band),
+        );
         // The captions page shows it too, in the live line as the overlay does, so that its size
         // and place can be set in the streaming app. Leaving the page clears the live line only
         // while the sample is in it: a caption that came since took its place (`on_engine`).
         if let Some(w) = &self.web {
+            let covers = self.running && self.settings.covers();
+            w.cover(
+                covers
+                    .then(|| self.overlay.covered(Instant::now()))
+                    .flatten(),
+            );
             match sample.as_deref().filter(|_| self.settings.browser_source) {
                 Some(text) => {
                     if self.overlay.quiet()

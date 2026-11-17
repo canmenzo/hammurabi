@@ -15,14 +15,22 @@
   }
   .cue.in { opacity: 1; }
   .cue span { display: block; }
+  #cover {
+    position: absolute; display: none; flex-direction: column; justify-content: center;
+    box-sizing: border-box; width: max-content; max-width: 90vw; transform: translateX(-50%);
+    background: #000; border-radius: 4px; text-align: center; line-height: 1.2;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
 </style>
 <div id="box"></div>
+<div id="cover"></div>
 <script>
 // Add ?scale=1.5 to the address to make everything larger or smaller, and &bottom=15 to keep the
 // captions that many percent of the height up from the bottom (above a game's own subtitles).
 const params = new URLSearchParams(location.search);
 const scale = parseFloat(params.get('scale')) || 1;
 const box = document.getElementById('box');
+const cover = document.getElementById('cover');
 if (params.get('bottom')) box.style.bottom = parseFloat(params.get('bottom')) + '%';
 let st = {
   trans_size: 30, orig_size: 20, trans_color: '#ffffff', orig_color: '#ffe066', bg: 0.75,
@@ -123,6 +131,27 @@ function clear() {
   setLive({ o: '' });
 }
 
+// Over a game's own subtitle, hiding it, with its translation: the page is taken to show the
+// whole picture subtitles are read in. Sizes are in the subtitle row's heights, as the overlay's.
+function setCover(e) {
+  cover.style.display = e.box ? 'flex' : 'none';
+  if (!e.box) return;
+  const [l, t, r, b] = e.box;
+  const row = e.row * 100;
+  const [padX, padY] = [0.5 * row, 0.3 * row];
+  Object.assign(cover.style, {
+    left: (l + r) * 50 + 'vw',
+    bottom: (1 - b) * 100 - padY + 'vh',
+    minWidth: `calc(${(r - l) * 100}vw + ${2 * padX}vh)`,
+    minHeight: (b - t) * 100 + 2 * padY + 'vh',
+    padding: `${padY}vh ${padX}vh`,
+    fontSize: 1.2 * row + 'vh',
+    color: st.trans_color,
+    textShadow: shadow(),
+  });
+  cover.textContent = e.tr || '';
+}
+
 const events = new EventSource('/events');
 events.onopen = clear;
 events.onmessage = m => {
@@ -130,8 +159,11 @@ events.onmessage = m => {
   if (e.t === 'final') final(e);
   else if (e.t === 'live') setLive(e);
   else if (e.t === 'clear') clear();
+  else if (e.t === 'cover') setCover(e);
   else if (e.t === 'style') {
     st = e;
+    // Covering, the translation is shown in the cover alone.
+    box.style.display = st.cover ? 'none' : '';
     cues.forEach(draw);
   }
 };

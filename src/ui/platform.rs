@@ -91,6 +91,51 @@ pub fn configure_overlay_window(frame: &eframe::Frame) {
     let _ = frame;
 }
 
+/// Moves the overlay so that what it paints in stands on `[left, top, right, bottom]` of the
+/// desktop, in pixels: on any display, whatever its scale.
+pub fn place_overlay(frame: &eframe::Frame, [l, t, r, b]: [i32; 4]) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{HWND, POINT, RECT};
+        use windows::Win32::Graphics::Gdi::ClientToScreen;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetClientRect, GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
+        };
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+        let Ok(handle) = frame.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(h) = handle.as_raw() else {
+            return;
+        };
+        let hwnd = HWND(h.hwnd.get() as *mut _);
+        let (mut w, mut c, mut o) = (RECT::default(), RECT::default(), POINT::default());
+        // SAFETY: the handle is a live window on this thread.
+        unsafe {
+            if GetWindowRect(hwnd, &mut w).is_err()
+                || GetClientRect(hwnd, &mut c).is_err()
+                || !ClientToScreen(hwnd, &mut o).as_bool()
+            {
+                return;
+            }
+            if [o.x, o.y, o.x + c.right, o.y + c.bottom] == [l, t, r, b] {
+                return;
+            }
+            // The frame around the client area, if any, stays as it is.
+            let (fl, ft) = (o.x - w.left, o.y - w.top);
+            let (fr, fb) = (w.right - o.x - c.right, w.bottom - o.y - c.bottom);
+            let flags = SWP_NOZORDER | SWP_NOACTIVATE;
+            let (x, y, cx, cy) = (l - fl, t - ft, r - l + fl + fr, b - t + ft + fb);
+            if let Err(e) = SetWindowPos(hwnd, None, x, y, cx, cy, flags) {
+                log::warn!("overlay could not be moved over the subtitles: {e}");
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (frame, [l, t, r, b]);
+}
+
 /// Brings the app to the front so a newly opened window is not hidden behind the active app.
 /// A menu bar (accessory) app is not activated by clicks on its status item menu.
 pub fn activate_app() {

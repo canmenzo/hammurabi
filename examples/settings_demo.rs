@@ -47,7 +47,7 @@ fn main() -> eframe::Result {
     });
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Hammurabi Settings")
+            .with_title("Hammurabi")
             .with_inner_size([740.0, 600.0])
             .with_position(at.unwrap_or([40.0, 20.0]))
             .with_active(false),

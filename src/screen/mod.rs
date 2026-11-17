@@ -16,7 +16,7 @@ pub mod windows;
 
 /// The title of the window Hammurabi's own captions are in: it is kept out of pictures taken of
 /// a display, where they would be read as a game's subtitles.
-pub const CAPTIONS_WINDOW: &str = "Hammurabi";
+pub const CAPTIONS_WINDOW: &str = "Hammurabi captions";
 
 /// The part of a picture subtitles are read in, as fractions of its width and height.
 #[derive(Clone, Copy, Debug, PartialEq)]

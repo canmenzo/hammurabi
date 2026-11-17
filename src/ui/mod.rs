@@ -427,7 +427,7 @@ impl App {
                 let text = match p.phase {
                     ProgressPhase::Downloading if p.total.is_none_or(|t| p.done < t) => {
                         self.models.downloading.push((p.model, p.done, p.total));
-                        let parts: Vec<String> = self
+                        let mut parts: Vec<String> = self
                             .models
                             .downloading
                             .iter()
@@ -438,7 +438,9 @@ impl App {
                                 format!("{}{pct}", purpose(m))
                             })
                             .collect();
-                        Some(format!("Downloading {}", parts.join(", ")))
+                        // Each progress moves its model to the end; sorted, they keep their places.
+                        parts.sort();
+                        Some(format!("Downloading: {}", parts.join(", ")))
                     }
                     ProgressPhase::Downloading => {
                         self.refresh_models();
@@ -446,7 +448,7 @@ impl App {
                     }
                     ProgressPhase::Loading => {
                         self.refresh_models();
-                        Some(format!("Loading {}…", purpose(p.model)))
+                        Some(format!("Loading the {}…", purpose(p.model)))
                     }
                 };
                 if let Some(text) = text {
@@ -603,13 +605,13 @@ fn install_handlers(ctx: &Context, tx: Sender<AppEvent>) {
 /// What a model is for, as status lines name it.
 fn purpose(id: ModelId) -> &'static str {
     match id {
-        ModelId::Madlad3bQ4k | ModelId::Gemma12b | ModelId::GemmaE4b => "the translation model",
+        ModelId::Madlad3bQ4k | ModelId::Gemma12b | ModelId::GemmaE4b => "translation model",
         ModelId::WhisperTiny
         | ModelId::WhisperBase
         | ModelId::WhisperSmall
         | ModelId::WhisperTurbo
-        | ModelId::WhisperLarge => "the speech model",
-        _ => "the voices",
+        | ModelId::WhisperLarge => "speech model",
+        _ => "voices",
     }
 }
 
@@ -826,7 +828,7 @@ impl eframe::App for App {
                 // winit shows a window before sizing it, and it is blank white until painted.
                 ViewportBuilder::default()
                     .with_visible(false)
-                    .with_title("Hammurabi Settings")
+                    .with_title("Hammurabi")
                     .with_icon(icons::window_icon())
                     .with_inner_size([740.0, 600.0])
                     .with_min_inner_size([640.0, 420.0]),

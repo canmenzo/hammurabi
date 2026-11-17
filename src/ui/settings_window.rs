@@ -225,7 +225,7 @@ impl SettingsWindow {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
-            ui.label(RichText::new("Hammurabi").strong().size(16.0));
+            ui.label(RichText::new("Settings").strong().size(16.0));
         });
         ui.add_space(10.0);
         for (page, label) in PAGES {
@@ -297,11 +297,14 @@ impl SettingsWindow {
         }
         if !m.status.is_empty() {
             let text = RichText::new(&m.status);
-            ui.label(if m.alert {
-                text.color(WARN)
-            } else {
-                text.weak()
-            });
+            ui.add(
+                egui::Label::new(if m.alert {
+                    text.color(WARN)
+                } else {
+                    text.weak()
+                })
+                .wrap(),
+            );
         }
         if !m.running {
             let pending = pending_downloads(s, m);
@@ -430,13 +433,28 @@ impl SettingsWindow {
                 ],
             ),
         ];
+        // What a new install starts with: Auto's speech model and the Fast translator.
+        let recommended = [
+            ModelId::whisper(ModelChoice::Auto, m.compute != "CPU"),
+            ModelId::Madlad3bQ4k,
+        ];
+        let accent = ui.visuals().selection.bg_fill;
         grid(ui, "models", |ui| {
             for (heading, ids) in groups {
                 ui.weak(heading);
                 ui.end_row();
                 for &id in ids {
                     let size = size_label(spec(id).approx_bytes);
-                    ui.label(format!("{} ({size})", model_name(id)));
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{} ({size})", model_name(id)));
+                        if recommended.contains(&id) {
+                            ui.label(
+                                RichText::new("Recommended for your PC")
+                                    .small()
+                                    .color(accent),
+                            );
+                        }
+                    });
                     ui.horizontal(|ui| {
                         // Read aloud asks for its licence before it offers the download.
                         #[cfg(omnivoice)]
@@ -619,9 +637,9 @@ fn audio(
 
 fn size_label(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
-        format!("about {:.1} GB", bytes as f64 / 1e9)
+        format!("{:.1} GB", bytes as f64 / 1e9)
     } else {
-        format!("about {} MB", bytes / 1_000_000)
+        format!("{} MB", bytes / 1_000_000)
     }
 }
 
@@ -939,18 +957,24 @@ fn model_state(
     actions: &mut Vec<SettingsAction>,
 ) {
     match m.downloading.iter().find(|d| d.0 == id) {
-        Some(&(_, done, total)) => {
-            let total = total.filter(|t| *t > 0);
-            let bar = match total {
-                Some(t) => ProgressBar::new(done as f32 / t as f32).show_percentage(),
-                None => ProgressBar::new(0.0).animate(true),
-            };
-            ui.add(bar.desired_width(160.0));
-            let of = total
-                .map(|t| format!(" of {}", t / 1_000_000))
-                .unwrap_or_default();
-            ui.weak(format!("{}{of} MB", done / 1_000_000));
-        }
+        // A thin bar in the row of a button, so the row keeps its height.
+        Some(&(_, done, total)) => match total.filter(|t| *t > 0) {
+            Some(t) => {
+                let part = done as f32 / t as f32;
+                ui.add(
+                    ProgressBar::new(part)
+                        .desired_width(120.0)
+                        .desired_height(8.0)
+                        .corner_radius(4),
+                );
+                ui.label(format!("{}%", (part * 100.0) as u32));
+                ui.weak(format!("{} of {} MB", done / 1_000_000, t / 1_000_000));
+            }
+            None => {
+                ui.spinner();
+                ui.weak("Starting download");
+            }
+        },
         _ if m.cached.contains(&id) => {
             ui.colored_label(Color32::from_rgb(90, 190, 110), "Downloaded");
             if used {
@@ -958,26 +982,33 @@ fn model_state(
                     .on_hover_text("Captions are using it. Stop them to delete it.");
                 return;
             }
-            let key = egui::Id::unique(("delete-model", spec(id).label));
-            let now = ui.input(|i| i.time);
-            let asked = ui
-                .data(|d| d.get_temp::<f64>(key))
-                .is_some_and(|until| now < until);
-            let text = if asked {
-                format!("Delete {}?", size_label(spec(id).approx_bytes))
-            } else {
-                "Delete".to_string()
-            };
-            let button = ui.button(text).on_hover_text(
-                "Frees the disk space. It is downloaded again when it is next needed.",
-            );
-            if button.clicked() {
-                if asked {
-                    actions.push(SettingsAction::DeleteModel(id));
-                }
-                ui.data_mut(|d| d.insert_temp(key, if asked { 0.0 } else { now + 4.0 }));
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_secs(4));
+            let key = egui::Id::unique("delete-model");
+            if ui.button("Delete").clicked() {
+                ui.data_mut(|d| d.insert_temp(key, id));
+            }
+            if ui.data(|d| d.get_temp::<ModelId>(key)) != Some(id) {
+                return;
+            }
+            let modal = egui::Modal::new(key).show(ui.ctx(), |ui| {
+                ui.set_width(320.0);
+                ui.label(RichText::new(format!("Delete {}?", model_name(id))).strong());
+                ui.label(format!(
+                    "This frees {}. You can download it again later.",
+                    size_label(spec(id).approx_bytes)
+                ));
+                ui.add_space(8.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("Cancel").clicked() {
+                        ui.close();
+                    }
+                    if ui.button("Delete").clicked() {
+                        actions.push(SettingsAction::DeleteModel(id));
+                        ui.close();
+                    }
+                });
+            });
+            if modal.should_close() {
+                ui.data_mut(|d| d.remove::<ModelId>(key));
             }
         }
         _ => {
@@ -1229,7 +1260,7 @@ fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
         let field = ui
             .add(
                 egui::TextEdit::singleline(&mut new)
-                    .hint_text("A name or word, then Enter")
+                    .hint_text("Add a word")
                     .desired_width(200.0),
             )
             .on_hover_text(
@@ -2329,7 +2360,7 @@ mod tests {
         assert_eq!(pending_downloads(&s, &m), [base, ModelId::Madlad3bQ4k]);
         assert_eq!(
             download_note(&pending_downloads(&s, &m)),
-            "Starting downloads the speech and translation models first, about 2.0 GB, once."
+            "Starting downloads the speech and translation models first, 2.0 GB, once."
         );
         assert_eq!(
             pending_downloads(&s, &status(Vec::new(), "CUDA 0"))[0],
@@ -2338,7 +2369,7 @@ mod tests {
         let m = status(vec![ModelId::Madlad3bQ4k], "CPU");
         assert_eq!(
             download_note(&pending_downloads(&s, &m)),
-            "Starting downloads the speech model first, about 290 MB, once."
+            "Starting downloads the speech model first, 290 MB, once."
         );
         assert!(pending_downloads(&s, &status(vec![base, ModelId::Madlad3bQ4k], "CPU")).is_empty());
         let off = Settings {

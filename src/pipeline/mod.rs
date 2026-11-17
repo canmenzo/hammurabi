@@ -160,8 +160,8 @@ struct Core {
     live_in_flight: bool,
     asr_out: Vec<AsrRequest>,
     tr_out: Vec<TranslateRequest>,
-    /// Final captions to read aloud: (text, language).
-    speak_out: Vec<(String, String)>,
+    /// Final captions to read aloud: (text, language, caption id).
+    speak_out: Vec<(String, String, u64)>,
     /// Speaker's voice: captured speech paired with its transcript.
     #[cfg(omnivoice)]
     voice: voice::Sampler,
@@ -460,6 +460,10 @@ impl Core {
                         Some(new) => new.trim().to_string(),
                         None => {
                             c.parts.clear();
+                            // A translation of the words replaced would land on the new ones.
+                            self.pending.retain(
+                                |_, p| !matches!(p, Pending::Final { id: i, .. } if *i == id),
+                            );
                             text.clone()
                         }
                     };
@@ -498,12 +502,12 @@ impl Core {
                                 Some(same) => {
                                     // Already in the target language: it is heard as it is.
                                     if self.settings.speak_same_lang {
-                                        self.speak(&same, &lang);
+                                        self.speak(&same, &lang, id);
                                     }
                                     self.set_part(id, part, Translation::Done(same));
                                 }
                                 None if self.next_tr == before => {
-                                    self.speak(&new, &lang);
+                                    self.speak(&new, &lang, id);
                                     self.set_part(id, part, Translation::Plain);
                                 }
                                 None => {}
@@ -597,7 +601,7 @@ impl Core {
         match t {
             Some(t) => {
                 let target = self.settings.target_language.clone();
-                self.speak(&t, &target);
+                self.speak(&t, &target, id);
                 self.context.push_back((original, t.clone()));
                 if self.context.len() > CONTEXT_PAIRS {
                     self.context.pop_front();
@@ -605,7 +609,7 @@ impl Core {
                 self.set_part(id, part, Translation::Done(t));
             }
             None => {
-                self.speak(&original, &lang);
+                self.speak(&original, &lang, id);
                 self.set_part(id, part, Translation::Plain);
             }
         }
@@ -701,9 +705,10 @@ impl Core {
     }
 
     /// Only final text is read; a translation is read in place of its original.
-    fn speak(&mut self, text: &str, lang: &str) {
+    fn speak(&mut self, text: &str, lang: &str, id: u64) {
         if self.settings.speak && !text.trim().is_empty() {
-            self.speak_out.push((text.to_string(), lang.to_string()));
+            self.speak_out
+                .push((text.to_string(), lang.to_string(), id));
         }
     }
 
@@ -1020,9 +1025,9 @@ impl Engine {
                 None => self.core.translation(req.id, None),
             }
         }
-        for (text, lang) in std::mem::take(&mut self.core.speak_out) {
+        for (text, lang, id) in std::mem::take(&mut self.core.speak_out) {
             if let Some(s) = &self.speaker {
-                s.say(text, lang);
+                s.say(text, lang, Some(id));
             }
         }
         #[cfg(omnivoice)]
@@ -1197,6 +1202,8 @@ impl Engine {
         self.frames = Frames16k::new();
         self.last_audio = Instant::now();
         if self.fed {
+            // Fed audio is a recording, so our own speech is never in it.
+            self.system_clear = true;
             return true;
         }
         let s = &self.core.settings;
@@ -2106,7 +2113,7 @@ mod tests {
         fn said(c: &Core) -> Vec<(&str, &str)> {
             c.speak_out
                 .iter()
-                .map(|(t, l)| (t.as_str(), l.as_str()))
+                .map(|(t, l, _)| (t.as_str(), l.as_str()))
                 .collect()
         }
         let t = Instant::now();
@@ -2163,5 +2170,20 @@ mod tests {
         c.tick(t + Duration::from_secs(2));
         c.lc_text("Merhaba dünya nasılsınız. Next", t + Duration::from_secs(2));
         assert!(said(&c).is_empty());
+
+        // A sentence heard to its end replaces its start: the start's translation, still on its
+        // way, is neither read nor shown, and the whole is read as the same caption.
+        let mut c = core(true, true, true);
+        let sentence = |text: &str| Out::Sentence {
+            id: 7,
+            text: text.into(),
+            lang: Some("en".into()),
+        };
+        c.apply(vec![sentence("Get out.")]);
+        c.apply(vec![sentence("Get out of here.")]);
+        c.translation(c.tr_out[0].id, Some("Çık.".into()));
+        assert!(said(&c).is_empty());
+        c.translation(c.tr_out[1].id, Some("Defol git buradan.".into()));
+        assert_eq!(c.speak_out, [("Defol git buradan.".into(), "tr".into(), 7)]);
     }
 }

@@ -27,9 +27,15 @@ use supertonic::Supertonic;
 
 /// Utterances waiting behind the one being spoken; older ones are dropped only past this, since
 /// waiting ones are merged and read faster first.
-const MAX_QUEUED: usize = 6;
+const MAX_QUEUED: usize = 10;
 /// Waiting captions are read as one utterance up to this many characters.
 const MERGE_CHARS: usize = 300;
+/// A caption that waited this long to be read is skipped: speech that far behind the picture
+/// no longer goes with it.
+const MAX_WAIT: Duration = Duration::from_secs(10);
+/// A line is not read again this soon: the recognizer can give the same lines twice in a burst
+/// ("Man. Fucked it. Man. Fucked it."), and a line said twice is understood from once.
+const REPEAT_WITHIN: Duration = Duration::from_secs(10);
 /// Other apps stay turned down this long after speech, so they do not pump between captions.
 const DUCK_HOLD: Duration = Duration::from_millis(800);
 /// Captured audio stays muted this long after speech ends (output latency, room echo).
@@ -398,7 +404,13 @@ pub fn resolve<'a>(
 }
 
 pub fn missing_voice(lang: &str) -> String {
-    tf(T::MissingVoice, &[&lang_name(lang), &t(imp::VOICE_HINT)])
+    let natural = supertonic::LANGS.contains(&lang.split(['-', '_']).next().unwrap_or(lang));
+    let text = tf(T::MissingVoice, &[&lang_name(lang), &t(imp::VOICE_HINT)]);
+    if natural {
+        format!("{text} {}", t(T::NaturalVoicesHint))
+    } else {
+        text
+    }
 }
 
 /// Speaks `text` and returns when it is done or `cancel` is set. `rate`, `pitch`: 1.0 = normal.
@@ -457,10 +469,41 @@ pub struct Utterance {
     pub lang: String,
     /// None = the configured style.
     pub style: Option<Style>,
+    /// The caption it reads; a newer reading of that caption takes its place while it waits.
+    caption: Option<u64>,
+    queued: Instant,
 }
 
-/// Adds `u`, dropping the oldest waiting utterances beyond `MAX_QUEUED`; returns how many were dropped.
-fn enqueue(queue: &mut VecDeque<Utterance>, u: Utterance) -> usize {
+/// Adds `u`, dropping the oldest waiting utterances beyond `MAX_QUEUED`; returns how many were
+/// dropped. `heard`: the lines queued lately, as compared, and when.
+fn enqueue(
+    queue: &mut VecDeque<Utterance>,
+    heard: &mut VecDeque<(String, Instant)>,
+    u: Utterance,
+) -> usize {
+    let key: String = u
+        .text
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    heard.retain(|(_, t)| u.queued.saturating_duration_since(*t) < REPEAT_WITHIN);
+    if heard.iter().any(|(k, _)| *k == key) {
+        log::debug!("tts skipped a repeat: {}", u.text);
+        return 0;
+    }
+    heard.push_back((key, u.queued));
+    if let Some(old) = queue
+        .iter_mut()
+        .find(|w| u.caption.is_some() && w.caption == u.caption)
+    {
+        // A sentence heard to its end replaces its start, which has not been read yet.
+        *old = Utterance {
+            queued: old.queued,
+            ..u
+        };
+        return 0;
+    }
     queue.push_back(u);
     let dropped = queue.len().saturating_sub(MAX_QUEUED);
     queue.drain(..dropped);
@@ -468,8 +511,17 @@ fn enqueue(queue: &mut VecDeque<Utterance>, u: Utterance) -> usize {
 }
 
 /// The next utterance to read and its pace. Captions that piled up are read as one, in order, and
-/// faster the more are behind, so falling behind costs speed before it costs words.
-fn take_next(queue: &mut VecDeque<Utterance>) -> Option<(Utterance, f32)> {
+/// faster the more are behind, so falling behind costs speed before it costs words. Ones that
+/// waited past `MAX_WAIT` are skipped, so reading never trails the captions by much more.
+fn take_next(queue: &mut VecDeque<Utterance>, now: Instant) -> Option<(Utterance, f32)> {
+    let stale = queue
+        .iter()
+        .take_while(|u| u.style.is_none() && now.saturating_duration_since(u.queued) > MAX_WAIT)
+        .count();
+    if stale > 0 {
+        log::debug!("tts behind, skipped {stale} utterance(s)");
+        queue.drain(..stale);
+    }
     let mut u = queue.pop_front()?;
     if u.style.is_some() {
         return Some((u, 1.0));
@@ -509,6 +561,7 @@ impl Gate {
 
 struct State {
     queue: VecDeque<Utterance>,
+    heard: VecDeque<(String, Instant)>,
     gate: Gate,
     style: Style,
     quit: bool,
@@ -557,6 +610,7 @@ impl Speaker {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 queue: VecDeque::new(),
+                heard: VecDeque::new(),
                 gate: Gate::default(),
                 style: Style {
                     persona: PERSONAS[0].id.into(),
@@ -620,13 +674,20 @@ impl Speaker {
         self.shared.wake.notify_one();
     }
 
-    pub fn say(&self, text: String, lang: String) {
+    /// Reads `text` after what is waiting. `caption`: what it reads; a newer reading of the
+    /// same caption replaces this one if it has not started yet.
+    pub fn say(&self, text: String, lang: String, caption: Option<u64>) {
         let u = Utterance {
             text,
             lang,
             style: None,
+            caption,
+            queued: Instant::now(),
         };
-        let dropped = enqueue(&mut self.shared.lock().queue, u);
+        let mut st = self.shared.lock();
+        let State { queue, heard, .. } = &mut *st;
+        let dropped = enqueue(queue, heard, u);
+        drop(st);
         if dropped > 0 {
             log::debug!("tts behind, dropped {dropped} utterance(s)");
         }
@@ -641,6 +702,8 @@ impl Speaker {
             text,
             lang,
             style: Some(style),
+            caption: None,
+            queued: Instant::now(),
         });
         self.shared.cancel.store(true, Ordering::Relaxed);
         self.shared.wake.notify_one();
@@ -806,7 +869,13 @@ fn run(shared: &Shared, warnings: &Sender<String>, activity: &Sender<Activity>) 
                         break Job::Learn(pcm, text);
                     }
                 }
-                if let Some((u, pace)) = take_next(&mut st.queue) {
+                if let Some((u, pace)) = take_next(&mut st.queue, Instant::now()) {
+                    log::debug!(
+                        "reading {} chars {} ms after the caption, pace {pace:.1}, {} waiting",
+                        u.text.chars().count(),
+                        u.queued.elapsed().as_millis(),
+                        st.queue.len()
+                    );
                     // Under the lock, so a clear() after the pop still cancels this utterance.
                     shared.cancel.store(false, Ordering::Relaxed);
                     let style = u.style.clone().unwrap_or_else(|| st.style.clone());
@@ -1270,47 +1339,99 @@ mod tests {
         assert_eq!(neural_fallback(&style, &[], "tr"), None);
     }
 
+    fn utt(text: &str, lang: &str, caption: Option<u64>, queued: Instant) -> Utterance {
+        Utterance {
+            text: text.into(),
+            lang: lang.into(),
+            style: None,
+            caption,
+            queued,
+        }
+    }
+
     #[test]
     fn queue_drops_oldest() {
-        let mut q = VecDeque::new();
-        let u = |t: &str| Utterance {
-            text: t.into(),
-            lang: "tr".into(),
-            style: None,
-        };
-        for t in ["a", "b", "c", "d", "e", "f"] {
-            assert_eq!(enqueue(&mut q, u(t)), 0);
+        let t = Instant::now();
+        let (mut q, mut heard) = (VecDeque::new(), VecDeque::new());
+        for i in 0..MAX_QUEUED {
+            let u = utt(&format!("Line {i}."), "tr", Some(i as u64), t);
+            assert_eq!(enqueue(&mut q, &mut heard, u), 0);
         }
-        assert_eq!(enqueue(&mut q, u("g")), 1);
-        assert_eq!(q.front().unwrap().text, "b");
+        let u = utt("Last.", "tr", Some(99), t);
+        assert_eq!(enqueue(&mut q, &mut heard, u), 1);
+        assert_eq!(q.front().unwrap().text, "Line 1.");
         assert_eq!(q.len(), MAX_QUEUED);
     }
 
     #[test]
+    fn a_waiting_caption_is_replaced_by_its_whole_sentence() {
+        let t = Instant::now();
+        let later = t + Duration::from_secs(1);
+        let (mut q, mut heard) = (VecDeque::new(), VecDeque::new());
+        enqueue(&mut q, &mut heard, utt("Gidelim.", "tr", Some(1), t));
+        enqueue(&mut q, &mut heard, utt("O bir risk.", "tr", Some(2), t));
+        let whole = utt("Göze alamayacağımız bir risk.", "tr", Some(2), later);
+        enqueue(&mut q, &mut heard, whole);
+        let texts: Vec<&str> = q.iter().map(|u| u.text.as_str()).collect();
+        assert_eq!(texts, ["Gidelim.", "Göze alamayacağımız bir risk."]);
+        // It keeps its place in line, and how long it has waited.
+        assert_eq!(q[1].queued, t);
+        // Readings with no caption are never taken for one another.
+        enqueue(&mut q, &mut heard, utt("Bir.", "tr", None, t));
+        enqueue(&mut q, &mut heard, utt("İki.", "tr", None, t));
+        assert_eq!(q.len(), 4);
+    }
+
+    #[test]
+    fn a_line_is_not_read_again_soon() {
+        let t = Instant::now();
+        let (mut q, mut heard) = (VecDeque::new(), VecDeque::new());
+        for (i, s) in ["Man.", "Fucked it.", "man!", "Fucked it", "Man."]
+            .into_iter()
+            .enumerate()
+        {
+            enqueue(&mut q, &mut heard, utt(s, "en", Some(i as u64), t));
+        }
+        let texts: Vec<&str> = q.iter().map(|u| u.text.as_str()).collect();
+        assert_eq!(texts, ["Man.", "Fucked it."]);
+        // Not while it is being read either, but again once a while has passed.
+        q.clear();
+        enqueue(
+            &mut q,
+            &mut heard,
+            utt("Man.", "en", None, t + Duration::from_secs(1)),
+        );
+        assert!(q.is_empty());
+        enqueue(
+            &mut q,
+            &mut heard,
+            utt("Man.", "en", None, t + REPEAT_WITHIN),
+        );
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
     fn merges_waiting_captions_and_speeds_up() {
-        let u = |t: &str, lang: &str| Utterance {
-            text: t.into(),
-            lang: lang.into(),
-            style: None,
-        };
+        let t = Instant::now();
+        let u = |s: &str, lang: &str| utt(s, lang, None, t);
         let close = |a: f32, b: f32| assert!((a - b).abs() < 1e-6, "{a} != {b}");
 
         let mut q = VecDeque::from([u("One.", "tr")]);
-        let (next, pace) = take_next(&mut q).unwrap();
+        let (next, pace) = take_next(&mut q, t).unwrap();
         assert_eq!(next.text, "One.");
         close(pace, 1.0);
-        assert!(take_next(&mut q).is_none());
+        assert!(take_next(&mut q, t).is_none());
 
         // Whole sentences join in order; a missing full stop is added between them.
         let mut q = VecDeque::from([u("One", "tr"), u("Two.", "tr"), u("Three.", "tr")]);
-        let (next, pace) = take_next(&mut q).unwrap();
+        let (next, pace) = take_next(&mut q, t).unwrap();
         assert_eq!(next.text, "One. Two. Three.");
         close(pace, 1.2);
         assert!(q.is_empty());
 
         // Another language waits its turn, and still counts as being behind.
         let mut q = VecDeque::from([u("One.", "tr"), u("Two.", "en")]);
-        let (next, pace) = take_next(&mut q).unwrap();
+        let (next, pace) = take_next(&mut q, t).unwrap();
         assert_eq!(next.text, "One.");
         close(pace, 1.1);
         assert_eq!(q.len(), 1);
@@ -1324,7 +1445,7 @@ mod tests {
             u(&long, "tr"),
             u(&long, "tr"),
         ]);
-        let (next, pace) = take_next(&mut q).unwrap();
+        let (next, pace) = take_next(&mut q, t).unwrap();
         assert_eq!(next.text, "One.");
         close(pace, 1.3);
 
@@ -1336,9 +1457,31 @@ mod tests {
             },
             u("One.", "tr"),
         ]);
-        let (next, pace) = take_next(&mut q).unwrap();
+        let (next, pace) = take_next(&mut q, t).unwrap();
         assert_eq!(next.text, "Sample.");
         close(pace, 1.0);
+    }
+
+    #[test]
+    fn skips_what_waited_too_long() {
+        let t = Instant::now();
+        let now = t + MAX_WAIT + Duration::from_millis(1);
+        let mut q = VecDeque::from([
+            utt("Bir.", "tr", None, t),
+            utt("İki.", "tr", None, t),
+            utt("Üç.", "tr", None, now - MAX_WAIT),
+        ]);
+        let (next, pace) = take_next(&mut q, now).unwrap();
+        assert_eq!(next.text, "Üç.");
+        assert_eq!(pace, 1.0);
+        let mut q = VecDeque::from([utt("Bir.", "tr", None, t)]);
+        assert!(take_next(&mut q, now).is_none());
+        // A preview is read however long it waited.
+        let mut q = VecDeque::from([Utterance {
+            style: Some(style("lale")),
+            ..utt("Merhaba.", "tr", None, t)
+        }]);
+        assert!(take_next(&mut q, now).is_some());
     }
 
     #[test]

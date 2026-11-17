@@ -166,7 +166,7 @@ pub struct Assembler {
     last_sentence: Option<(String, Instant)>,
     /// The caption emitted last: id, words, when, language.
     last_caption: Option<(u64, Vec<String>, Instant, Option<String>)>,
-    /// Captions are read aloud as they come, so one must not come again with more in it.
+    /// Captions are read aloud as they come, so one does not grow by the sentences after it.
     pub separate: bool,
     /// The partial given next is of audio that ends in quiet.
     pub paused: bool,
@@ -473,7 +473,7 @@ impl Assembler {
     /// that none of us can afford."). Where in the last caption that sentence begins.
     fn said_whole(&self, words: &[String], lang: &Option<String>, now: Instant) -> Option<usize> {
         let (_, said, at, l) = self.last_caption.as_ref()?;
-        if self.separate || l != lang || now.saturating_duration_since(*at) >= DEDUPE_WINDOW {
+        if l != lang || now.saturating_duration_since(*at) >= DEDUPE_WINDOW {
             return None;
         }
         let key = |w: &[String]| -> Vec<String> {
@@ -800,11 +800,12 @@ mod tests {
         let o = a.finish(2, Some((w("He is a risk we cannot take."), "en".into())), t);
         assert_eq!(sentences(&o), ["He left. He is a risk we cannot take."]);
         assert!(matches!(&o[0], Out::Sentence { id: 1, .. }));
-        // Not one word said again, nor other words, nor a caption read aloud already.
+        // Not one word said again, nor other words.
         let o = a.finish(3, Some((w("No."), "en".into())), t + JOIN_WITHIN);
         let o2 = a.finish(4, Some((w("No way, man."), "en".into())), t + JOIN_WITHIN);
         assert_eq!(sentences(&o), ["No."]);
         assert_eq!(sentences(&o2), ["No. No way, man."]);
+        // Read aloud, too: the reading of the start is replaced if it has not begun.
         a.separate = true;
         a.finish(5, Some((w("Get out."), "en".into())), t + 3 * JOIN_WITHIN);
         let o = a.finish(
@@ -813,7 +814,7 @@ mod tests {
             t + 3 * JOIN_WITHIN,
         );
         assert_eq!(sentences(&o), ["Get out of here."]);
-        assert!(matches!(&o[0], Out::Sentence { id: 4, .. }));
+        assert!(matches!(&o[0], Out::Sentence { id: 3, .. }));
     }
 
     #[test]

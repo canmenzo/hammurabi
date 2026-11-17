@@ -144,7 +144,7 @@ fn voice_plays_on_the_chosen_device() {
             duck: 1.0,
         });
         std::thread::sleep(Duration::from_millis(300));
-        speaker.say("Testing the chosen device.".into(), "en".into());
+        speaker.say("Testing the chosen device.".into(), "en".into(), None);
         std::thread::sleep(Duration::from_secs(3));
         drop(speaker);
         drop(c);

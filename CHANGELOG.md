@@ -4,6 +4,13 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Fixed
+
+- Read aloud keeps up by time, not by count. A caption that waited more than 10 seconds to be read is skipped, so what is read stays with what is on screen however long each one is. Up to ten captions now wait their turn instead of six: a burst of short lines lost its oldest ones (14 in four minutes of fast GTA dialogue; none now).
+- Read aloud no longer reads a line twice when the speech model gives it twice in a row ("Man. Fucked it. Man. Fucked it."): a line read in the last 10 seconds is not read again.
+- A sentence shown early ("Get out.") and then heard to its end ("Get out of here.") is read once, whole, when its start has not been read yet; its caption is put right in place instead of a second caption under it. The translation of the start no longer shows on the whole sentence for a moment.
+- When no system voice reads the caption language, the warning says that Natural voices can read it without one.
+
 ## [0.7.6] - 2026-11-17
 
 ### Fixed

@@ -100,6 +100,9 @@ enum Cmd {
         /// Settings).
         #[arg(long, value_enum)]
         speak: Option<EngineArg>,
+        /// With --speak, read on this playback device id (see `devices`).
+        #[arg(long, requires = "speak")]
+        speak_device: Option<String>,
     },
     /// Caption system audio through Windows Live Captions (it must be set up once in Windows).
     #[cfg(all(windows, feature = "win-livecaptions"))]
@@ -332,6 +335,7 @@ fn main() -> anyhow::Result<()> {
             cpu,
             live,
             speak,
+            speak_device,
         } => {
             let model = match model {
                 Model::Auto => ModelChoice::Auto,
@@ -359,6 +363,7 @@ fn main() -> anyhow::Result<()> {
                 speak: speak.is_some(),
                 speak_engine: speak.map_or(tts::Engine::System, EngineArg::engine),
                 speak_persona: hammurabi::config::load().speak_persona,
+                speak_device,
                 ..Settings::default()
             };
             let (rate, pcm) = read_wav(&input)?;
@@ -618,7 +623,7 @@ fn speak(text: String, lang: String, style: Style) -> anyhow::Result<()> {
     let speaker = Speaker::spawn();
     speaker.configure(style);
     let start = Instant::now();
-    speaker.say(text, lang);
+    speaker.say(text, lang, None);
     let mut began = None;
     loop {
         if let Ok(w) = speaker.warnings.try_recv() {

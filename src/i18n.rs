@@ -515,11 +515,11 @@ texts! {
         "朗读时可能会暂停收听，以免朗读内容又被转成字幕。",
     ],
     PileUpNote => [
-        "When captions pile up, they are read together and a little faster.",
-        "Altyazılar birikince birlikte ve biraz daha hızlı okunur.",
-        "Cuando se acumulan subtítulos, se leen juntos y un poco más rápido.",
-        "Quando as legendas se acumulam, são lidas juntas e um pouco mais rápido.",
-        "字幕堆积时，会合在一起稍快地朗读。",
+        "When captions pile up, they are read together and a little faster. One left more than 10 seconds behind is skipped, and so is a line read moments ago.",
+        "Altyazılar birikince birlikte ve biraz daha hızlı okunur. 10 saniyeden fazla geride kalan atlanır, az önce okunan bir satır da.",
+        "Cuando se acumulan subtítulos, se leen juntos y un poco más rápido. Se omite el que queda más de 10 segundos atrás, y también una línea leída hace un momento.",
+        "Quando as legendas se acumulam, são lidas juntas e um pouco mais rápido. Uma que fica mais de 10 segundos para trás é pulada, assim como uma fala lida há pouco.",
+        "字幕堆积时，会合在一起稍快地朗读。落后超过 10 秒的字幕会被跳过，刚读过的句子也不会重读。",
     ],
     PersonalUseAgree => ["I will use it for personal, non-commercial use only", "Yalnızca kişisel ve ticari olmayan amaçlarla kullanacağım", "Lo usaré solo para uso personal y no comercial", "Vou usá-lo apenas para uso pessoal e não comercial", "我只会将其用于个人非商业用途"],
     ReadingInSpeakersVoice => ["Reading in the speaker's voice.", "Konuşanın sesiyle okunuyor.", "Leyendo con la voz del hablante.", "Lendo com a voz de quem fala.", "正在用说话人的声音朗读。"],
@@ -727,6 +727,13 @@ texts! {
 
     // Reading aloud
     MissingVoice => ["No {0} voice is installed for reading aloud. {1}", "Sesli okuma için yüklü bir {0} sesi yok. {1}", "No hay ninguna voz instalada para leer en {0}. {1}", "Não há nenhuma voz instalada para ler em {0}. {1}", "没有安装可用于朗读的 {0} 语音。{1}"],
+    NaturalVoicesHint => [
+        "Or pick Natural voices in Settings > Read aloud, which read it without one.",
+        "Ya da Ayarlar > Sesli okuma bölümünde, ses yüklemeden okuyan Doğal sesler'i seçin.",
+        "O elige Voces naturales en Ajustes > Leer en voz alta, que lo leen sin instalar ninguna.",
+        "Ou escolha Vozes naturais em Configurações > Ler em voz alta, que leem sem instalar nenhuma.",
+        "也可以在 设置 > 朗读 中选择“自然语音”，无需安装语音即可朗读。",
+    ],
     VoiceHintWindows => [
         "Add one in Windows Settings > Time & language > Speech > Manage voices.",
         "Windows Ayarlar > Saat ve dil > Konuşma > Sesleri yönet bölümünden ekleyebilirsiniz.",

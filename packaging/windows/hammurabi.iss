@@ -44,7 +44,8 @@ Source: "{#Stage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{autoprograms}\Hammurabi"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\Hammurabi"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+; An update leaves the desktop alone, so a shortcut the user deleted stays deleted.
+Name: "{autodesktop}\Hammurabi"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; Check: not Relaunch
 
 [Registry]
 ; Start at login is switched on inside the app, so only the uninstaller touches these.
@@ -53,11 +54,23 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupA
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start Hammurabi"; Flags: nowait postinstall skipifsilent
+; The app's own update passes /HMRELAUNCH=<arguments>, so it comes back after a silent install.
+Filename: "{app}\{#AppExe}"; Parameters: "{param:HMRELAUNCH}"; Flags: nowait; Check: Relaunch
 
 [Code]
 const
   StillRunning = 'Hammurabi is still running. Quit it from its tray icon, then try again.';
   TrayRows = 'Control Panel\NotifyIconSettings';
+
+function Relaunch(): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if Pos('/HMRELAUNCH=', Uppercase(ParamStr(I))) = 1 then
+      Result := True;
+end;
 
 function StopRunningCopy(): Boolean;
 var

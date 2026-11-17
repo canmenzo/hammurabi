@@ -48,6 +48,7 @@ pub struct ModelsStatus {
     pub previewing: Option<&'static str>,
     /// Speaker's voice has learned a voice to read in.
     pub voice_learned: bool,
+    pub update: super::update::Status,
 }
 
 pub enum SettingsAction {
@@ -65,6 +66,8 @@ pub enum SettingsAction {
     ResetPosition,
     #[cfg(omnivoice)]
     RelearnVoice,
+    CheckUpdates,
+    OpenUpdate,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -185,7 +188,7 @@ impl SettingsWindow {
                     let area = ui.max_rect();
                     let (nav, body) = area.split_left_right_at_x(area.left() + SIDEBAR);
                     ui.scope_builder(UiBuilder::new().max_rect(nav.shrink(4.0)), |ui| {
-                        self.sidebar(ui);
+                        self.sidebar(ui, models, &mut actions);
                     });
                     let x = body.left() - 1.0;
                     ui.painter().vline(
@@ -221,7 +224,7 @@ impl SettingsWindow {
         actions
     }
 
-    fn sidebar(&mut self, ui: &mut Ui) {
+    fn sidebar(&mut self, ui: &mut Ui, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
@@ -239,6 +242,22 @@ impl SettingsWindow {
                 ui.add_space(8.0);
                 ui.weak(concat!("v", env!("CARGO_PKG_VERSION")));
             });
+            if let Some(text) = update_text(&m.update) {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(8.0);
+                    if let super::update::Status::Available(_) = m.update {
+                        if ui.link(text).clicked() {
+                            actions.push(SettingsAction::OpenUpdate);
+                        }
+                    } else {
+                        ui.label(
+                            RichText::new(text)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                });
+            }
         });
     }
 
@@ -392,11 +411,26 @@ impl SettingsWindow {
         // The Microsoft Store updates a copy installed from it.
         if !super::platform::packaged() {
             *changed |= ui
-                .checkbox(&mut s.check_updates, "Check for updates")
+                .checkbox(&mut s.check_updates, "Update automatically")
                 .on_hover_text(
-                    "Asks GitHub once a day whether a newer version is out. Nothing else is sent.",
+                    "Checks GitHub for a new version every few hours and installs it while captions are off. Nothing else is sent.",
                 )
                 .changed();
+            ui.horizontal_wrapped(|ui| {
+                let busy = matches!(
+                    m.update,
+                    super::update::Status::Checking | super::update::Status::Downloading(..)
+                );
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Check for updates"))
+                    .clicked()
+                {
+                    actions.push(SettingsAction::CheckUpdates);
+                }
+                if let Some(text) = update_text(&m.update) {
+                    ui.weak(text);
+                }
+            });
         }
 
         section(ui, "Shortcuts");
@@ -2144,6 +2178,23 @@ fn hotkey_label(s: &str) -> String {
         .join("+")
 }
 
+/// The update check's state in a few words; None before the first check.
+fn update_text(status: &super::update::Status) -> Option<String> {
+    use super::update::Status;
+    Some(match status {
+        Status::Idle => return None,
+        Status::Checking => "Checking for updates...".into(),
+        Status::UpToDate => "Hammurabi is up to date.".into(),
+        Status::Downloading(v, pct) => format!("Downloading v{v}: {pct}%"),
+        Status::Ready(r, _) => format!(
+            "v{} is ready. It installs when captions are off.",
+            r.version
+        ),
+        Status::Available(r) => format!("v{} is out. Get it", r.version),
+        Status::Failed => "Could not check for updates. Try again later.".into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2169,6 +2220,7 @@ mod tests {
             reading: None,
             previewing: None,
             voice_learned: false,
+            update: super::super::update::Status::Idle,
         }
     }
 

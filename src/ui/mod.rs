@@ -45,7 +45,7 @@ pub const BACKGROUND_ARG: &str = "--background";
 pub enum AppEvent {
     Menu(MenuId),
     HotKey(u32),
-    Update(update::Release),
+    Update(update::Status),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,8 +99,11 @@ pub struct App {
     web_sample: Option<Instant>,
     dirty_since: Option<Instant>,
     tray_dirty: bool,
-    update: Option<update::Release>,
     next_update_check: Option<Instant>,
+    /// When the downloaded update is installed, a moment after saying so.
+    install_at: Option<Instant>,
+    /// "Check for updates" was clicked, which installs even with automatic updates off.
+    update_asked: bool,
     app_tx: Sender<AppEvent>,
 }
 
@@ -147,6 +150,7 @@ impl App {
                 reading: None,
                 previewing: None,
                 voice_learned: false,
+                update: update::Status::Idle,
             },
             app_rx,
             running: false,
@@ -169,8 +173,9 @@ impl App {
             web_sample: None,
             dirty_since: None,
             tray_dirty: true,
-            update: None,
             next_update_check: None,
+            install_at: None,
+            update_asked: false,
             app_tx,
         };
         if let Some(e) = hk_err.or_else(|| app.hotkeys.apply(&app.settings)) {
@@ -196,6 +201,16 @@ impl App {
         }
         if first_run || !(start || has_arg(BACKGROUND_ARG)) {
             app.handle(UiAction::OpenSettings, &ctx);
+        }
+        let version = env!("CARGO_PKG_VERSION");
+        if app.settings.last_version.as_deref() != Some(version) {
+            if app.settings.last_version.is_some() {
+                app.info(format!("Hammurabi is updated to v{version}."));
+            }
+            app.settings.last_version = Some(version.into());
+            if let Err(e) = config::save(&app.settings) {
+                log::error!("config save failed: {e:#}");
+            }
         }
         log::info!("hammurabi ready (tray: {})", app.tray.is_some());
         app
@@ -332,8 +347,8 @@ impl App {
                 self.tray_dirty = true;
             }
             UiAction::OpenUpdate => {
-                if let Some(u) = &self.update {
-                    let _ = open::that_detached(&u.url);
+                if let update::Status::Available(r) = &self.models.update {
+                    let _ = open::that_detached(&r.url);
                 }
             }
             UiAction::About => {
@@ -511,35 +526,60 @@ impl App {
         }
     }
 
-    fn on_update(&mut self, release: update::Release) {
-        if !self.settings.check_updates {
+    fn on_update(&mut self, mut status: update::Status) {
+        if let update::Status::Ready(r, _) = &status
+            && self.settings.update_tried.as_ref() == Some(&r.version)
+        {
+            log::warn!(
+                "the install of v{} did not take, offering it instead",
+                r.version
+            );
+            status = update::Status::Available(r.clone());
+        }
+        if let update::Status::Available(release) = &status {
+            log::info!("update available: v{} {}", release.version, release.url);
+            if let Some(t) = &mut self.tray
+                && let Err(e) = t.show_update(&release.version)
+            {
+                log::warn!("tray update item failed: {e:#}");
+            }
+            if self.settings.update_notified.as_ref() != Some(&release.version) {
+                self.info(format!(
+                    "Hammurabi v{} is available. Open the tray menu to get it.",
+                    release.version
+                ));
+                self.settings.update_notified = Some(release.version.clone());
+                if let Err(e) = config::save(&self.settings) {
+                    log::error!("config save failed: {e:#}");
+                }
+            }
+            self.tray_dirty = true;
+        }
+        self.models.update = status;
+    }
+
+    fn info(&mut self, text: String) {
+        self.set_status(Status {
+            level: StatusLevel::Info,
+            text,
+            ttl: Some(Duration::from_secs(10)),
+        });
+    }
+
+    fn check_updates(&mut self, ctx: &Context) {
+        if matches!(
+            self.models.update,
+            update::Status::Checking | update::Status::Downloading(..)
+        ) {
             return;
         }
-        log::info!("update available: v{} {}", release.version, release.url);
-        if let Some(t) = &mut self.tray
-            && let Err(e) = t.show_update(&release.version)
-        {
-            log::warn!("tray update item failed: {e:#}");
-        }
-        if self.settings.update_notified.as_ref() != Some(&release.version) {
-            self.overlay.set_status(
-                Status {
-                    level: StatusLevel::Info,
-                    text: format!(
-                        "Hammurabi v{} is available. Open the tray menu to get it.",
-                        release.version
-                    ),
-                    ttl: Some(Duration::from_secs(10)),
-                },
-                Instant::now(),
-            );
-            self.settings.update_notified = Some(release.version.clone());
-            if let Err(e) = config::save(&self.settings) {
-                log::error!("config save failed: {e:#}");
-            }
-        }
-        self.update = Some(release);
-        self.tray_dirty = true;
+        self.next_update_check = Some(Instant::now() + update::INTERVAL);
+        self.models.update = update::Status::Checking;
+        let (tx, c) = (self.app_tx.clone(), ctx.clone());
+        update::spawn(move |s| {
+            let _ = tx.send(AppEvent::Update(s));
+            c.request_repaint();
+        });
     }
 
     fn tooltip(&self) -> String {
@@ -626,8 +666,8 @@ impl eframe::App for App {
             let action = match ev {
                 AppEvent::Menu(id) => tray::Tray::action(&id),
                 AppEvent::HotKey(id) => self.hotkeys.action(id),
-                AppEvent::Update(r) => {
-                    self.on_update(r);
+                AppEvent::Update(s) => {
+                    self.on_update(s);
                     None
                 }
             };
@@ -679,15 +719,44 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
+        // A downloaded update is installed while nothing is in use: captions off, no model
+        // downloading. The setup program shows its progress and starts the new version.
+        let idle = !self.running && self.models.downloading.is_empty();
+        if let update::Status::Ready(release, path) = self.models.update.clone()
+            && idle
+            && (self.settings.check_updates || self.update_asked)
+        {
+            let version = &release.version;
+            match self.install_at {
+                None => {
+                    let text =
+                        format!("Updating Hammurabi to v{version}. It restarts in a moment.");
+                    self.info(text);
+                    self.install_at = Some(now + Duration::from_secs(3));
+                    ctx.request_repaint_after(Duration::from_secs(3));
+                }
+                Some(t) if now >= t => {
+                    self.settings.update_tried = Some(version.clone());
+                    match update::install(&path, self.settings_open) {
+                        Ok(()) => {
+                            log::info!("installing the update with {}", path.display());
+                            self.quit();
+                        }
+                        Err(e) => {
+                            log::warn!("could not start the update: {e:#}");
+                            self.on_update(update::Status::Available(release));
+                        }
+                    }
+                }
+                Some(t) => ctx.request_repaint_after(t - now),
+            }
+        } else {
+            self.install_at = None;
+        }
         if self.settings.check_updates && !platform::packaged() {
             let due = *self.next_update_check.get_or_insert(now);
             if now >= due {
-                self.next_update_check = Some(now + update::INTERVAL);
-                let (tx, c) = (self.app_tx.clone(), ctx.clone());
-                update::spawn(move |r| {
-                    let _ = tx.send(AppEvent::Update(r));
-                    c.request_repaint();
-                });
+                self.check_updates(ctx);
             } else {
                 ctx.request_repaint_after(due - now);
             }
@@ -908,6 +977,11 @@ impl eframe::App for App {
                     }
                     #[cfg(omnivoice)]
                     SettingsAction::RelearnVoice => self.handle(UiAction::RelearnVoice, &ctx),
+                    SettingsAction::CheckUpdates => {
+                        self.update_asked = true;
+                        self.check_updates(&ctx);
+                    }
+                    SettingsAction::OpenUpdate => self.handle(UiAction::OpenUpdate, &ctx),
                 }
             }
             if close {

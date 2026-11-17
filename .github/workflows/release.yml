@@ -29,6 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Installed copies update themselves to the newest tag, so a build that reports an older
+      # version would install the same release again and again.
+      - name: Check the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "Cargo.toml says $v but the tag is $env:GITHUB_REF_NAME" }
+
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -393,11 +402,14 @@ jobs:
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
 
+      # A draft until every file is up: installed copies take the newest release as soon as
+      # it is public, and look for their setup program in it.
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           fail_on_unmatched_files: true
+          draft: true
           generate_release_notes: true
           body: |
             Hammurabi is a system tray app that writes live captions for anything your computer plays or hears, with optional translation. Speech recognition and translation run on your machine. No account, no API key, and no audio leaves your computer.
@@ -416,3 +428,8 @@ jobs:
             - Hammurabi downloads its speech model on first use (about 300 MB on CPU builds, 1.6 GB for the GPU default `turbo` on CUDA and Metal). The optional built-in translation model is about 1.7 GB more.
             - macOS: move `Hammurabi.app` to Applications. It is not notarized, so macOS blocks the first launch, and right-click > Open no longer gets past that. Run `xattr -dr com.apple.quarantine /Applications/Hammurabi.app` in Terminal, or open it once, click Done, then click Open Anyway in System Settings > Privacy & Security. Hammurabi runs in the menu bar. When you start captions, macOS asks to allow the microphone and system audio recording; allow both. If you declined, turn Hammurabi on in System Settings > Privacy & Security > Screen & System Audio Recording, under System Audio Recording Only. When upgrading from an earlier version, remove the old Hammurabi entry there with the minus button first, because the permission does not carry over to a new version.
             - Windows: SmartScreen may warn that the installer is unrecognized. Click More info, then Run anyway. It installs for your user only, needs no administrator rights, and upgrades in place. Remove it from Settings > Apps.
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --draft=false --latest

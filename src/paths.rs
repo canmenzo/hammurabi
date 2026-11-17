@@ -33,3 +33,8 @@ pub fn instance_socket() -> anyhow::Result<PathBuf> {
 pub fn log_dir() -> anyhow::Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("logs"))
 }
+
+/// Setup programs of new versions, downloaded before they are installed.
+pub fn updates_dir() -> anyhow::Result<PathBuf> {
+    Ok(dirs()?.cache_dir().join("updates"))
+}

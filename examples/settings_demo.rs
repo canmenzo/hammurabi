@@ -125,6 +125,7 @@ fn main() -> eframe::Result {
                     reading: None,
                     previewing: None,
                     voice_learned: false,
+                    update: hammurabi::ui::update::Status::UpToDate,
                 },
             }))
         }),

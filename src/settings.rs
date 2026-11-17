@@ -185,10 +185,15 @@ pub struct Settings {
     pub browser_source: bool,
     /// Parsed with `str::parse::<global_hotkey::hotkey::HotKey>()`.
     pub hotkey_toggle: String,
-    /// Ask GitHub for a newer release at startup and once a day.
+    /// Ask GitHub for a newer release at startup and every few hours, and install it.
     pub check_updates: bool,
     /// Last version the overlay announced, so each update is announced once.
     pub update_notified: Option<String>,
+    /// The version that last ran, so the first start after an update can say so.
+    pub last_version: Option<String>,
+    /// The last version whose setup program the app started. Starting again below it means that
+    /// install failed, so that version is then only offered, not installed again.
+    pub update_tried: Option<String>,
 }
 
 impl Default for Settings {
@@ -229,6 +234,8 @@ impl Default for Settings {
             hotkey_toggle: "alt+shift+KeyT".into(),
             check_updates: true,
             update_notified: None,
+            last_version: None,
+            update_tried: None,
         }
     }
 }

@@ -4,6 +4,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-11-17
+
 ### Fixed
 
 - Read aloud keeps up by time, not by count. A caption that waited more than 10 seconds to be read is skipped, so what is read stays with what is on screen however long each one is. Up to ten captions now wait their turn instead of six: a burst of short lines lost its oldest ones (14 in four minutes of fast GTA dialogue; none now).

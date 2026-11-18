@@ -3,7 +3,7 @@
 //! white, has been for as many pictures as the subtitle was found in, and lies in a stroke;
 //! sky, walls and headlights are too wide, and what moves is too young.
 
-use super::reader::{Block, C_TOL, EXT_TOL, H_MAX, H_MIN, Line, key};
+use super::reader::{Block, C_TOL, EXT_TOL, GROUND_MIN, H_MAX, H_MIN, Line, key};
 
 /// A pixel is white now when its darkest channel is at least this,
 const LO: u8 = 235;
@@ -40,6 +40,17 @@ const COL_KEEP_MIN: usize = 30;
 const COL_KEEP_FRAC: f32 = 0.1;
 /// Ink of a coloured pixel by its brightest channel: none and full.
 const COL_INK: (u8, u8) = (130, 200);
+// Off-white letters in a dark outline (Red Dead Redemption), which the plain picture loses
+// over bright ground: a pixel at least `EDGE_LO` but not white, of at most `EDGE_SAT` colour,
+// with a pixel at most `EDGE_DARK` within `EDGE_REACH` of the width on both sides of it,
+// across or down.
+const EDGE_LO: u8 = 160;
+const EDGE_SAT: u8 = 40;
+const EDGE_DARK: u8 = 60;
+const EDGE_REACH: f32 = 1.0 / 480.0;
+/// They are ink on rows that have at least this many of them within half a tall subtitle's
+/// row, and more of them there than white letter pixels.
+const EDGE_MIN: usize = 300;
 
 pub struct Prep {
     w: usize,
@@ -50,8 +61,13 @@ pub struct Prep {
     age_w: Vec<u8>,
     age_g: Vec<u8>,
     age_x: Vec<u8>,
-    /// The last picture's letter pixels, and each pixel's darkest channel.
+    /// and an outlined letter's.
+    age_e: Vec<u8>,
+    reach: usize,
+    /// The last picture's letter pixels, its outlined letters' that were let in, and each
+    /// pixel's darkest channel.
     letters: Vec<bool>,
+    edged: Vec<bool>,
     dark: Vec<u8>,
     /// A subtitle was found lately, in this many pictures in a row,
     alive: bool,
@@ -80,7 +96,10 @@ impl Prep {
             age_w: vec![0; n],
             age_g: vec![0; n],
             age_x: vec![0; n],
+            age_e: vec![0; n],
+            reach: ((EDGE_REACH * w as f32).round() as usize).max(2),
             letters: vec![false; n],
+            edged: vec![false; n],
             dark: vec![0; n],
             alive: false,
             seen: 0,
@@ -110,6 +129,10 @@ impl Prep {
                 lo >= ALO || (hi >= COL_LO && hi - lo >= COL_SAT),
             );
         }
+        let edge = outlined(&dark, &bright, w, self.h, self.reach);
+        for (age, on) in self.age_e.iter_mut().zip(&edge) {
+            *age = if *on { age.saturating_add(1) } else { 0 };
+        }
         let mut age = self.age_w.clone();
         let mut white: Vec<bool> = dark.iter().map(|&v| v >= LO).collect();
         let zone = self.zone.map(|(y0, y1, _)| {
@@ -134,8 +157,10 @@ impl Prep {
         {
             let (mut was, mut still) = (0, 0);
             for i in (y0..y1).flat_map(|y| y * w + x0..y * w + x1) {
-                was += usize::from(self.letters[i]);
-                still += usize::from(self.letters[i] && age[i] >= need);
+                was += usize::from(self.letters[i] || self.edged[i]);
+                still += usize::from(
+                    (self.letters[i] && age[i] >= need) || (self.edged[i] && self.age_e[i] >= need),
+                );
             }
             if was >= COLLAPSE_MIN && (still as f32) < COLLAPSE * was as f32 {
                 need = 1;
@@ -146,6 +171,47 @@ impl Prep {
         let mut seed: Vec<bool> = (0..n).map(|i| age[i] >= need && white[i]).collect();
         strokes(&mut seed, w, self.h, self.stroke);
         let near = grown(&seed, w, self.h);
+        // Outlined letters are let in on rows where they are many and white letters few: a
+        // white subtitle's picture stays as it was.
+        let mut edged: Vec<bool> = self.age_e.iter().map(|&a| a >= need).collect();
+        let count = |m: &[bool]| -> Vec<usize> {
+            let mut sum = vec![0];
+            for row in m.chunks_exact(w) {
+                sum.push(sum[sum.len() - 1] + row.iter().filter(|&&on| on).count());
+            }
+            sum
+        };
+        let (e, s) = (count(&edged), count(&seed));
+        let half = (H_MAX * w as f32 / 2.0) as usize;
+        for (y, row) in edged.chunks_exact_mut(w).enumerate() {
+            let (a, b) = (y.saturating_sub(half), (y + half + 1).min(self.h));
+            let (e, s) = (e[b] - e[a], s[b] - s[a]);
+            if e < EDGE_MIN || e <= s {
+                row.fill(false);
+            }
+        }
+        let mut edge_ink = grown(&edged, w, self.h);
+        // Nor over dark ground, where the plain picture reads them and this one is to stay as
+        // it was: the median darkest channel of what lies around them, two pixels off.
+        let on: Vec<usize> = (0..n).filter(|&i| edged[i]).collect();
+        if let (Some(&first), Some(&last)) = (on.first(), on.last()) {
+            let (x0, x1) = on
+                .iter()
+                .fold((w, 0), |(a, b), &i| (a.min(i % w), b.max(i % w + 1)));
+            let near = grown(&edge_ink, w, self.h);
+            let mut hist = [0usize; 256];
+            for y in first / w..=last / w {
+                for i in y * w + x0..y * w + x1 {
+                    if !near[i] {
+                        hist[usize::from(dark[i])] += 1;
+                    }
+                }
+            }
+            if median(&hist) < GROUND_MIN {
+                edged.fill(false);
+                edge_ink.fill(false);
+            }
+        }
         let ramp = |v: u8, lo: u8, hi: u8| {
             ((i32::from(v) - i32::from(lo)) * 255 / i32::from(hi - lo)).clamp(0, 255) as u8
         };
@@ -155,7 +221,7 @@ impl Prep {
             } else {
                 0
             };
-            self.grey[i] = 255 - ink;
+            self.grey[i] = if edge_ink[i] { 0 } else { 255 - ink };
         }
         for i in zone.into_iter().flatten() {
             if near[i] && self.age_x[i] >= need && dark[i] < ALO {
@@ -163,8 +229,57 @@ impl Prep {
             }
         }
         self.letters = seed;
+        self.edged = edged;
         self.dark = dark;
         &self.grey
+    }
+
+    /// Are the letters of a subtitle read in the last prepared picture outlined ones, let in
+    /// where white letters were few?
+    pub fn outlined(&self, block: &Block) -> bool {
+        let (mut edged, mut white) = (0, 0);
+        for r in &block.rows {
+            let (x0, x1) = (
+                r.x0.max(0.0) as usize,
+                (r.x1.max(0.0) as usize + 1).min(self.w),
+            );
+            for y in r.y0.max(0.0) as usize..(r.y1.max(0.0) as usize + 1).min(self.h) {
+                for i in y * self.w + x0..y * self.w + x1.max(x0) {
+                    edged += usize::from(self.edged[i]);
+                    white += usize::from(self.letters[i]);
+                }
+            }
+        }
+        edged >= COLLAPSE_MIN && edged > white
+    }
+
+    /// How bright the ground behind the outlined letters of a subtitle read in the last
+    /// prepared picture is: the median darkest channel of the pixels in its rows more than
+    /// two pixels from them, which leaves their outline out.
+    pub fn ground(&self, block: &Block) -> u8 {
+        let mut hist = [0usize; 256];
+        for r in &block.rows {
+            let (x0, x1) = (
+                r.x0.max(0.0) as usize,
+                (r.x1.max(0.0) as usize + 1).min(self.w),
+            );
+            let (y0, y1) = (
+                r.y0.max(0.0) as usize,
+                (r.y1.max(0.0) as usize + 1).min(self.h),
+            );
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let near = (y.saturating_sub(2)..(y + 3).min(self.h)).any(|v| {
+                        (x.saturating_sub(2)..(x + 3).min(self.w))
+                            .any(|u| self.edged[v * self.w + u])
+                    });
+                    if !near {
+                        hist[usize::from(self.dark[y * self.w + x])] += 1;
+                    }
+                }
+            }
+        }
+        median(&hist)
     }
 
     /// How white the letters of a subtitle read in the last picture are: of the pixels in
@@ -313,6 +428,72 @@ fn strokes(seed: &mut [bool], w: usize, h: usize, max: usize) {
     }
 }
 
+/// The pixels that may be an outlined letter's, by each pixel's darkest and brightest channel:
+/// light grey, with a dark pixel within `reach` on both sides of it, across or down.
+fn outlined(dark: &[u8], bright: &[u8], w: usize, h: usize, reach: usize) -> Vec<bool> {
+    let black = |i: usize| dark[i] <= EDGE_DARK;
+    // Whether a dark pixel lies within reach before each pixel, going one way, then also after
+    // it, going back.
+    let mut across = vec![false; w * h];
+    for y in 0..h {
+        let row = y * w..(y + 1) * w;
+        let mut last = None;
+        for i in row.clone() {
+            across[i] = last.is_some_and(|l| i - l <= reach);
+            if black(i) {
+                last = Some(i);
+            }
+        }
+        last = None;
+        for i in row.rev() {
+            across[i] &= last.is_some_and(|l| l - i <= reach);
+            if black(i) {
+                last = Some(i);
+            }
+        }
+    }
+    let mut down = vec![false; w * h];
+    let mut last = vec![usize::MAX; w];
+    for y in 0..h {
+        for (x, last) in last.iter_mut().enumerate() {
+            let i = y * w + x;
+            down[i] = *last != usize::MAX && y - *last <= reach;
+            if black(i) {
+                *last = y;
+            }
+        }
+    }
+    last.fill(usize::MAX);
+    for y in (0..h).rev() {
+        for (x, last) in last.iter_mut().enumerate() {
+            let i = y * w + x;
+            down[i] &= *last != usize::MAX && *last - y <= reach;
+            if black(i) {
+                *last = y;
+            }
+        }
+    }
+    (0..w * h)
+        .map(|i| {
+            (EDGE_LO..LO).contains(&dark[i])
+                && bright[i] - dark[i] <= EDGE_SAT
+                && (across[i] || down[i])
+        })
+        .collect()
+}
+
+/// The middle value of those counted in `hist`; 0 for none.
+fn median(hist: &[usize; 256]) -> u8 {
+    let mut left = hist.iter().sum::<usize>() / 2;
+    for (v, &n) in hist.iter().enumerate() {
+        if n > left {
+            return v as u8;
+        }
+        left -= n;
+    }
+    0
+}
+
 /// Each pixel with the eight around it.
 fn grown(m: &[bool], w: usize, h: usize) -> Vec<bool> {
     let mut across = m.to_vec();
@@ -363,6 +544,82 @@ mod tests {
         assert_eq!(grey[20 * w + 101], 0);
         assert_eq!(grey[20 * w + 310], 255);
         assert_eq!(grey[20 * w + 50], 255);
+    }
+
+    /// A light ground with grey strokes three pixels wide in a dark outline two wide, at
+    /// `xs`, 30 pixels tall, and white ones with the same outline at `white`.
+    fn outlined_strokes(w: usize, h: usize, xs: &[usize], white: &[usize]) -> Vec<u8> {
+        let at =
+            |x: usize, set: &[usize], d: usize| set.iter().any(|&s| x + d >= s && x < s + 3 + d);
+        (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                let tall = (15..45).contains(&y);
+                let v = if tall && at(x, white, 0) {
+                    255
+                } else if tall && at(x, xs, 0) {
+                    172
+                } else if (13..47).contains(&y) && (at(x, xs, 2) || at(x, white, 2)) {
+                    15
+                } else {
+                    120 + (x * 7 % 20) as u8
+                };
+                [v, v, v, 255]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn grey_letters_in_a_dark_outline_are_ink_where_they_are_many() {
+        let (w, h) = (1920, 60);
+        let row: Vec<usize> = (0..8).map(|k| 900 + 12 * k).collect();
+        let mut prep = Prep::new(w, h);
+        let grey = prep.prepare(&outlined_strokes(w, h, &row, &[]));
+        // The stroke, the outline beside it, and the ground away from it.
+        assert_eq!(grey[30 * w + 901], 0);
+        assert_eq!(grey[30 * w + 899], 0);
+        assert_eq!(grey[30 * w + 600], 255);
+        // A subtitle read there is of outlined letters, over ground as bright as it is
+        // (120 to 139), its outline left out.
+        let block = Block {
+            text: "row".into(),
+            rows: vec![Line {
+                text: "row".into(),
+                x0: 880.0,
+                y0: 13.0,
+                x1: 1010.0,
+                y1: 47.0,
+                words: vec![("row".into(), 880.0, 1010.0)],
+            }],
+            x0: 880.0,
+            x1: 1010.0,
+            h: 34.0,
+        };
+        assert!(prep.outlined(&block));
+        assert!((120..140).contains(&prep.ground(&block)));
+        // Over dark ground they are not: the plain picture reads them there.
+        let dark: Vec<u8> = outlined_strokes(w, h, &row, &[])
+            .into_iter()
+            .map(|v| if (120..140).contains(&v) { v - 80 } else { v })
+            .collect();
+        let mut prep = Prep::new(w, h);
+        assert!(prep.prepare(&dark).iter().all(|&v| v == 255));
+        // One such stroke alone is not.
+        let mut prep = Prep::new(w, h);
+        let grey = prep.prepare(&outlined_strokes(w, h, &[900], &[]));
+        assert!(grey.iter().all(|&v| v == 255));
+    }
+
+    #[test]
+    fn a_white_subtitle_keeps_its_picture_beside_outlined_grey() {
+        let (w, h) = (1920, 60);
+        let white: Vec<usize> = (0..12).map(|k| 900 + 12 * k).collect();
+        let grey_ones: Vec<usize> = (0..4).map(|k| 1200 + 12 * k).collect();
+        let mut prep = Prep::new(w, h);
+        let grey = prep.prepare(&outlined_strokes(w, h, &grey_ones, &white));
+        assert_eq!(grey[30 * w + 901], 0);
+        assert_eq!(grey[30 * w + 1201], 255);
+        assert!(prep.edged.iter().all(|&e| !e));
     }
 
     #[test]

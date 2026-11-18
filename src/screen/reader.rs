@@ -77,6 +77,12 @@ const READS_MAX: usize = 64;
 /// Letters less white than this (`Prep::whiteness`) are read in the plain picture: white
 /// subtitles measure 0.45 to 1, a game's thin off-white ones 0.1 to 0.25.
 const WHITE_MIN: f32 = 0.35;
+/// Outlined letters are read over ground at least this bright (`Prep::ground`): 76 to 115 in
+/// daylight behind Red Dead Redemption's, 34 to 71 in its dark scenes, which the plain picture
+/// reads.
+pub(super) const GROUND_MIN: u8 = 74;
+/// and when this share of their words reads like words (`words_alike`).
+const WORDS_ALIKE: f32 = 0.9;
 
 // Captions that grow word by word from a left edge, as a video site's automatic ones do.
 /// A row is one of those once it has gained a word this many times: up to `GROW_WORDS` after
@@ -127,6 +133,10 @@ pub struct Reader {
     plain: Vec<u8>,
     /// How white the letters read lately were (`Prep::whiteness`); None before any were.
     white: Option<f32>,
+    /// When a reading other than of outlined letters last had a subtitle.
+    other: f64,
+    /// and when one of outlined letters last did.
+    edged: f64,
     tracker: Tracker,
     roller: Roller,
     /// What the subtitle being read covers.
@@ -163,6 +173,8 @@ impl Reader {
             prep: Prep::new(to.0, to.1),
             plain: vec![0; to.0 * to.1],
             white: None,
+            other: f64::MIN,
+            edged: f64::MIN,
             tracker: Tracker::default(),
             roller: Roller::default(),
             spot: None,
@@ -229,13 +241,33 @@ impl Reader {
         if let Some(now) = plain.as_ref().and_then(|b| self.prep.whiteness(b)) {
             self.white = Some(self.white.map_or(now, |was| 0.8 * was + 0.2 * now));
         }
-        // The prepared picture's reading where the letters are white, the plain one's else.
-        let block = if self.white.is_some_and(|w| w < WHITE_MIN) {
+        // The prepared picture's reading where the letters are white, the plain one's else;
+        // and outlined letters where the plain picture lost them over bright ground. Those
+        // are read only when no other reading has had a subtitle for a while, and only when
+        // they read like words: else they are not read at all.
+        let edged = block.as_ref().is_some_and(|b| self.prep.outlined(b));
+        if plain.is_some() || (block.is_some() && !edged) {
+            self.other = t;
+        }
+        let edged = edged
+            && block.as_ref().is_some_and(|b| {
+                plain.is_none()
+                    && t - self.other > GAP_S
+                    && self.prep.ground(b) >= GROUND_MIN
+                    && words_alike(&b.text)
+            });
+        let block = block.filter(|b| edged || !self.prep.outlined(b));
+        let block = if self.white.is_some_and(|w| w < WHITE_MIN) && !edged {
             plain
         } else {
             block
         };
+        if edged {
+            self.edged = t;
+        }
         let out = self.tracker.feed(t, block, self.prep.changed);
+        // What was mended out of readings of outlined letters has to read like words too.
+        let out = out.filter(|(_, text)| t - self.edged > 2.0 * GAP_S || words_alike(text));
         // A subtitle that goes on in another reading keeps its cover.
         self.spot = self
             .tracker
@@ -245,6 +277,31 @@ impl Reader {
             .map(|c| c.bounds);
         out
     }
+}
+
+/// Does a reading of outlined letters read like words, `WORDS_ALIKE` of them? Read where only
+/// part of the letters came out, they have signs in them ("h$ppy", "lot}:") and digits among
+/// letters ("10t", "f0f"), marks after a word that no sentence ends with ("tiil!:"), and
+/// letters other than English ones ("fißt"): it is set for English subtitles only.
+fn words_alike(text: &str) -> bool {
+    let (mut all, mut alike) = (0, 0);
+    for word in text.split_whitespace() {
+        let marks = |c: char| ".,?!:;'\"-".contains(c);
+        let end = word.trim_end_matches(marks);
+        let after = &word[end.len()..];
+        let word = end.trim_start_matches(marks);
+        let digits = word.chars().any(|c| c.is_ascii_digit());
+        all += 1;
+        alike += usize::from(
+            word.chars()
+                .all(|c| c.is_ascii_alphanumeric() || ".,'’-".contains(c))
+                && (!digits || word.chars().all(|c| c.is_ascii_digit()))
+                && (after.len() < 2
+                    || after.chars().all(|c| c == '.')
+                    || ["?!", "!?", "?\"", "!\"", ".\"", ",\"", "--", "'.", "',"].contains(&after)),
+        );
+    }
+    all > 0 && alike as f32 >= WORDS_ALIKE * all as f32
 }
 
 /// Letters and digits only, lower case: what readings are compared on.
@@ -1360,6 +1417,23 @@ mod tests {
         assert_eq!(reader.spot(), Some(spot));
         reader.read(0.8, &[], &[]);
         assert_eq!(reader.spot(), None);
+    }
+
+    #[test]
+    fn outlined_letters_read_in_part_are_not_words() {
+        assert!(words_alike(
+            "Says.he got 8 telegram from some Blackwater big bugs askin' for guide."
+        ));
+        assert!(words_alike("Well, I'm not - \"Stupid\" is the word."));
+        assert!(!words_alike(
+            "I'm h$ppy Kith my current tight 10K. Mi\" Yitcf8flne."
+        ));
+        assert!(!words_alike("I uspct *toln thea broken."));
+        assert!(!words_alike("I don't tiiil!: san reach ie ston before."));
+        assert!(!words_alike("fi\u{df}t impression herd to"));
+        assert!(words_alike("What?! No... \"Never.\""));
+        assert!(!words_alike("Th8t's right."));
+        assert!(!words_alike(""));
     }
 
     #[test]

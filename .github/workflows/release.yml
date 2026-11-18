@@ -224,6 +224,8 @@ jobs:
       actions: read
     env:
       VULKAN_VERSION: '1.4.363.0'
+      # LunarG publishes it at vulkan.lunarg.com/sdk/sha/<version>/windows/<file>.json; bump both together.
+      VULKAN_SHA256: '94a82d378f7a5e3e54c9db7d2fb7016af136e14ac0a18dbf0f2f67a36352d141'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -234,6 +236,7 @@ jobs:
         run: |
           $exe = "$env:RUNNER_TEMP/vulkansdk.exe"
           curl.exe -sSfL -A "OpenAI File Downloader, XaiImageApiFetch/1.0" -o $exe "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $env:VULKAN_SHA256) { throw 'Vulkan SDK download does not match its pinned hash' }
           $p = Start-Process -FilePath $exe -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
           if ($p.ExitCode -ne 0 -or -not (Test-Path "C:/VulkanSDK/$env:VULKAN_VERSION/Lib/vulkan-1.lib")) { throw "Vulkan SDK install failed ($($p.ExitCode))" }
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"

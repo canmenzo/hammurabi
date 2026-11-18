@@ -100,9 +100,11 @@ pub struct CaptionStyle {
     pub orig_size: f32,
     pub trans_color: String,
     pub orig_color: String,
-    /// The background of caption boxes and of a cover, with `bg_opacity`.
+    /// The background of caption boxes, with `bg_opacity`, and of a cover, with `cover_opacity`.
     pub bg_color: String,
     pub bg_opacity: f32,
+    /// Below 1 the game's subtitle shows through the cover.
+    pub cover_opacity: f32,
     pub show_original: bool,
     pub original_first: bool,
     pub cues: u32,
@@ -127,6 +129,7 @@ impl Default for CaptionStyle {
             orig_color: "#ffe066".into(),
             bg_color: "#000000".into(),
             bg_opacity: 0.75,
+            cover_opacity: 1.0,
             show_original: true,
             original_first: false,
             cues: 2,
@@ -403,8 +406,8 @@ mod tests {
             }
         );
         assert_eq!(
-            (c.bg_color.as_str(), c.cover_x, c.cover_y),
-            ("#000000", 0.0, 0.0)
+            (c.bg_color.as_str(), c.cover_opacity, c.cover_x, c.cover_y),
+            ("#000000", 1.0, 0.0, 0.0)
         );
         assert_eq!((c.cover_pad, c.cover_max_width), (1.0, 90.0));
     }

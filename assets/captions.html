@@ -34,8 +34,8 @@ const cover = document.getElementById('cover');
 if (params.get('bottom')) box.style.bottom = parseFloat(params.get('bottom')) + '%';
 let st = {
   trans_size: 30, orig_size: 20, trans_color: '#ffffff', orig_color: '#ffe066',
-  bg_color: '#000000', bg: 0.75, show_original: true, original_first: false, cues: 2, hold: 4,
-  edge: 'Shadow', cover_x: 0, cover_y: 0, cover_pad: 1, cover_max_width: 90,
+  bg_color: '#000000', bg: 0.75, cover_bg: 1, show_original: true, original_first: false,
+  cues: 2, hold: 4, edge: 'Shadow', cover_x: 0, cover_y: 0, cover_pad: 1, cover_max_width: 90,
 };
 let cues = [];
 const live = { el: null };
@@ -43,9 +43,9 @@ let lastCover = {};
 // The build of the app that served this page: one that serves another reloads it.
 const build = '{{BUILD}}';
 
-function background() {
+function background(opacity) {
   const n = parseInt(st.bg_color.slice(1, 7), 16);
-  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${st.bg})`;
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${opacity})`;
 }
 
 function shadow() {
@@ -69,7 +69,7 @@ function lines(c) {
 }
 
 function draw(c) {
-  c.el.style.background = background();
+  c.el.style.background = background(st.bg);
   c.el.replaceChildren(...lines(c).map(([text, tr]) => {
     const s = document.createElement('span');
     s.textContent = text;
@@ -158,7 +158,7 @@ function setCover(e) {
     maxWidth: st.cover_max_width + 'vw',
     minHeight: (b - t) * 100 + 2 * padY + 'vh',
     padding: `${padY}vh ${padX}vh`,
-    background: background(),
+    background: background(st.cover_bg),
     fontSize: st.trans_size * scale + 'px',
     color: st.trans_color,
     textShadow: shadow(),

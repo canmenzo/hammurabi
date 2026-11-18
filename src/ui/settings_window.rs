@@ -2102,18 +2102,25 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         });
         ui.end_row();
 
+        // A cover has an opacity of its own, so that one over the game's subtitle hides it
+        // whatever the caption boxes are set to.
         ui.label(t(T::Background));
         ui.horizontal(|ui| {
+            let opacity = if covers {
+                &mut c.cover_opacity
+            } else {
+                &mut c.bg_opacity
+            };
             *changed |= ui
                 .add(
-                    Slider::new(&mut c.bg_opacity, 0.0..=1.0)
+                    Slider::new(opacity, 0.0..=1.0)
                         .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                 )
                 .changed();
             color_row(ui, &mut c.bg_color, changed);
         });
         ui.end_row();
-        if covers && c.bg_opacity < 1.0 {
+        if covers && c.cover_opacity < 1.0 {
             ui.label("");
             ui.weak(t(T::CoverSeeThrough));
             ui.end_row();

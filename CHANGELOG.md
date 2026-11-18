@@ -13,7 +13,7 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 ### Changed
 
 - The cover's translation is as large as the size set for translated text under Settings > Captions, and has its colour and edge, on the screen and on the captions web page. It was 1.2 times the height of the game's subtitle, which no setting changed and which filled much of the picture over large subtitles. The box still covers the whole subtitle.
-- The cover's box takes the background colour and opacity set for captions instead of always being opaque black. Below 100% opacity the game's subtitle shows through, and Settings says so.
+- The cover's box takes the background colour set for captions instead of always being black, with an opacity of its own (100% by default, so the caption boxes' opacity does not make it see-through). While the game's subtitles are covered, the Background row under Settings > Captions sets this opacity. Below 100% the game's subtitle shows through, and Settings says so.
 - Settings > Captions greys out what a cover does not use (original text, captions at once, show original, original first) while the game's subtitles are covered, and says so.
 
 ## [0.7.9] - 2026-11-17

@@ -287,7 +287,7 @@ impl OverlayState {
             same_lang: false,
         });
         let trans_color = parse_color(&style.trans_color);
-        let bg = parse_color(&style.bg_color).gamma_multiply(style.bg_opacity.clamp(0.0, 1.0));
+        let bg = parse_color(&style.bg_color);
         if let Some(band) = cover
             && let Some((spot, text)) = self.covered(now)
         {
@@ -318,7 +318,8 @@ impl OverlayState {
                 pos2(r.center().x - size.x / 2.0, r.bottom() + pad.y - size.y),
                 size,
             );
-            painter.rect_filled(b, CornerRadius::same(4), bg);
+            let fill = bg.gamma_multiply(style.cover_opacity.clamp(0.0, 1.0));
+            painter.rect_filled(b, CornerRadius::same(4), fill);
             let at = pos2(b.center().x, b.center().y - g.size().y / 2.0);
             paint_text(&painter, at, &g, trans_color, style.edge, 1.0);
         }
@@ -412,7 +413,12 @@ impl OverlayState {
                     (g, color)
                 })
                 .collect();
-            draw(lines, bg, alpha, i == 0);
+            draw(
+                lines,
+                bg.gamma_multiply(style.bg_opacity.clamp(0.0, 1.0)),
+                alpha,
+                i == 0,
+            );
         }
 
         if fading {

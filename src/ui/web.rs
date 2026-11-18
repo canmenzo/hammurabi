@@ -76,6 +76,7 @@ impl Web {
             "orig_color": c.orig_color,
             "bg": c.bg_opacity,
             "bg_color": c.bg_color,
+            "cover_bg": c.cover_opacity,
             "show_original": c.show_original,
             "original_first": c.original_first,
             "cues": c.cues,
@@ -227,6 +228,10 @@ mod tests {
         let style = next();
         assert_eq!(style["t"], "style");
         assert_eq!(style["bg_color"], "#000000");
+        assert_eq!(
+            (&style["bg"], &style["cover_bg"]),
+            (&json!(0.75), &json!(1.0))
+        );
         assert_eq!(
             (&style["cover_x"], &style["cover_y"]),
             (&json!(0.0), &json!(0.0))

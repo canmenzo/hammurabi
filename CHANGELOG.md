@@ -4,10 +4,17 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- The cover over a game's subtitle (**Cover the game's subtitles**) can be set up under Settings > Captions > Look while the game's subtitles are covered: moved right or left and up or down from the subtitle by up to 30% of the picture, given from none to three times the usual room around the subtitle, and kept from 30% to 100% of the picture wide at most (90% by default). The screen and the captions web page both follow these settings.
+- Captions have a background colour, next to the background opacity under Settings > Captions. It is black by default and colours both the caption boxes and the cover.
+- The captions web page reloads itself when the app that serves it changes, so a Browser source in OBS shows the new page after an update. The log says whether a page that connects is the current one.
+
 ### Changed
 
-- The translation in a cover (**Cover the game's subtitles**) is as large as the size set for translated text under Settings > Captions, on the screen and on the captions web page. It was 1.2 times the height of the game's subtitle, which no setting changed and which filled much of the picture over large subtitles. The box still covers the whole subtitle.
-- Settings > Captions greys out what a cover does not use (original text, background, captions at once, show original) while the game's subtitles are covered, and says so.
+- The cover's translation is as large as the size set for translated text under Settings > Captions, and has its colour and edge, on the screen and on the captions web page. It was 1.2 times the height of the game's subtitle, which no setting changed and which filled much of the picture over large subtitles. The box still covers the whole subtitle.
+- The cover's box takes the background colour and opacity set for captions instead of always being opaque black. Below 100% opacity the game's subtitle shows through, and Settings says so.
+- Settings > Captions greys out what a cover does not use (original text, captions at once, show original, original first) while the game's subtitles are covered, and says so.
 
 ## [0.7.9] - 2026-11-17
 

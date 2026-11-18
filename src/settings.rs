@@ -100,12 +100,22 @@ pub struct CaptionStyle {
     pub orig_size: f32,
     pub trans_color: String,
     pub orig_color: String,
+    /// The background of caption boxes and of a cover, with `bg_opacity`.
+    pub bg_color: String,
     pub bg_opacity: f32,
     pub show_original: bool,
     pub original_first: bool,
     pub cues: u32,
     pub hold_secs: f32,
     pub edge: Edge,
+    /// How far a cover stands from the subtitle it covers, right and up, in percent of the
+    /// picture's width and height.
+    pub cover_x: f32,
+    pub cover_y: f32,
+    /// The room a cover leaves around the subtitle, times the usual.
+    pub cover_pad: f32,
+    /// The widest a cover grows for its translation, in percent of the picture's width.
+    pub cover_max_width: f32,
 }
 
 impl Default for CaptionStyle {
@@ -115,12 +125,17 @@ impl Default for CaptionStyle {
             orig_size: 20.0,
             trans_color: "#ffffff".into(),
             orig_color: "#ffe066".into(),
+            bg_color: "#000000".into(),
             bg_opacity: 0.75,
             show_original: true,
             original_first: false,
             cues: 2,
             hold_secs: 4.0,
             edge: Edge::Shadow,
+            cover_x: 0.0,
+            cover_y: 0.0,
+            cover_pad: 1.0,
+            cover_max_width: 90.0,
         }
     }
 }
@@ -376,6 +391,22 @@ mod tests {
             toml::from_str::<Settings>("").unwrap().migrated(),
             Settings::default()
         );
+        // A caption look from before the background colour and the cover's place and size.
+        let old = "[caption]\ntrans_size = 40.0\nbg_opacity = 0.5";
+        let c = toml::from_str::<Settings>(old).unwrap().caption;
+        assert_eq!(
+            c,
+            CaptionStyle {
+                trans_size: 40.0,
+                bg_opacity: 0.5,
+                ..CaptionStyle::default()
+            }
+        );
+        assert_eq!(
+            (c.bg_color.as_str(), c.cover_x, c.cover_y),
+            ("#000000", 0.0, 0.0)
+        );
+        assert_eq!((c.cover_pad, c.cover_max_width), (1.0, 90.0));
     }
 
     #[test]

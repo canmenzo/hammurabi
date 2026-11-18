@@ -17,8 +17,8 @@
   .cue span { display: block; }
   #cover {
     position: absolute; display: none; flex-direction: column; justify-content: center;
-    box-sizing: border-box; width: max-content; max-width: 90vw; transform: translateX(-50%);
-    background: #000; border-radius: 4px; text-align: center; line-height: 1.2;
+    box-sizing: border-box; width: max-content; transform: translateX(-50%);
+    border-radius: 4px; text-align: center; line-height: 1.2;
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   }
 </style>
@@ -33,11 +33,20 @@ const box = document.getElementById('box');
 const cover = document.getElementById('cover');
 if (params.get('bottom')) box.style.bottom = parseFloat(params.get('bottom')) + '%';
 let st = {
-  trans_size: 30, orig_size: 20, trans_color: '#ffffff', orig_color: '#ffe066', bg: 0.75,
-  show_original: true, original_first: false, cues: 2, hold: 4, edge: 'Shadow',
+  trans_size: 30, orig_size: 20, trans_color: '#ffffff', orig_color: '#ffe066',
+  bg_color: '#000000', bg: 0.75, show_original: true, original_first: false, cues: 2, hold: 4,
+  edge: 'Shadow', cover_x: 0, cover_y: 0, cover_pad: 1, cover_max_width: 90,
 };
 let cues = [];
 const live = { el: null };
+let lastCover = {};
+// The build of the app that served this page: one that serves another reloads it.
+const build = '{{BUILD}}';
+
+function background() {
+  const n = parseInt(st.bg_color.slice(1, 7), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${st.bg})`;
+}
 
 function shadow() {
   const b = 'rgba(0,0,0,.9)';
@@ -60,7 +69,7 @@ function lines(c) {
 }
 
 function draw(c) {
-  c.el.style.background = `rgba(0,0,0,${st.bg})`;
+  c.el.style.background = background();
   c.el.replaceChildren(...lines(c).map(([text, tr]) => {
     const s = document.createElement('span');
     s.textContent = text;
@@ -133,19 +142,23 @@ function clear() {
 
 // Over a game's own subtitle, hiding it, with its translation: the page is taken to show the
 // whole picture subtitles are read in. The room around the subtitle is in its row's heights, as
-// the overlay's; the letters are as large as any translated text.
+// the overlay's; the letters are as large as any translated text. Moved right and up by
+// cover_x and cover_y percent of the picture.
 function setCover(e) {
+  lastCover = e;
   cover.style.display = e.box ? 'flex' : 'none';
   if (!e.box) return;
   const [l, t, r, b] = e.box;
-  const row = e.row * 100;
+  const row = e.row * 100 * st.cover_pad;
   const [padX, padY] = [0.5 * row, 0.3 * row];
   Object.assign(cover.style, {
-    left: (l + r) * 50 + 'vw',
-    bottom: (1 - b) * 100 - padY + 'vh',
+    left: (l + r) * 50 + st.cover_x + 'vw',
+    bottom: (1 - b) * 100 - padY + st.cover_y + 'vh',
     minWidth: `calc(${(r - l) * 100}vw + ${2 * padX}vh)`,
+    maxWidth: st.cover_max_width + 'vw',
     minHeight: (b - t) * 100 + 2 * padY + 'vh',
     padding: `${padY}vh ${padX}vh`,
+    background: background(),
     fontSize: st.trans_size * scale + 'px',
     color: st.trans_color,
     textShadow: shadow(),
@@ -153,11 +166,12 @@ function setCover(e) {
   cover.textContent = e.tr || '';
 }
 
-const events = new EventSource('/events');
+const events = new EventSource('/events?v=' + encodeURIComponent(build));
 events.onopen = clear;
 events.onmessage = m => {
   const e = JSON.parse(m.data);
-  if (e.t === 'final') final(e);
+  if (e.t === 'hello' && e.v !== build) location.reload();
+  else if (e.t === 'final') final(e);
   else if (e.t === 'live') setLive(e);
   else if (e.t === 'clear') clear();
   else if (e.t === 'cover') setCover(e);
@@ -165,9 +179,7 @@ events.onmessage = m => {
     st = e;
     // Covering, the translation is shown in the cover alone.
     box.style.display = st.cover ? 'none' : '';
-    cover.style.fontSize = st.trans_size * scale + 'px';
-    cover.style.color = st.trans_color;
-    cover.style.textShadow = shadow();
+    setCover(lastCover);
     cues.forEach(draw);
   }
 };

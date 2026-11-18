@@ -2102,15 +2102,22 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         });
         ui.end_row();
 
-        ui.add_enabled_ui(!covers, |ui| ui.label(t(T::Background)));
-        *changed |= ui
-            .add_enabled(
-                !covers,
-                Slider::new(&mut c.bg_opacity, 0.0..=1.0)
-                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-            )
-            .changed();
+        ui.label(t(T::Background));
+        ui.horizontal(|ui| {
+            *changed |= ui
+                .add(
+                    Slider::new(&mut c.bg_opacity, 0.0..=1.0)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                )
+                .changed();
+            color_row(ui, &mut c.bg_color, changed);
+        });
         ui.end_row();
+        if covers && c.bg_opacity < 1.0 {
+            ui.label("");
+            ui.weak(t(T::CoverSeeThrough));
+            ui.end_row();
+        }
 
         ui.add_enabled_ui(!covers, |ui| ui.label(t(T::CaptionsAtOnce)));
         *changed |= ui
@@ -2139,6 +2146,39 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
             }
         });
         ui.end_row();
+
+        if covers {
+            for (label, value) in [
+                (T::CoverRight, &mut c.cover_x),
+                (T::CoverUp, &mut c.cover_y),
+            ] {
+                ui.label(t(label));
+                *changed |= ui
+                    .add(Slider::new(value, -30.0..=30.0).step_by(0.5).suffix("%"))
+                    .changed();
+                ui.end_row();
+            }
+
+            ui.label(t(T::CoverPadding));
+            *changed |= ui
+                .add(
+                    Slider::new(&mut c.cover_pad, 0.0..=3.0)
+                        .step_by(0.1)
+                        .custom_formatter(|v, _| format!("{}×", i18n::decimal(v, 1))),
+                )
+                .changed();
+            ui.end_row();
+
+            ui.label(t(T::CoverMaxWidth));
+            *changed |= ui
+                .add(
+                    Slider::new(&mut c.cover_max_width, 30.0..=100.0)
+                        .step_by(1.0)
+                        .suffix("%"),
+                )
+                .changed();
+            ui.end_row();
+        }
     });
     *changed |= ui
         .add_enabled(

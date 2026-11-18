@@ -816,8 +816,19 @@ impl eframe::App for App {
             platform::configure_overlay_window(frame);
         }
 
-        // Covering subtitles read off the screen, the window stands over where they are read.
-        let band = self.settings.screen_area();
+        // Covering subtitles read off the screen, the window stands over where they are read,
+        // and as far beyond as the cover is moved from them.
+        let (dx, dy) = (
+            self.settings.caption.cover_x / 100.0,
+            self.settings.caption.cover_y / 100.0,
+        );
+        let read = self.settings.screen_area();
+        let band = crate::screen::Area {
+            left: (read.left + dx.min(0.0)).max(0.0),
+            top: (read.top - dy.max(0.0)).max(0.0),
+            right: (read.right + dx.max(0.0)).min(1.0),
+            bottom: (read.bottom - dy.min(0.0)).min(1.0),
+        };
         let cover = self
             .overlay
             .picture()

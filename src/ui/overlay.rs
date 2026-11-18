@@ -24,8 +24,8 @@ const PAD_Y: f32 = 8.0;
 const BLOCK_GAP: f32 = 6.0;
 const LINE_GAP: f32 = 2.0;
 // The room a cover leaves around the subtitle across and above and below, in heights of the
-// subtitle's row, for the letters' shadows and outlines. Its letters are as large as any
-// translated text.
+// subtitle's row, for the letters' shadows and outlines, times `CaptionStyle::cover_pad`. Its
+// letters are as large as any translated text.
 const COVER_PAD_X: f32 = 0.5;
 const COVER_PAD_Y: f32 = 0.3;
 /// A subtitle that comes this long after the cover was last up starts with an empty one, not
@@ -287,17 +287,27 @@ impl OverlayState {
             same_lang: false,
         });
         let trans_color = parse_color(&style.trans_color);
+        let bg = parse_color(&style.bg_color).gamma_multiply(style.bg_opacity.clamp(0.0, 1.0));
         if let Some(band) = cover
             && let Some((spot, text)) = self.covered(now)
         {
-            let r = in_window(rect, band, spot.area);
+            let (dx, dy) = (style.cover_x / 100.0, style.cover_y / 100.0);
+            let a = spot.area;
+            let moved = Area {
+                left: a.left + dx,
+                top: a.top - dy,
+                right: a.right + dx,
+                bottom: a.bottom - dy,
+            };
+            let r = in_window(rect, band, moved);
             let row = spot.row / (band.bottom - band.top) * rect.height();
-            let pad = vec2(COVER_PAD_X, COVER_PAD_Y) * row;
+            let pad = vec2(COVER_PAD_X, COVER_PAD_Y) * row * style.cover_pad.max(0.0);
+            let max_width = style.cover_max_width / 100.0 / (band.right - band.left) * rect.width();
             let mut job = LayoutJob::simple(
                 text.unwrap_or_default().to_owned(),
                 FontId::proportional(style.trans_size),
                 Color32::WHITE,
-                (0.9 * rect.width()).max(r.width()),
+                (max_width - 2.0 * pad.x).max(r.width()),
             );
             job.halign = Align::Center;
             let g = painter.layout_job(job);
@@ -308,7 +318,7 @@ impl OverlayState {
                 pos2(r.center().x - size.x / 2.0, r.bottom() + pad.y - size.y),
                 size,
             );
-            painter.rect_filled(b, CornerRadius::same(4), Color32::BLACK);
+            painter.rect_filled(b, CornerRadius::same(4), bg);
             let at = pos2(b.center().x, b.center().y - g.size().y / 2.0);
             paint_text(&painter, at, &g, trans_color, style.edge, 1.0);
         }
@@ -366,8 +376,6 @@ impl OverlayState {
             }
             y -= size.y + BLOCK_GAP;
         };
-
-        let bg = Color32::from_black_alpha((style.bg_opacity.clamp(0.0, 1.0) * 255.0) as u8);
 
         if let Some(s) = &self.status {
             let color = match s.level {
@@ -711,12 +719,53 @@ mod tests {
             right: 1.0,
             bottom: 1.0,
         };
-        let output = ctx.run_ui(input, |ui| {
+        let output = ctx.run_ui(input.clone(), |ui| {
             o.paint(ui, &settings.caption, None, Some(band));
         });
         assert!(o.bubbles().is_empty());
         assert!(!output.shapes.is_empty());
         output.drop_without_applying_deltas();
+
+        // The box: over the subtitle (768..1152 by 120..180 in the window, its row 36 high) with
+        // the room around it, moved and sized as set.
+        let cover_box = |o: &mut OverlayState, style: &CaptionStyle| {
+            let output = ctx.run_ui(input.clone(), |ui| {
+                o.paint(ui, style, None, Some(band));
+            });
+            let b = output.shapes.iter().find_map(|s| match &s.shape {
+                egui::Shape::Rect(r) => Some(r.rect),
+                _ => None,
+            });
+            output.drop_without_applying_deltas();
+            b.unwrap()
+        };
+        let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+        let b = cover_box(&mut o, &settings.caption);
+        assert!(
+            near(b.center().x, 960.0) && near(b.width(), 420.0) && near(b.bottom(), 190.8),
+            "{b:?}"
+        );
+        let style = CaptionStyle {
+            cover_x: 10.0,
+            cover_y: 5.0,
+            cover_pad: 2.0,
+            cover_max_width: 30.0,
+            ..CaptionStyle::default()
+        };
+        let b = cover_box(&mut o, &style);
+        assert!(
+            near(b.center().x, 1152.0) && near(b.width(), 456.0) && near(b.bottom(), 141.6),
+            "{b:?}"
+        );
+        // A long translation makes it as wide as it may be, and no wider.
+        let long = "so we were going down the highway and the cops were right behind us ".repeat(3);
+        o.apply(
+            final_(3, &long, Some(long.as_str())),
+            &settings,
+            Instant::now(),
+        );
+        let b = cover_box(&mut o, &style);
+        assert!(b.width() > 456.0 && b.width() <= 576.0 + 0.01, "{b:?}");
     }
 
     #[test]

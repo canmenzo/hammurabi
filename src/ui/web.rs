@@ -2,9 +2,10 @@
 //! overlay window is not part of a captured game or capture card, a browser source is. The page
 //! listens to `/events` (server-sent events) and draws what the overlay draws, without statuses.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
@@ -15,6 +16,13 @@ use crate::types::CaptionUpdate;
 
 pub const PORT: u16 = 7460;
 const PAGE: &str = include_str!("../../assets/captions.html");
+/// Which page this app serves. A page that is told another one is served now reloads itself, so
+/// a streaming app's browser source does not keep the page of the app before an update.
+static BUILD: LazyLock<String> = LazyLock::new(|| {
+    let mut h = DefaultHasher::new();
+    PAGE.hash(&mut h);
+    format!("{}-{:x}", env!("CARGO_PKG_VERSION"), h.finish())
+});
 
 #[derive(Default)]
 struct Shared {
@@ -67,12 +75,17 @@ impl Web {
             "trans_color": c.trans_color,
             "orig_color": c.orig_color,
             "bg": c.bg_opacity,
+            "bg_color": c.bg_color,
             "show_original": c.show_original,
             "original_first": c.original_first,
             "cues": c.cues,
             "hold": c.hold_secs,
             "edge": format!("{:?}", c.edge),
             "cover": s.covers(),
+            "cover_x": c.cover_x,
+            "cover_y": c.cover_y,
+            "cover_pad": c.cover_pad,
+            "cover_max_width": c.cover_max_width,
         });
         self.send(&style, true);
     }
@@ -121,6 +134,11 @@ impl Web {
     }
 }
 
+/// The page asking for events says which build it is from (`/events?v=`).
+fn current_page(path: &str) -> bool {
+    path.strip_prefix("/events?v=") == Some(BUILD.as_str())
+}
+
 fn write_event(page: &mut TcpStream, event: &str) -> std::io::Result<()> {
     page.write_all(format!("data: {event}\n\n").as_bytes())
 }
@@ -142,6 +160,15 @@ fn serve(mut stream: TcpStream, shared: &Mutex<Shared>) -> std::io::Result<()> {
         stream.write_all(
             b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n",
         )?;
+        if current_page(path) {
+            log::info!("captions page connected (current)");
+        } else {
+            log::info!("captions page connected (an older page, refresh the Browser source)");
+        }
+        write_event(
+            &mut stream,
+            &json!({"t": "hello", "v": BUILD.as_str()}).to_string(),
+        )?;
         let mut s = shared.lock().unwrap_or_else(|p| p.into_inner());
         for event in [&s.style, &s.cover] {
             if !event.is_empty() {
@@ -151,11 +178,12 @@ fn serve(mut stream: TcpStream, shared: &Mutex<Shared>) -> std::io::Result<()> {
         s.pages.push(stream);
         return Ok(());
     }
+    let page = PAGE.replace("{{BUILD}}", &BUILD);
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{PAGE}",
-        PAGE.len()
+         Content-Length: {}\r\nConnection: close\r\n\r\n{page}",
+        page.len()
     )
 }
 
@@ -178,8 +206,13 @@ mod tests {
         let mut page = String::new();
         get("/").read_to_string(&mut page).unwrap();
         assert!(page.starts_with("HTTP/1.1 200 OK") && page.contains("EventSource"));
+        assert!(page.contains("Cache-Control: no-store"));
+        // The page knows which build served it, and says so when it asks for events.
+        assert!(page.contains(&format!("'{}'", *BUILD)) && !page.contains("{{BUILD}}"));
+        assert!(current_page(&format!("/events?v={}", *BUILD)));
+        assert!(!current_page("/events") && !current_page("/events?v=0.7.9-1"));
 
-        let mut events = BufReader::new(get("/events"));
+        let mut events = BufReader::new(get(&format!("/events?v={}", *BUILD)));
         let mut next = || {
             let mut line = String::new();
             while !line.starts_with("data: ") {
@@ -188,7 +221,20 @@ mod tests {
             }
             serde_json::from_str::<serde_json::Value>(&line[6..]).unwrap()
         };
-        assert_eq!(next()["t"], "style");
+        // First which build it is, so that a page of another build reloads.
+        assert_eq!(next(), json!({"t": "hello", "v": BUILD.as_str()}));
+        assert!(BUILD.starts_with(env!("CARGO_PKG_VERSION")));
+        let style = next();
+        assert_eq!(style["t"], "style");
+        assert_eq!(style["bg_color"], "#000000");
+        assert_eq!(
+            (&style["cover_x"], &style["cover_y"]),
+            (&json!(0.0), &json!(0.0))
+        );
+        assert_eq!(
+            (&style["cover_pad"], &style["cover_max_width"]),
+            (&json!(1.0), &json!(90.0))
+        );
         // The page is registered once the style went out.
         web.caption(
             &CaptionUpdate::Final {
@@ -227,10 +273,11 @@ mod tests {
         web.cover(Some((spot, None)));
         web.cover(Some((spot, Some("N'aber kanka?"))));
         assert_eq!(next()["tr"], "N'aber kanka?");
-        // A page that connects later has it at once, after the style.
+        // A page that connects later has it at once, after the build and the style; an older
+        // page too.
         let mut late = BufReader::new(get("/events"));
         let mut lines = Vec::new();
-        while lines.len() < 2 {
+        while lines.len() < 3 {
             let mut line = String::new();
             late.read_line(&mut line).unwrap();
             if let Some(data) = line.strip_prefix("data: ") {
@@ -238,10 +285,10 @@ mod tests {
             }
         }
         assert_eq!(
-            (&lines[0]["t"], &lines[1]["t"]),
-            (&json!("style"), &json!("cover"))
+            (&lines[0]["t"], &lines[1]["t"], &lines[2]["t"]),
+            (&json!("hello"), &json!("style"), &json!("cover"))
         );
-        assert_eq!(lines[1]["tr"], "N'aber kanka?");
+        assert_eq!(lines[2]["tr"], "N'aber kanka?");
         web.cover(None);
         assert_eq!(next(), json!({"t": "cover"}));
     }

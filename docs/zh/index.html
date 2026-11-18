@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hammurabi | 桌面实时字幕</title>
+<meta name="description" content="Hammurabi 是一款免费的托盘应用，支持 Windows、macOS 和 Linux，能把系统声音和麦克风实时转成字幕，还可以顺便翻译。Whisper 在你的电脑上本地运行，无需账号，无需 API 密钥。">
+<link rel="canonical" href="https://hammurabi.menzo.dev/zh/">
+<link rel="alternate" hreflang="en" href="https://hammurabi.menzo.dev/">
+<link rel="alternate" hreflang="tr" href="https://hammurabi.menzo.dev/tr/">
+<link rel="alternate" hreflang="es" href="https://hammurabi.menzo.dev/es/">
+<link rel="alternate" hreflang="zh" href="https://hammurabi.menzo.dev/zh/">
+<link rel="alternate" hreflang="hi" href="https://hammurabi.menzo.dev/hi/">
+<link rel="alternate" hreflang="ar" href="https://hammurabi.menzo.dev/ar/">
+<link rel="alternate" hreflang="fr" href="https://hammurabi.menzo.dev/fr/">
+<link rel="alternate" hreflang="x-default" href="https://hammurabi.menzo.dev/">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<meta name="theme-color" content="#0d1514">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:title" content="Hammurabi | 桌面实时字幕">
+<meta property="og:description" content="为任何视频、直播和通话加上字幕，也为正在和你说话的人。本地运行 Whisper，可选翻译，免费下载，支持 Windows、macOS 和 Linux。">
+<meta property="og:url" content="https://hammurabi.menzo.dev/zh/">
+<meta property="og:image" content="https://hammurabi.menzo.dev/og.png?v=20261023">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Hammurabi 实时字幕浮层，显示原话和译文。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hammurabi.menzo.dev/og.png?v=20261023">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400;600;700&amp;family=Noto+Sans+SC:wght@400;600;700&amp;display=swap">
+<link rel="stylesheet" href="../style.css">
+<script>document.documentElement.className="js"</script>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<nav class="pill" aria-label="主菜单">
+<a class="brand" href="#top"><img src="../favicon.svg" alt="" width="24" height="24">Hammurabi</a>
+<div class="links"><a href="#download">下载</a><a href="#features">功能</a><a href="#how">使用方法</a><a href="#privacy">隐私</a><a href="#faq">常见问题</a></div>
+<div class="nav-end"><a class="btn sm" href="https://github.com/canmenzo/hammurabi">GitHub</a></div>
+</nav>
+<details class="langs"><summary aria-label="语言: 中文"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#ee1c25"/><path fill="#ffff00" d="M5 2l1.18 3.62H10L6.91 7.86 8.09 11.5 5 9.26 1.91 11.5 3.09 7.86 0 5.62h3.82z"/><circle cx="10" cy="2" r=".9" fill="#ffff00"/><circle cx="12" cy="4" r=".9" fill="#ffff00"/><circle cx="12" cy="7" r=".9" fill="#ffff00"/><circle cx="10" cy="9" r=".9" fill="#ffff00"/></svg><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></summary><div class="langs-menu"><a href="../" hreflang="en" lang="en" data-lang="en"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#b22234"/><rect y="1.538" width="30" height="1.538" fill="#fff"/><rect y="4.615" width="30" height="1.538" fill="#fff"/><rect y="7.692" width="30" height="1.538" fill="#fff"/><rect y="10.769" width="30" height="1.538" fill="#fff"/><rect y="13.846" width="30" height="1.538" fill="#fff"/><rect y="16.923" width="30" height="1.538" fill="#fff"/><rect width="12" height="10.769" fill="#3c3b6e"/><g fill="#fff"><circle cx="1.2" cy="1.1" r=".38"/><circle cx="3.6" cy="1.1" r=".38"/><circle cx="6.0" cy="1.1" r=".38"/><circle cx="8.4" cy="1.1" r=".38"/><circle cx="10.8" cy="1.1" r=".38"/><circle cx="1.2" cy="3.3" r=".38"/><circle cx="3.6" cy="3.3" r=".38"/><circle cx="6.0" cy="3.3" r=".38"/><circle cx="8.4" cy="3.3" r=".38"/><circle cx="10.8" cy="3.3" r=".38"/><circle cx="1.2" cy="5.5" r=".38"/><circle cx="3.6" cy="5.5" r=".38"/><circle cx="6.0" cy="5.5" r=".38"/><circle cx="8.4" cy="5.5" r=".38"/><circle cx="10.8" cy="5.5" r=".38"/><circle cx="1.2" cy="7.7" r=".38"/><circle cx="3.6" cy="7.7" r=".38"/><circle cx="6.0" cy="7.7" r=".38"/><circle cx="8.4" cy="7.7" r=".38"/><circle cx="10.8" cy="7.7" r=".38"/><circle cx="1.2" cy="9.9" r=".38"/><circle cx="3.6" cy="9.9" r=".38"/><circle cx="6.0" cy="9.9" r=".38"/><circle cx="8.4" cy="9.9" r=".38"/><circle cx="10.8" cy="9.9" r=".38"/></g></svg><span>English</span></a><a href="../tr/" hreflang="tr" lang="tr" data-lang="tr"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#e30a17"/><circle cx="10.625" cy="10" r="5" fill="#fff"/><circle cx="11.875" cy="10" r="4" fill="#e30a17"/><path fill="#fff" d="M12.083 10L13.81 9.439 13.81 7.622 14.878 9.092 16.606 8.531 15.538 10 16.606 11.469 14.878 10.908 13.81 12.378 13.81 10.561z"/></svg><span>Türkçe</span></a><a href="../es/" hreflang="es" lang="es" data-lang="es"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#aa151b"/><rect y="5" width="30" height="10" fill="#f1bf00"/></svg><span>Español</span></a><a href="../zh/" hreflang="zh" lang="zh" data-lang="zh" aria-current="page"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#ee1c25"/><path fill="#ffff00" d="M5 2l1.18 3.62H10L6.91 7.86 8.09 11.5 5 9.26 1.91 11.5 3.09 7.86 0 5.62h3.82z"/><circle cx="10" cy="2" r=".9" fill="#ffff00"/><circle cx="12" cy="4" r=".9" fill="#ffff00"/><circle cx="12" cy="7" r=".9" fill="#ffff00"/><circle cx="10" cy="9" r=".9" fill="#ffff00"/></svg><span>中文</span></a><a href="../hi/" hreflang="hi" lang="hi" data-lang="hi"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#fff"/><rect width="30" height="6.67" fill="#ff9933"/><rect y="13.33" width="30" height="6.67" fill="#138808"/><circle cx="15" cy="10" r="2.6" fill="none" stroke="#000080" stroke-width=".7"/><circle cx="15" cy="10" r=".6" fill="#000080"/></svg><span>हिन्दी</span></a><a href="../ar/" hreflang="ar" lang="ar" data-lang="ar"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#fff"/><rect width="30" height="6.67" fill="#ce1126"/><rect y="13.33" width="30" height="6.67" fill="#000"/><circle cx="15" cy="10" r="2" fill="#c09300"/></svg><span>العربية</span></a><a href="../fr/" hreflang="fr" lang="fr" data-lang="fr"><svg viewBox="0 0 30 20" aria-hidden="true"><rect width="30" height="20" fill="#fff"/><rect width="10" height="20" fill="#002395"/><rect x="20" width="10" height="20" fill="#ed2939"/></svg><span>Français</span></a></div></details>
+
+<main id="main">
+<header class="hero" id="top">
+<p class="status"><span class="dot"></span>0.7.9 版已发布</p>
+<h1>电脑里播放的<wbr>一切，<wbr>都有实时字幕</h1>
+<p class="sub">Hammurabi 把系统声音和麦克风转成屏幕上的字幕，需要的话还能翻译。支持 Windows、macOS 和 Linux，全部在你自己的电脑上运行。</p>
+<div class="cta"><a class="btn lg" id="dl" href="https://github.com/canmenzo/hammurabi/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dl-label">下载</span></a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">在 GitHub 上查看</a></div>
+<p class="files" id="files"><a data-os="win" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64-setup.exe">Windows</a><a data-os="cuda" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda-setup.exe">Windows，NVIDIA RTX 50 系列</a><a data-os="gpu" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-gpu-setup.exe">Windows，任意 GPU，含“说话人的声音”</a><a data-os="mac" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">macOS（Apple 芯片）</a><a data-os="linux" href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">Linux（x64）</a></p>
+<p class="proof">免费开源。无需账号。无需 API 密钥。音频从不离开你的电脑。</p>
+<figure class="shot hero-shot">
+<picture><source media="(max-width:640px)" srcset="../img/overlay-mobile.webp" width="800" height="500"><img src="../img/overlay.webp" width="1280" height="800" alt="视频底部的 Hammurabi 字幕浮层，上面是一句土耳其语，下面是它的英文译文"></picture>
+</figure>
+</header>
+
+<section class="wrap" id="download">
+<p class="eyebrow rv">下载</p>
+<h2 class="rv">选好系统，安装，运行</h2>
+<div class="grid os">
+<div class="card rv" id="os-win"><h3>Windows 10 和 11</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-x64-setup.exe">hammurabi-windows-x64-setup.exe</a></p><p>适用于任何 64 位电脑。安装程序只为当前用户安装，不需要管理员权限，之后 Hammurabi 会自动更新。SmartScreen 可能提示无法识别此应用：点击<strong>更多信息</strong>，再点击<strong>仍要运行</strong>。</p></div>
+<div class="card rv" id="os-cuda"><span class="tag">NVIDIA RTX 50 系列</span><h3>Windows CUDA 版</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-cuda-setup.exe">hammurabi-windows-cuda-setup.exe</a></p><p>在 RTX 50 系列显卡上运行 Whisper 和翻译：话音落下半秒多一点，译好的字幕就出现了。需要较新的 NVIDIA 驱动。较旧的显卡请使用普通 Windows 版。</p></div>
+<div class="card rv" id="os-gpu"><span class="tag">说话人的声音</span><h3>Windows 任意 GPU 版</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-windows-gpu-setup.exe">hammurabi-windows-gpu-setup.exe</a></p><p>增加“说话人的声音”功能，用说话人本人的声音朗读每条字幕。需要支持 Vulkan、有大约 1 到 2.5 GB 空闲显存的 GPU。其语音模型仅限个人非商业用途。</p></div>
+<div class="card rv" id="os-mac"><h3>Apple 芯片的 macOS</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-macos-arm64.zip">hammurabi-macos-arm64.zip</a></p><p>通过 Metal 使用 GPU。把应用移到“应用程序”文件夹。应用尚未经过公证，所以 macOS 会拦截第一次打开：运行 <code>xattr -dr com.apple.quarantine /Applications/Hammurabi.app</code>，或者先打开一次、关闭提示，再到<strong>系统设置 &gt; 隐私与安全性</strong>里点击<strong>仍要打开</strong>。开始字幕时，请允许<strong>系统录音</strong>。</p></div>
+<div class="card rv" id="os-linux"><h3>Linux x64</h3><p class="file"><a href="https://github.com/canmenzo/hammurabi/releases/latest/download/hammurabi-linux-x64.tar.gz">hammurabi-linux-x64.tar.gz</a></p><p>解压后运行 <code>./hammurabi</code>。系统声音需要 PulseAudio，或带 <code>pipewire-pulse</code> 的 PipeWire。请使用 X11 会话：Wayland 会阻止窗口置顶和全局快捷键。</p></div>
+</div>
+<div class="note rv"><strong>首次运行。</strong>Hammurabi 第一次需要语音识别模型时才会下载：CPU 默认模型约 300 MB，GPU 默认模型 1.6 GB。内置翻译模型另需约 1.7 GB，自然翻译器则需 5 到 7 GB，只有用到翻译时才会下载；在英文系统上，翻译默认关闭。设置会标出适合你显卡的模型；如果你在 RTX 50 系列显卡上装了普通版，一键即可换成 CUDA 版。下载中断后会从断点继续。</div>
+</section>
+
+<section class="wrap" id="features">
+<p class="eyebrow rv">功能</p>
+<h2 class="rv">为没有字幕的声音配上字幕</h2>
+<div class="grid">
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><h3>系统声音</h3><p>电影、直播、网课和通话。只要电脑在播放，Hammurabi 就能配上字幕。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg><h3>麦克风</h3><p>在和面前的人交谈？对方说话时字幕随之出现，语言不通也没关系。也可以两者同时加字幕。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><h3>可选翻译</h3><p>用内置的 MADLAD-400 模型翻译成 26 种语言，或通过 Ollama、LM Studio 使用你自己的本地大模型。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h6"/></svg><h3>始终置顶的浮层</h3><p>字幕浮在所有窗口之上，无边框全屏也不例外。可以拖到任意位置，并自定义文字样式。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><h3>托盘和快捷键</h3><p>常驻系统托盘，从不碍事。<kbd>Alt+Shift+T</kbd> 开关字幕，<kbd>Alt+Shift+M</kbd> 移动字幕。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg><h3>GPU 上飞快，CPU 上也够用</h3><p>Whisper 可以在任何 CPU 上运行，在 Apple GPU 上通过 Metal 运行，在 RTX 50 系列显卡上用 CUDA 版运行。Windows 11 还可以把 Windows 实时字幕当作识别引擎。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><h3>自然翻译器</h3><p>为游戏和电影而生：快速翻译器逐字直译，它却能读懂俚语和语气。在 Windows 上，任何显卡都能用。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 14h10M9 11h6"/></svg><h3>屏幕上的字幕</h3><p>自带字幕的游戏，可以直接读字幕，不必靠听。人名和俚语按原文呈现，一句台词往往还没说出口就已经翻译好了。开启<strong>遮住游戏的字幕</strong>后，译文会正好盖在游戏字幕上将其遮住，屏幕上和直播里都是如此。仅限 Windows。</p></div>
+<div class="card rv"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 000 7M15.5 8.5a5 5 0 010 7M5.6 5.6a9 9 0 000 12.8M18.4 5.6a9 9 0 010 12.8"/></svg><h3>直播字幕</h3><p>打开<strong>以网页提供字幕</strong>，再把 <code>http://127.0.0.1:7460</code> 作为浏览器源添加到 OBS。把游戏画面延迟半秒，观众就能在台词说出的同时看到字幕。</p></div>
+<div class="card wide rv"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 010 7M19 6a8.5 8.5 0 010 12"/></svg><h3>朗读</h3><p>比起看，更想听？Hammurabi 可以用你电脑上已有的语音，把每条完成的字幕读出来；如果开了翻译，就读译文。它说话时会暂停收听，所以自己的声音永远不会混进字幕。台词来得比它读得快时，它会加快语速，并跳过超过十秒的旧台词，始终跟上画面。按心情挑一个语音角色：Iris、Ruby、Owen、Miles、Grace 或 Skye，从沉稳舒缓到轻快明亮。每个都可以先点播放试听。一切都留在你的电脑上。</p></div>
+</div>
+</section>
+
+<div class="tagline"><div class="wrap"><p id="tag">声音不该止步于你说的语言。Hammurabi 把电脑里的每一个声音变成你能读懂的文字，而且一秒钟都不会发送出去。</p></div></div>
+
+<section class="wrap" id="how">
+<p class="eyebrow rv">使用方法</p>
+<h2 class="rv">设置一次，之后就不用操心</h2>
+<div class="split">
+<ol class="steps rv">
+<li><strong>选择音源</strong><span>在托盘菜单里选择系统声音、麦克风，或两者。</span></li>
+<li><strong>选择语言</strong><span>保持自动检测，或指定说话的语言以提高准确度。如需翻译，打开翻译并选择目标语言。</span></li>
+<li><strong>按下快捷键</strong><span>字幕出现在浮层中。再按一次 <kbd>Alt+Shift+T</kbd> 即可隐藏。应用会继续在托盘中运行。</span></li>
+<li><strong>在设置中微调</strong><span>语音识别模型、翻译引擎、字幕大小、颜色、背景、行数和停留时长。Hammurabi 还可以登录时启动。</span></li>
+</ol>
+<figure class="shot settings-shot rv"><img src="../img/settings.webp" width="522" height="992" loading="lazy" alt="Hammurabi 设置窗口，包含常规、音频、语音识别、翻译、字幕和快捷键等部分"></figure>
+</div>
+</section>
+
+<section class="wrap" id="privacy">
+<p class="eyebrow rv">隐私</p>
+<h2 class="rv">你的音频只留在你的电脑上</h2>
+<p class="lead rv">语音识别和翻译都在本地运行，你听到的、说出的任何内容都不会上传处理。不用注册账号，中间也没有我们的服务器。唯一的网络流量是从 Hugging Face 下载模型，以及在 GitHub 上检查新版本；在 Windows 上，这一步也会下载新的安装程序。如果你选择用本地大模型翻译，字幕会发送到你电脑上的那个服务。朗读使用操作系统自带的离线语音。代码在 GitHub 上公开，你可以亲自查看。详情请见<a href="/privacy">隐私政策</a>。</p>
+</section>
+
+<section class="wrap" id="faq">
+<p class="eyebrow rv">常见问题</p>
+<h2 class="rv">大家常问的问题</h2>
+<details class="rv"><summary>免费吗？</summary><p>免费。Hammurabi 以 MIT 许可证开源。没有付费版，没有试用期，也不用购买 API 密钥。</p></details>
+<details class="rv"><summary>Windows 提示找不到 MSVCP140.dll</summary><p>0.7.6 之前的版本需要 Visual C++ Redistributable，有些电脑上没有。重新下载安装程序并运行即可：它会覆盖安装旧版本，并附带这个文件。</p></details>
+<details class="rv"><summary>应用有中文界面吗？</summary><p>有。Hammurabi 支持英语、土耳其语、西班牙语、葡萄牙语和中文界面，系统语言是其中之一时就会以该语言打开。可以在<strong>设置 &gt; 常规</strong>中更改。字幕和翻译支持的语言远不止这些。</p></details>
+<details class="rv"><summary>我该下载哪个版本？</summary><p>在 Windows 上，只有 NVIDIA RTX 50 系列显卡才选 CUDA 版，其他人都用普通 Windows 版。想要“说话人的声音”就选 GPU 版。Mac 用户选 macOS 版（仅限 Apple 芯片），Linux 用户选 tar.gz。</p></details>
+<details class="rv"><summary>为什么 Windows 或 macOS 会对这个应用发出警告？</summary><p>安装包暂时还没有用付费证书进行代码签名。在 Windows 上，点击“更多信息”，再点击“仍要运行”。在 macOS 上，到“系统设置 &gt; 隐私与安全性”中点击“仍要打开”，或者用 <code>xattr -dr com.apple.quarantine /Applications/Hammurabi.app</code> 去掉隔离标记。</p></details>
+<details class="rv"><summary>它会把我的音频发到别处吗？</summary><p>不会。Whisper 在你的电脑上运行，翻译也是。什么都不会上传。</p></details>
+<details class="rv"><summary>速度有多快？</summary><p>在较新的 CPU 上，默认模型跟得上正常语速。在 RTX 50 系列显卡上用 CUDA 版，话音落下半秒多一点，译好的字幕就会出现。电脑较慢的话，在设置里选 tiny 或 base 模型。</p></details>
+<details class="rv"><summary>能给游戏加字幕吗？</summary><p>无边框和窗口化的游戏可以。Windows 上独占全屏的游戏会盖住所有其他窗口，所以浮层无法显示在它们上面。</p></details>
+<details class="rv"><summary>快捷键没反应怎么办？</summary><p>Windows 用 Alt+Shift 切换键盘布局，可能会吞掉这个快捷键。请在<strong>设置 &gt; 常规</strong>中更改。在 Linux 上，全局快捷键需要 X11 会话。</p></details>
+<details class="rv"><summary>和 Babil 有什么区别？</summary><p>Babil 为浏览器里的视频加字幕。Hammurabi 为整台电脑和你的麦克风加字幕，所以桌面应用、通话和面对面交谈也都能用。</p></details>
+<details class="rv"><summary>为什么叫这个名字？</summary><p>汉谟拉比（Hammurabi）曾统治巴比伦，而 Babil 是巴比伦的土耳其语名称。这款桌面应用是那个浏览器扩展的兄弟。</p></details>
+</section>
+
+<section class="wrap final">
+<div class="panel rv"><h2>读懂屏幕上的每一个声音</h2><p>免费支持 Windows、macOS 和 Linux。下载，选择音源，按下快捷键。</p><div class="cta"><a class="btn lg" href="https://github.com/canmenzo/hammurabi/releases/latest">下载 Hammurabi</a><a class="btn ghost lg" href="https://github.com/canmenzo/hammurabi">在 GitHub 上查看</a></div></div>
+</section>
+
+<section class="wrap" id="more">
+<p class="eyebrow rv">menzo 的更多作品</p>
+<h2 class="rv">其他免费开源工具</h2>
+<div class="grid tools"><a class="card rv" href="https://babil.menzo.dev"><img src="https://babil.menzo.dev/icon-128.png" alt="" width="40" height="40" loading="lazy"><h3>Babil</h3><p>直接在浏览器里为 YouTube、Twitch 和 Kick 显示实时翻译字幕。</p></a><a class="card rv" href="https://explain.menzo.dev"><img src="https://explain.menzo.dev/icon-128.png" alt="" width="40" height="40" loading="lazy"><h3>Explain</h3><p>选中网页上的任意文字，不用离开当前标签页就能得到通俗的解释。</p></a></div>
+</section>
+</main>
+<footer><div class="wrap"><div class="fb"><a class="brand" href="#top"><img src="../favicon.svg" alt="" width="24" height="24">Hammurabi</a><p>为整个桌面提供实时字幕。</p></div><nav aria-label="页脚"><a href="https://github.com/canmenzo/hammurabi">GitHub</a><a href="https://github.com/canmenzo/hammurabi/releases/latest">版本发布</a><a href="/privacy">隐私</a></nav></div><div class="wrap fine"><p>MIT 许可证。由 <a href="https://menzo.dev">menzo</a> 制作。</p><nav class="social" aria-label="社交链接"><a href="https://x.com/canmenzo" aria-label="X 主页"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.9 2H22l-6.8 7.8L23.2 22h-6.3L12 14.6 5.5 22H2.4l8.2-9.4L.8 2h6.5l4.4 6.7L18.9 2Zm-1.1 18h1.7L6.3 3.9H4.5L17.8 20Z"/></svg></a><a href="https://github.com/canmenzo" aria-label="GitHub 主页"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.57 0-1.23.44-2.24 1.16-3.03-.12-.28-.5-1.43.11-2.98 0 0 .94-.3 3.08 1.15a10.7 10.7 0 0 1 5.62 0c2.14-1.45 3.08-1.15 3.08-1.15.61 1.55.23 2.7.11 2.98.72.79 1.16 1.8 1.16 3.03 0 4.33-2.64 5.28-5.15 5.56.4.35.76 1.03.76 2.08v3.1c0 .3.2.65.78.54A11.2 11.2 0 0 0 12 .8Z"/></svg></a><a href="https://www.linkedin.com/in/canmenzo/" aria-label="LinkedIn 主页"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="1" y="1" width="22" height="22" rx="2" fill="currentColor"/><circle cx="6" cy="6" r="1.5" fill="var(--bg)"/><path fill="var(--bg)" d="M4.5 9h3v11h-3zm5.5 0h3v1.5c.7-1.2 1.8-1.8 3.2-1.8 3 0 3.8 1.9 3.8 4.8V20h-3v-6c0-1.7-.3-2.7-1.8-2.7-1.6 0-2.2 1.1-2.2 2.7v6h-3Z"/></svg></a><a href="mailto:hi@menzo.dev" aria-label="发邮件到 hi@menzo.dev"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm0 2 9 6 9-6V6l-9 6-9-6v1Z"/></svg></a></nav></div></footer>
+<script>
+(function(){
+var ua=navigator.userAgent,p=(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||"";
+var os=/iPhone|iPad|iPod|Android/i.test(ua)?"":/Win/i.test(p)?"win":/Mac/i.test(p)?"mac":/Linux|X11/i.test(p)?"linux":"";
+var names={win:"Windows",cuda:"Windows (RTX 50)",gpu:"Windows (GPU)",mac:"macOS",linux:"Linux"};
+var dl=document.getElementById("dl"),label=document.getElementById("dl-label"),links=[].slice.call(document.querySelectorAll("#files a"));
+function pick(k){links.forEach(function(a){if(a.getAttribute("data-os")===k){a.setAttribute("aria-current","true");dl.href=a.href;label.textContent="下载 "+names[k]+" 版"}else a.removeAttribute("aria-current")})}
+links.forEach(function(a){a.addEventListener("click",function(e){e.preventDefault();pick(a.getAttribute("data-os"))})});
+if(os==="win"){try{var c=document.createElement("canvas"),g=c.getContext("webgl")||c.getContext("experimental-webgl"),x=g&&g.getExtension("WEBGL_debug_renderer_info");var r=x?g.getParameter(x.UNMASKED_RENDERER_WEBGL):"";if(/RTX 50[5-9]0/i.test(r))os="cuda"}catch(e){}}
+if(os)pick(os);
+})();
+(function(){
+var rm=matchMedia("(prefers-reduced-motion: reduce)").matches;
+var t=document.getElementById("tag");
+t.innerHTML=Array.from(t.textContent).map(function(w){return '<span class="w">'+w+"</span>"}).join("");
+var ws=[].slice.call(t.querySelectorAll(".w"));
+var rv=[].slice.call(document.querySelectorAll(".rv"));
+function all(){ws.concat(rv).forEach(function(e){e.classList.add("on")})}
+if(!("IntersectionObserver" in window)||rm){all();return}
+function mk(m){var o=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add("on");o.unobserve(e.target)}})},{rootMargin:m});return o}
+var wo=mk("0px 0px -40% 0px");ws.forEach(function(w){wo.observe(w)});
+var ro=mk("0px 0px -5% 0px");rv.forEach(function(e){ro.observe(e)});
+var links=[].slice.call(document.querySelectorAll(".links a"));
+var so=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){links.forEach(function(a){if(a.getAttribute("href")==="#"+e.target.id)a.setAttribute("aria-current","true");else a.removeAttribute("aria-current")})}})},{rootMargin:"-40% 0px -55% 0px"});
+links.forEach(function(a){var s=document.querySelector(a.getAttribute("href"));if(s)so.observe(s)});
+})();
+</script>
+<script>(function(){var d=document.querySelector(".langs");if(!d)return;document.addEventListener("click",function(e){if(!d.contains(e.target))d.open=false});document.addEventListener("keydown",function(e){if(e.key==="Escape")d.open=false});d.addEventListener("click",function(e){var a=e.target.closest("a[data-lang]");if(a)try{localStorage.setItem("lang",a.dataset.lang)}catch(_){}})})()</script>
+</body>
+</html>

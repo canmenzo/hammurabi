@@ -44,7 +44,7 @@ let lastCover = {};
 const build = '{{BUILD}}';
 
 function background(opacity) {
-  const n = parseInt(st.bg_color.slice(1, 7), 16);
+  const n = parseInt(st.bg_color.trim().replace('#', '').slice(0, 6), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${opacity})`;
 }
 
@@ -176,7 +176,8 @@ events.onmessage = m => {
   else if (e.t === 'clear') clear();
   else if (e.t === 'cover') setCover(e);
   else if (e.t === 'style') {
-    st = e;
+    // An older app sends fewer settings: the rest keep their defaults.
+    st = { ...st, ...e };
     // Covering, the translation is shown in the cover alone.
     box.style.display = st.cover ? 'none' : '';
     setCover(lastCover);

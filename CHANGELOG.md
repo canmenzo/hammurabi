@@ -4,6 +4,11 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Changed
+
+- The translation in a cover (**Cover the game's subtitles**) is as large as the size set for translated text under Settings > Captions, on the screen and on the captions web page. It was 1.2 times the height of the game's subtitle, which no setting changed and which filled much of the picture over large subtitles. The box still covers the whole subtitle.
+- Settings > Captions greys out what a cover does not use (original text, background, captions at once, show original) while the game's subtitles are covered, and says so.
+
 ## [0.7.9] - 2026-11-17
 
 ### Added

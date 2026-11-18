@@ -621,6 +621,13 @@ texts! {
     Outline => ["Outline", "Kontur", "Contorno", "Contorno", "描边"],
     ShowOriginal => ["Show original text", "Özgün metni göster", "Mostrar texto original", "Mostrar texto original", "显示原文"],
     OriginalFirst => ["Original above the translation", "Özgün metin çevirinin üstünde", "Original encima de la traducción", "Original acima da tradução", "原文在译文上方"],
+    CoverLookNote => [
+        "While the game's subtitles are covered, only the translation shows, in a black box: its size, colour and edge, and how long it stays, apply. The greyed settings are not used.",
+        "Oyunun altyazısı kapatılırken yalnızca çeviri, siyah bir kutuda gösterilir: boyutu, rengi, kenarı ve ekranda kalma süresi geçerlidir. Gri ayarlar kullanılmaz.",
+        "Mientras se tapan los subtítulos del juego solo se ve la traducción, en un cuadro negro: se aplican su tamaño, color y borde, y cuánto permanece. Los ajustes en gris no se usan.",
+        "Enquanto as legendas do jogo estão cobertas, só a tradução aparece, numa caixa preta: valem o tamanho, a cor e a borda dela, e quanto tempo fica. As opções em cinza não são usadas.",
+        "遮住游戏字幕时只显示译文，放在黑框里：其字号、颜色、描边和停留时间有效。灰色的设置不起作用。",
+    ],
     ResetLook => ["Reset look", "Görünümü sıfırla", "Restablecer aspecto", "Redefinir aparência", "重置外观"],
 
     // Status lines

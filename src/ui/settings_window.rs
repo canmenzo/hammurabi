@@ -2075,6 +2075,11 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
     }
 
     section(ui, t(T::Look));
+    // A cover shows the translation alone, in a box that hides the subtitle under it.
+    let covers = s.covers();
+    if covers {
+        ui.weak(t(T::CoverLookNote));
+    }
     let c = &mut s.caption;
     grid(ui, "captions", |ui| {
         ui.label(t(T::TranslatedText));
@@ -2086,26 +2091,31 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         });
         ui.end_row();
 
-        ui.label(t(T::OriginalText));
-        ui.horizontal(|ui| {
-            *changed |= ui
-                .add(Slider::new(&mut c.orig_size, 10.0..=60.0).suffix(" px"))
-                .changed();
-            color_row(ui, &mut c.orig_color, changed);
+        ui.add_enabled_ui(!covers, |ui| ui.label(t(T::OriginalText)));
+        ui.add_enabled_ui(!covers, |ui| {
+            ui.horizontal(|ui| {
+                *changed |= ui
+                    .add(Slider::new(&mut c.orig_size, 10.0..=60.0).suffix(" px"))
+                    .changed();
+                color_row(ui, &mut c.orig_color, changed);
+            });
         });
         ui.end_row();
 
-        ui.label(t(T::Background));
+        ui.add_enabled_ui(!covers, |ui| ui.label(t(T::Background)));
         *changed |= ui
-            .add(
+            .add_enabled(
+                !covers,
                 Slider::new(&mut c.bg_opacity, 0.0..=1.0)
                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
             )
             .changed();
         ui.end_row();
 
-        ui.label(t(T::CaptionsAtOnce));
-        *changed |= ui.add(Slider::new(&mut c.cues, 1..=3)).changed();
+        ui.add_enabled_ui(!covers, |ui| ui.label(t(T::CaptionsAtOnce)));
+        *changed |= ui
+            .add_enabled(!covers, Slider::new(&mut c.cues, 1..=3))
+            .changed();
         ui.end_row();
 
         ui.label(t(T::KeepOnScreen));
@@ -2131,9 +2141,12 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
         ui.end_row();
     });
     *changed |= ui
-        .checkbox(&mut c.show_original, t(T::ShowOriginal))
+        .add_enabled(
+            !covers,
+            egui::Checkbox::new(&mut c.show_original, t(T::ShowOriginal)),
+        )
         .changed();
-    ui.add_enabled_ui(c.show_original, |ui| {
+    ui.add_enabled_ui(c.show_original && !covers, |ui| {
         *changed |= ui
             .checkbox(&mut c.original_first, t(T::OriginalFirst))
             .changed();

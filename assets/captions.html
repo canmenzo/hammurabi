@@ -132,7 +132,8 @@ function clear() {
 }
 
 // Over a game's own subtitle, hiding it, with its translation: the page is taken to show the
-// whole picture subtitles are read in. Sizes are in the subtitle row's heights, as the overlay's.
+// whole picture subtitles are read in. The room around the subtitle is in its row's heights, as
+// the overlay's; the letters are as large as any translated text.
 function setCover(e) {
   cover.style.display = e.box ? 'flex' : 'none';
   if (!e.box) return;
@@ -145,7 +146,7 @@ function setCover(e) {
     minWidth: `calc(${(r - l) * 100}vw + ${2 * padX}vh)`,
     minHeight: (b - t) * 100 + 2 * padY + 'vh',
     padding: `${padY}vh ${padX}vh`,
-    fontSize: 1.2 * row + 'vh',
+    fontSize: st.trans_size * scale + 'px',
     color: st.trans_color,
     textShadow: shadow(),
   });
@@ -164,6 +165,9 @@ events.onmessage = m => {
     st = e;
     // Covering, the translation is shown in the cover alone.
     box.style.display = st.cover ? 'none' : '';
+    cover.style.fontSize = st.trans_size * scale + 'px';
+    cover.style.color = st.trans_color;
+    cover.style.textShadow = shadow();
     cues.forEach(draw);
   }
 };

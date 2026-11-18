@@ -23,9 +23,9 @@ const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 8.0;
 const BLOCK_GAP: f32 = 6.0;
 const LINE_GAP: f32 = 2.0;
-// A cover's sizes, in heights of the subtitle's row: its letters, and the room it leaves around
-// the subtitle across and above and below, for the letters' shadows and outlines.
-const COVER_FONT: f32 = 1.2;
+// The room a cover leaves around the subtitle across and above and below, in heights of the
+// subtitle's row, for the letters' shadows and outlines. Its letters are as large as any
+// translated text.
 const COVER_PAD_X: f32 = 0.5;
 const COVER_PAD_Y: f32 = 0.3;
 /// A subtitle that comes this long after the cover was last up starts with an empty one, not
@@ -295,7 +295,7 @@ impl OverlayState {
             let pad = vec2(COVER_PAD_X, COVER_PAD_Y) * row;
             let mut job = LayoutJob::simple(
                 text.unwrap_or_default().to_owned(),
-                FontId::proportional(COVER_FONT * row),
+                FontId::proportional(style.trans_size),
                 Color32::WHITE,
                 (0.9 * rect.width()).max(r.width()),
             );

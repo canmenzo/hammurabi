@@ -4,8 +4,11 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-11-18
+
 ### Added
 
+- Subtitles on screen reads light grey letters with a black outline over bright ground, as in Red Dead Redemption in daylight, where it read nothing. It does so for English subtitles and only where the white and plain readings find nothing, so everything that was read before is read the same: eleven test scenes from four games give the same lines as 0.7.9.
 - The cover over a game's subtitle (**Cover the game's subtitles**) can be set up under Settings > Captions > Look while the game's subtitles are covered: moved right or left and up or down from the subtitle by up to 30% of the picture, given from none to three times the usual room around the subtitle, and kept from 30% to 100% of the picture wide at most (90% by default). The screen and the captions web page both follow these settings.
 - Captions have a background colour, next to the background opacity under Settings > Captions. It is black by default and colours both the caption boxes and the cover.
 - The captions web page reloads itself when the app that serves it changes, so a Browser source in OBS shows the new page after an update. The log says whether a page that connects is the current one.

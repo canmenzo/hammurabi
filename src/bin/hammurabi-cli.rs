@@ -123,7 +123,7 @@ enum Cmd {
         #[arg(long)]
         window: Option<String>,
         /// The band to read, as fractions of the height.
-        #[arg(long, default_value_t = 0.72)]
+        #[arg(long, default_value_t = 0.75)]
         top: f32,
         #[arg(long, default_value_t = 1.0)]
         bottom: f32,
@@ -1172,6 +1172,15 @@ fn screen_raw(width: usize, height: usize, verbose: bool) -> anyhow::Result<()> 
         let at = f64::from(n) / 10.0;
         if let Some((seen, text)) = reader.read(at, &lines, &plain) {
             println!("{seen:.2}\t{at:.2}\t{text}");
+        }
+        if verbose {
+            // What the subtitle being read covers, in pixels of the picture read.
+            let spot = reader.spot().map(|s| {
+                let (w, h) = (size.0 as f32, size.1 as f32);
+                let a = s.area;
+                [a.left * w, a.top * h, a.right * w, a.bottom * h].map(f32::round)
+            });
+            eprintln!("{at:.1}	spot {spot:?}");
         }
         n += 1;
     }

@@ -76,7 +76,7 @@ const LATE_FRAC: f32 = 0.5;
 const READS_MAX: usize = 64;
 /// Letters less white than this (`Prep::whiteness`) are read in the plain picture: white
 /// subtitles measure 0.45 to 1, a game's thin off-white ones 0.1 to 0.25.
-const WHITE_MIN: f32 = 0.35;
+pub(super) const WHITE_MIN: f32 = 0.35;
 /// Outlined letters are read over ground at least this bright (`Prep::ground`): 76 to 115 in
 /// daylight behind Red Dead Redemption's, 34 to 71 in its dark scenes, which the plain picture
 /// reads.
@@ -137,6 +137,8 @@ pub struct Reader {
     other: f64,
     /// and when one of outlined letters last did.
     edged: f64,
+    /// The subtitle that stands has white rows and rows that are not (`Prep::mixed`).
+    mixed: bool,
     tracker: Tracker,
     roller: Roller,
     /// What the subtitle being read covers.
@@ -149,12 +151,14 @@ type Bounds = ([f32; 4], f32);
 
 fn bounds<'a>(rows: impl IntoIterator<Item = &'a Line>) -> Option<Bounds> {
     rows.into_iter().fold(None, |b, r| {
-        let ([x0, y0, x1, y1], h) = b.unwrap_or(([f32::MAX, f32::MAX, 0.0, 0.0], 0.0));
-        Some((
-            [x0.min(r.x0), y0.min(r.y0), x1.max(r.x1), y1.max(r.y1)],
-            h.max(r.y1 - r.y0),
-        ))
+        let row = ([r.x0, r.y0, r.x1, r.y1], r.y1 - r.y0);
+        Some(b.map_or(row, |b| both(b, row)))
     })
+}
+
+/// What two bounds cover together.
+fn both(([x0, y0, x1, y1], h): Bounds, ([a0, b0, a1, b1], g): Bounds) -> Bounds {
+    ([x0.min(a0), y0.min(b0), x1.max(a1), y1.max(b1)], h.max(g))
 }
 
 impl Reader {
@@ -175,6 +179,7 @@ impl Reader {
             white: None,
             other: f64::MIN,
             edged: f64::MIN,
+            mixed: false,
             tracker: Tracker::default(),
             roller: Roller::default(),
             spot: None,
@@ -257,11 +262,14 @@ impl Reader {
                     && words_alike(&b.text)
             });
         let block = block.filter(|b| edged || !self.prep.outlined(b));
-        let block = if self.white.is_some_and(|w| w < WHITE_MIN) && !edged {
-            plain
-        } else {
-            block
-        };
+        // A subtitle with a row that is not white is whole in the plain picture only, and is
+        // read there for as long as it stands: such a row measures now white, now not.
+        self.mixed = plain.as_ref().is_some_and(|b| {
+            self.prep.mixed(b)
+                || (self.mixed && self.tracker.cur.as_ref().is_some_and(|c| c.same(b)))
+        });
+        let white = !self.mixed && self.white.is_none_or(|w| w >= WHITE_MIN);
+        let block = if !white && !edged { plain } else { block };
         if edged {
             self.edged = t;
         }
@@ -682,22 +690,27 @@ impl Tracker {
                         c.best -= usize::from(old < c.best);
                     }
                 }
-                if let Some(([x0, y0, x1, y1], h)) = bounds(&block.rows) {
-                    let ([a0, b0, a1, b1], g) = c.bounds;
-                    c.bounds = ([a0.min(x0), b0.min(y0), a1.max(x1), b1.max(y1)], g.max(h));
+                if let Some(b) = bounds(&block.rows) {
+                    c.bounds = both(c.bounds, b);
                 }
                 c.reads.push(block);
                 c.last = t;
                 c
             }
-            cur => cur.insert(Track {
-                t0: t,
-                last: t,
-                bounds: bounds(&block.rows).unwrap_or_default(),
-                reads: vec![block],
-                best: 0,
-                emitted: false,
-            }),
+            cur => {
+                // Read with a row more or fewer, the subtitle that stands covers what it did:
+                // its cover does not move with every reading.
+                let was = cur.as_ref().filter(|c| c.shares(&block)).map(|c| c.bounds);
+                let now = bounds(&block.rows).unwrap_or_default();
+                cur.insert(Track {
+                    t0: t,
+                    last: t,
+                    bounds: was.map_or(now, |was| both(was, now)),
+                    reads: vec![block],
+                    best: 0,
+                    emitted: false,
+                })
+            }
         };
         if cur.emitted {
             if let Some(block) = cur.reads.last() {
@@ -765,6 +778,21 @@ impl Track {
                 .reads
                 .last()
                 .is_some_and(|last| alike(best).max(alike(last)) >= SAME_SIM)
+    }
+
+    /// Has this reading a row of the subtitle that stands: in the same place, and alike?
+    fn shares(&self, b: &Block) -> bool {
+        let tol = EXT_TOL * b.h;
+        self.reads.last().is_some_and(|last| {
+            last.rows.iter().any(|o| {
+                b.rows.iter().any(|r| {
+                    (r.x0 - o.x0).abs() <= tol
+                        && (r.x1 - o.x1).abs() <= tol
+                        && (r.y0 - o.y0).abs().max((r.y1 - o.y1).abs()) <= 0.5 * b.h
+                        && sim(&key(&r.text), &key(&o.text)) >= SAME_SIM
+                })
+            })
+        })
     }
 
     /// The rows to give on now, or None to wait for more readings.
@@ -1417,6 +1445,26 @@ mod tests {
         assert_eq!(reader.spot(), Some(spot));
         reader.read(0.8, &[], &[]);
         assert_eq!(reader.spot(), None);
+    }
+
+    #[test]
+    fn a_subtitle_read_with_a_row_fewer_covers_what_it_did() {
+        let mut reader = Reader::new(1920, 300);
+        let two = vec![line_at(A, 148.0, None), line(B)];
+        reader.read(0.0, &two, &two);
+        reader.read(0.1, &two, &two);
+        let spot = reader.spot().unwrap();
+        // Its lower row is lost for a reading, and found again: the cover stays where it is.
+        let one = vec![line_at(A, 148.0, None)];
+        reader.read(0.2, &one, &one);
+        assert_eq!(reader.spot(), Some(spot));
+        reader.read(0.3, &two, &two);
+        assert_eq!(reader.spot(), Some(spot));
+        // Another subtitle in its upper row's place covers its own rows only.
+        let other = vec![line_at("Nobody asked you anything.", 148.0, None)];
+        reader.read(0.4, &other, &other);
+        let now = reader.spot().unwrap();
+        assert!(now.area.bottom < spot.area.bottom, "{now:?}");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! white, has been for as many pictures as the subtitle was found in, and lies in a stroke;
 //! sky, walls and headlights are too wide, and what moves is too young.
 
-use super::reader::{Block, C_TOL, EXT_TOL, GROUND_MIN, H_MAX, H_MIN, Line, key};
+use super::reader::{Block, C_TOL, EXT_TOL, GROUND_MIN, H_MAX, H_MIN, Line, WHITE_MIN, key};
 
 /// A pixel is white now when its darkest channel is at least this,
 const LO: u8 = 235;
@@ -21,6 +21,9 @@ const K_MAX: u8 = 8;
 /// lasted into a picture.
 /// Bright pixels in thin strokes a subtitle has to have for its whiteness to be told.
 const WHITE_OF: usize = 100;
+/// A row is of thinner letters than a white one when its whiteness is under this share of that
+/// one's: 0.5 to 0.65 measured, where both rows of a white subtitle measure alike.
+const THINNER: f32 = 0.75;
 const COLLAPSE: f32 = 0.5;
 const COLLAPSE_MIN: usize = 40;
 /// Pictures without a subtitle before where it stood is forgotten.
@@ -282,29 +285,64 @@ impl Prep {
         median(&hist)
     }
 
+    /// A row read in the last picture: how many of its pixels in thin strokes are white, and
+    /// how many are at least `GLO` bright.
+    fn white_of(&self, r: &Line) -> (usize, usize) {
+        let (x0, y0) = (r.x0.max(0.0) as usize, r.y0.max(0.0) as usize);
+        let x1 = (r.x1.max(0.0) as usize + 1).min(self.w);
+        let y1 = (r.y1.max(0.0) as usize + 1).min(self.h);
+        if x0 >= x1 || y0 >= y1 {
+            return (0, 0);
+        }
+        let (w, h) = (x1 - x0, y1 - y0);
+        [LO, GLO]
+            .map(|level| {
+                let mut thin: Vec<bool> = (0..w * h)
+                    .map(|i| self.dark[(y0 + i / w) * self.w + x0 + i % w] >= level)
+                    .collect();
+                strokes(&mut thin, w, h, self.stroke);
+                thin.iter().filter(|&&t| t).count()
+            })
+            .into()
+    }
+
     /// How white the letters of a subtitle read in the last picture are: of the pixels in
     /// its rows that lie in thin strokes at least `GLO` bright, the share that is white.
     /// Most of a white subtitle's; a fifth of one in thin, off-white or coloured letters,
     /// which this picture is not made for. None where there is too little to tell.
     pub fn whiteness(&self, block: &Block) -> Option<f32> {
-        let (mut white, mut bright) = (0, 0);
-        for r in &block.rows {
-            let (x0, y0) = (r.x0.max(0.0) as usize, r.y0.max(0.0) as usize);
-            let x1 = (r.x1.max(0.0) as usize + 1).min(self.w);
-            let y1 = (r.y1.max(0.0) as usize + 1).min(self.h);
-            if x0 >= x1 || y0 >= y1 {
-                continue;
-            }
-            let (w, h) = (x1 - x0, y1 - y0);
-            for (level, count) in [(LO, &mut white), (GLO, &mut bright)] {
-                let mut thin: Vec<bool> = (0..w * h)
-                    .map(|i| self.dark[(y0 + i / w) * self.w + x0 + i % w] >= level)
-                    .collect();
-                strokes(&mut thin, w, h, self.stroke);
-                *count += thin.iter().filter(|&&t| t).count();
-            }
-        }
+        let (white, bright) = block
+            .rows
+            .iter()
+            .map(|r| self.white_of(r))
+            .fold((0, 0), |a, r| (a.0 + r.0, a.1 + r.1));
         (bright >= WHITE_OF).then(|| white as f32 / bright as f32)
+    }
+
+    /// Has a subtitle read in the last picture a row of white letters and one of letters that
+    /// are less so, over dark ground? A game sets what a second voice says under the first in
+    /// thinner letters, which this picture shows in part or not at all, while all its letters
+    /// together measure white. Over dark ground the plain picture reads both.
+    pub fn mixed(&self, block: &Block) -> bool {
+        let rows: Vec<(f32, &Line)> = block
+            .rows
+            .iter()
+            .filter_map(|r| {
+                let (white, bright) = self.white_of(r);
+                (bright >= WHITE_OF).then(|| (white as f32 / bright as f32, r))
+            })
+            .collect();
+        let most = rows.iter().map(|r| r.0).fold(0.0, f32::max);
+        most >= WHITE_MIN
+            && rows.iter().any(|&(share, r)| {
+                let mut hist = [0usize; 256];
+                for y in r.y0.max(0.0) as usize..(r.y1.max(0.0) as usize + 1).min(self.h) {
+                    for x in r.x0.max(0.0) as usize..(r.x1.max(0.0) as usize + 1).min(self.w) {
+                        hist[usize::from(self.dark[y * self.w + x])] += 1;
+                    }
+                }
+                share < THINNER * most && median(&hist) < GROUND_MIN
+            })
     }
 
     /// What was read in the picture prepared last: the subtitle found in it and all its lines.
@@ -620,6 +658,53 @@ mod tests {
         assert_eq!(grey[30 * w + 901], 0);
         assert_eq!(grey[30 * w + 1201], 255);
         assert!(prep.edged.iter().all(|&e| !e));
+    }
+
+    #[test]
+    fn a_row_of_thinner_letters_under_a_white_one_is_told_over_dark_ground() {
+        let (w, h) = (640, 80);
+        // Two rows of strokes three pixels wide, white in the upper one; in the lower one as
+        // white, or (`thin`) white in their middle pixel only.
+        let draw = |ground: u8, thin: bool| -> Vec<u8> {
+            (0..w * h)
+                .flat_map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    let stroke = (200..440).contains(&x) && x % 12 < 3;
+                    let v = if stroke && (10..30).contains(&y) {
+                        255
+                    } else if stroke && (45..65).contains(&y) {
+                        if thin && x % 12 != 1 { 190 } else { 255 }
+                    } else {
+                        ground
+                    };
+                    [v, v, v, 255]
+                })
+                .collect()
+        };
+        let row = |y0: f32| Line {
+            text: "row".into(),
+            x0: 195.0,
+            y0,
+            x1: 445.0,
+            y1: y0 + 24.0,
+            words: vec![("row".into(), 195.0, 445.0)],
+        };
+        let block = Block {
+            text: "row row".into(),
+            rows: vec![row(8.0), row(43.0)],
+            x0: 195.0,
+            x1: 445.0,
+            h: 24.0,
+        };
+        let mixed = |ground: u8, thin: bool| {
+            let mut prep = Prep::new(w, h);
+            prep.prepare(&draw(ground, thin));
+            prep.mixed(&block)
+        };
+        assert!(mixed(10, true));
+        assert!(!mixed(10, false));
+        // Over bright ground the plain picture is not to be read for it.
+        assert!(!mixed(120, true));
     }
 
     #[test]

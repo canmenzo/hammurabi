@@ -4,6 +4,18 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-11-20
+
+### Fixed
+
+- Subtitles on screen: the translation no longer jumps up and down while a two-row subtitle stands. A game that sets a second speaker's line under the first in thinner letters had that row read in one picture and missed in the next, so the place of the cover was worked out anew with every reading and the two lines came as two translations, one pushing the other out. Such a subtitle is now read whole, both rows come as one translation, and a subtitle that is read with a row more or fewer keeps the place it had.
+
+### Changed
+
+- New defaults for a cover, used on a first install and by Reset look under Settings > Captions: the box is see-through (0%), stands 6% of the picture under the game's subtitle and grows to half the picture's width at most, so the game's subtitle stays readable with its translation right under it. Make the box opaque and move it back up to hide the subtitle as before. What 0.7.10 saved is kept; a copy that updates from an older version takes these defaults for the cover.
+- Translated text is 35 px with no edge by default, and a caption stays on screen for 1 second at least (it was 30 px with a shadow, and 4 seconds). These apply to captions of what is heard too.
+- The area read for subtitles starts 75% down the picture by default (it was 72%).
+
 ## [0.7.10] - 2026-11-18
 
 ### Added

@@ -654,6 +654,11 @@ mod tests {
             asr_backend: crate::settings::AsrBackend::ScreenText,
             translate: true,
             target_language: "tr".into(),
+            caption: CaptionStyle {
+                hold_secs: 4.0,
+                cover_y: 0.0,
+                ..CaptionStyle::default()
+            },
             ..Settings::default()
         };
         let spot = |left: f32| Spot {

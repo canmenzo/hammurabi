@@ -103,7 +103,8 @@ pub struct CaptionStyle {
     /// The background of caption boxes, with `bg_opacity`, and of a cover, with `cover_opacity`.
     pub bg_color: String,
     pub bg_opacity: f32,
-    /// Below 1 the game's subtitle shows through the cover.
+    /// Below 1 the game's subtitle shows through the cover. By default the cover is clear and
+    /// stands under the subtitle (`cover_y`): both are read.
     pub cover_opacity: f32,
     pub show_original: bool,
     pub original_first: bool,
@@ -123,22 +124,22 @@ pub struct CaptionStyle {
 impl Default for CaptionStyle {
     fn default() -> Self {
         Self {
-            trans_size: 30.0,
+            trans_size: 35.0,
             orig_size: 20.0,
             trans_color: "#ffffff".into(),
             orig_color: "#ffe066".into(),
             bg_color: "#000000".into(),
             bg_opacity: 0.75,
-            cover_opacity: 1.0,
+            cover_opacity: 0.0,
             show_original: true,
             original_first: false,
             cues: 2,
-            hold_secs: 4.0,
-            edge: Edge::Shadow,
+            hold_secs: 1.0,
+            edge: Edge::None,
             cover_x: 0.0,
-            cover_y: 0.0,
+            cover_y: -6.0,
             cover_pad: 1.0,
-            cover_max_width: 90.0,
+            cover_max_width: 50.0,
         }
     }
 }
@@ -234,7 +235,7 @@ impl Default for Settings {
             asr_backend: AsrBackend::Whisper,
             model: ModelChoice::Auto,
             screen_window: String::new(),
-            screen_top: 0.72,
+            screen_top: 0.75,
             screen_bottom: 1.0,
             screen_left: 0.0,
             screen_right: 1.0,
@@ -407,9 +408,9 @@ mod tests {
         );
         assert_eq!(
             (c.bg_color.as_str(), c.cover_opacity, c.cover_x, c.cover_y),
-            ("#000000", 1.0, 0.0, 0.0)
+            ("#000000", 0.0, 0.0, -6.0)
         );
-        assert_eq!((c.cover_pad, c.cover_max_width), (1.0, 90.0));
+        assert_eq!((c.cover_pad, c.cover_max_width), (1.0, 50.0));
     }
 
     #[test]

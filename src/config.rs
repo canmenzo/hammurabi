@@ -88,7 +88,7 @@ mod tests {
         let s = load_from(&path);
         assert!(!s.translate);
         assert_eq!(s.caption.cues, 5);
-        assert_eq!(s.caption.trans_size, 30.0);
+        assert_eq!(s.caption.trans_size, 35.0);
         assert_eq!(s.speak_persona, "lale");
         assert!(!path.with_extension("toml.bak").exists());
         let _ = std::fs::remove_dir_all(dir);

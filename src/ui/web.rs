@@ -230,15 +230,15 @@ mod tests {
         assert_eq!(style["bg_color"], "#000000");
         assert_eq!(
             (&style["bg"], &style["cover_bg"]),
-            (&json!(0.75), &json!(1.0))
+            (&json!(0.75), &json!(0.0))
         );
         assert_eq!(
             (&style["cover_x"], &style["cover_y"]),
-            (&json!(0.0), &json!(0.0))
+            (&json!(0.0), &json!(-6.0))
         );
         assert_eq!(
             (&style["cover_pad"], &style["cover_max_width"]),
-            (&json!(1.0), &json!(90.0))
+            (&json!(1.0), &json!(50.0))
         );
         // The page is registered once the style went out.
         web.caption(

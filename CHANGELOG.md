@@ -4,8 +4,19 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-11-22
+
+### Added
+
+- Settings > General has a **Theme**: System (as before, the system's light or dark mode), Dark or Light, for Hammurabi's own windows. Captions keep the colours set for them.
+
+### Changed
+
+- **Cover the game's subtitles** is under Settings > Captions > Look, above the settings of the cover, while Subtitles on screen is what captions come from. It was on the Listen page, under the picture of what is read.
+
 ### Fixed
 
+- Windows with an NVIDIA graphics card: two blank windows named "NVOGLDC invisible" and "__wglDummyWindowFodder" could come up behind Hammurabi and stay. They are the graphics driver's own and are meant to stay hidden; Hammurabi hides them again whenever they are shown.
 - The Natural translator starts on computers where its language model needs more than three seconds for its first line. The first lines through a freshly started model were meant to get two minutes, but were cut off after the three seconds a caption may wait, so translation ended with "Translation unavailable: LLM response unreadable: timeout: receive body".
 
 ## [0.7.11] - 2026-11-20

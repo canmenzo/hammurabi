@@ -55,6 +55,11 @@ pub fn find(part: &str) -> Option<HWND> {
 /// They stay on the display itself. Its other windows stay in the picture, so that a
 /// screenshot shows them. (Not before Windows 10 2004, where this fails and the captions are in
 /// the picture.)
+///
+/// No other window of this process is asked anything. NVIDIA's OpenGL driver keeps two hidden
+/// windows here ("NVOGLDC invisible", "__wglDummyWindowFodder"), and Windows starts to draw a
+/// hidden window that is told how it is to be captured: they stood on the display, blank, for
+/// as long as the app ran.
 pub fn keep_own_out(out: bool) {
     unsafe extern "system" fn each(w: HWND, out: LPARAM) -> BOOL {
         let mut process = 0u32;
@@ -62,13 +67,14 @@ pub fn keep_own_out(out: bool) {
         if process == std::process::id() {
             let mut title = [0u16; 32];
             let n = unsafe { GetWindowTextW(w, &mut title) };
-            let captions = String::from_utf16_lossy(&title[..n.max(0) as usize]);
-            let affinity = if out.0 != 0 && captions == super::CAPTIONS_WINDOW {
-                WDA_EXCLUDEFROMCAPTURE
-            } else {
-                WDA_NONE
-            };
-            let _ = unsafe { SetWindowDisplayAffinity(w, affinity) };
+            if String::from_utf16_lossy(&title[..n.max(0) as usize]) == super::CAPTIONS_WINDOW {
+                let affinity = if out.0 != 0 {
+                    WDA_EXCLUDEFROMCAPTURE
+                } else {
+                    WDA_NONE
+                };
+                let _ = unsafe { SetWindowDisplayAffinity(w, affinity) };
+            }
         }
         true.into()
     }
@@ -98,4 +104,66 @@ impl Drop for OwnOut {
 
 pub fn primary_display() -> HMONITOR {
     unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, GetWindowDisplayAffinity, WDA_MONITOR,
+        WINDOW_DISPLAY_AFFINITY, WINDOW_EX_STYLE, WS_POPUP,
+    };
+    use windows::core::{HSTRING, w};
+
+    use super::*;
+
+    /// A hidden window a pixel large.
+    fn window(title: &str) -> HWND {
+        let title = HSTRING::from(title);
+        // SAFETY: a window of a class Windows registers itself.
+        unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("Static"),
+                &title,
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+        }
+    }
+
+    fn affinity(w: HWND) -> WINDOW_DISPLAY_AFFINITY {
+        let mut affinity = 0u32;
+        // SAFETY: the window is this process's.
+        unsafe { GetWindowDisplayAffinity(w, &mut affinity) }.unwrap();
+        WINDOW_DISPLAY_AFFINITY(affinity)
+    }
+
+    /// Only the captions are kept out of pictures and let in again: another window of this
+    /// process, as the graphics driver has, is asked nothing and keeps what it had.
+    #[test]
+    fn only_the_captions_are_kept_out() {
+        let (captions, other) = (window(crate::screen::CAPTIONS_WINDOW), window("another"));
+        // Where Windows does not compose the desktop no window can be kept out.
+        // SAFETY: the windows are this thread's, and live until destroyed below.
+        if unsafe { SetWindowDisplayAffinity(other, WDA_MONITOR) }.is_ok() {
+            keep_own_out(true);
+            assert_eq!(affinity(captions), WDA_EXCLUDEFROMCAPTURE);
+            assert_eq!(affinity(other), WDA_MONITOR);
+            keep_own_out(false);
+            assert_eq!(affinity(captions), WDA_NONE);
+            assert_eq!(affinity(other), WDA_MONITOR);
+        }
+        for w in [captions, other] {
+            // SAFETY: as above.
+            let _ = unsafe { DestroyWindow(w) };
+        }
+    }
 }

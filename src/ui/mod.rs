@@ -113,7 +113,6 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         i18n::set(settings.ui_language);
         settings_window::apply_theme(&ctx);
-        platform::hide_driver_windows();
         let first_run = crate::paths::config_file().is_ok_and(|p| !p.exists());
         let (app_tx, app_rx) = crossbeam_channel::unbounded();
         install_handlers(&ctx, app_tx.clone());

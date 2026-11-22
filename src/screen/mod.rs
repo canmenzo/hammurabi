@@ -240,8 +240,9 @@ mod source {
         let mut minimized = false;
         let mut place = Place::default();
         // For the log, as nothing else tells why no subtitle comes: the most lines of text
-        // found in one picture, the subtitles read, and whether their lack was logged.
-        let (mut texts, mut subtitles, mut told) = (0, 0u32, false);
+        // found in one picture and what they said, the subtitles read, and whether their lack
+        // was logged.
+        let (mut texts, mut sample, mut subtitles, mut told) = (0, String::new(), 0u32, false);
         while !stop.load(Ordering::Relaxed) {
             let t = Instant::now();
             // Once a second, for the windows opened since.
@@ -301,7 +302,14 @@ mod source {
                     }
                 } else {
                     fails = 0;
-                    texts = texts.max(read[0].1.len() + read[1].1.len());
+                    let found = read.iter().flat_map(|r| &r.1);
+                    if found.clone().count() > texts {
+                        texts = found.clone().count();
+                        sample = found
+                            .map(|l| l.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                    }
                     if let Some((_, line)) = reader.read(at, &read[0].1, &read[1].1) {
                         subtitles += 1;
                         if subtitles == 1 {
@@ -319,7 +327,7 @@ mod source {
                 let (w, h) = image.as_ref().map_or((0, 0), |i| (i.width, i.height));
                 log::warn!(
                     "screen: no subtitle read in a minute: the area is {w}x{h}, and at most \
-                     {texts} lines of text were found in it at once"
+                     {texts} lines of text were found in it at once: {sample:.300}"
                 );
             }
             let now = Place {

@@ -108,6 +108,43 @@ pub fn tf(key: T, args: &[&dyn Display]) -> String {
     s
 }
 
+/// The language's name in the app's language; unknown codes are returned as-is.
+pub fn language_name(code: &str) -> &str {
+    let key = match code {
+        "en" => T::LangEn,
+        "es" => T::LangEs,
+        "fr" => T::LangFr,
+        "de" => T::LangDe,
+        "it" => T::LangIt,
+        "pt" => T::LangPt,
+        "nl" => T::LangNl,
+        "pl" => T::LangPl,
+        "ru" => T::LangRu,
+        "uk" => T::LangUk,
+        "tr" => T::LangTr,
+        "ar" => T::LangAr,
+        "fa" => T::LangFa,
+        "hi" => T::LangHi,
+        "bn" => T::LangBn,
+        "ur" => T::LangUr,
+        "id" => T::LangId,
+        "vi" => T::LangVi,
+        "th" => T::LangTh,
+        "ja" => T::LangJa,
+        "ko" => T::LangKo,
+        "zh" => T::LangZh,
+        "zh-Hant" => T::LangZhHant,
+        "el" => T::LangEl,
+        "sv" => T::LangSv,
+        "ro" => T::LangRo,
+        "cs" => T::LangCs,
+        "hu" => T::LangHu,
+        "he" => T::LangHe,
+        _ => return code,
+    };
+    t(key)
+}
+
 /// `x` with `places` decimals, and the decimal comma where the language writes one.
 pub fn decimal(x: f64, places: usize) -> String {
     let s = format!("{x:.places$}");
@@ -811,6 +848,37 @@ texts! {
     TheSpeakersVoice => ["the speaker's voice", "konuşanın sesi", "la voz del hablante", "a voz de quem fala", "说话人的声音"],
     OmniVoiceOwnVoice => ["OmniVoice's own voice", "OmniVoice'un kendi sesi", "la voz propia de OmniVoice", "a voz própria do OmniVoice", "OmniVoice 自带的声音"],
     ASystemVoice => ["a system voice", "bir sistem sesi", "una voz del sistema", "uma voz do sistema", "系统语音"],
+
+    // Language names
+    LangEn => ["English", "İngilizce", "Inglés", "Inglês", "英语"],
+    LangEs => ["Spanish", "İspanyolca", "Español", "Espanhol", "西班牙语"],
+    LangFr => ["French", "Fransızca", "Francés", "Francês", "法语"],
+    LangDe => ["German", "Almanca", "Alemán", "Alemão", "德语"],
+    LangIt => ["Italian", "İtalyanca", "Italiano", "Italiano", "意大利语"],
+    LangPt => ["Portuguese", "Portekizce", "Portugués", "Português", "葡萄牙语"],
+    LangNl => ["Dutch", "Felemenkçe", "Neerlandés", "Holandês", "荷兰语"],
+    LangPl => ["Polish", "Lehçe", "Polaco", "Polonês", "波兰语"],
+    LangRu => ["Russian", "Rusça", "Ruso", "Russo", "俄语"],
+    LangUk => ["Ukrainian", "Ukraynaca", "Ucraniano", "Ucraniano", "乌克兰语"],
+    LangTr => ["Turkish", "Türkçe", "Turco", "Turco", "土耳其语"],
+    LangAr => ["Arabic", "Arapça", "Árabe", "Árabe", "阿拉伯语"],
+    LangFa => ["Persian", "Farsça", "Persa", "Persa", "波斯语"],
+    LangHi => ["Hindi", "Hintçe", "Hindi", "Hindi", "印地语"],
+    LangBn => ["Bengali", "Bengalce", "Bengalí", "Bengali", "孟加拉语"],
+    LangUr => ["Urdu", "Urduca", "Urdu", "Urdu", "乌尔都语"],
+    LangId => ["Indonesian", "Endonezce", "Indonesio", "Indonésio", "印度尼西亚语"],
+    LangVi => ["Vietnamese", "Vietnamca", "Vietnamita", "Vietnamita", "越南语"],
+    LangTh => ["Thai", "Tayca", "Tailandés", "Tailandês", "泰语"],
+    LangJa => ["Japanese", "Japonca", "Japonés", "Japonês", "日语"],
+    LangKo => ["Korean", "Korece", "Coreano", "Coreano", "韩语"],
+    LangZh => ["Chinese", "Çince", "Chino", "Chinês", "中文"],
+    LangZhHant => ["Chinese (Traditional)", "Çince (Geleneksel)", "Chino (tradicional)", "Chinês (tradicional)", "中文（繁体）"],
+    LangEl => ["Greek", "Yunanca", "Griego", "Grego", "希腊语"],
+    LangSv => ["Swedish", "İsveççe", "Sueco", "Sueco", "瑞典语"],
+    LangRo => ["Romanian", "Romence", "Rumano", "Romeno", "罗马尼亚语"],
+    LangCs => ["Czech", "Çekçe", "Checo", "Tcheco", "捷克语"],
+    LangHu => ["Hungarian", "Macarca", "Húngaro", "Húngaro", "匈牙利语"],
+    LangHe => ["Hebrew", "İbranice", "Hebreo", "Hebraico", "希伯来语"],
 }
 
 #[cfg(test)]
@@ -842,6 +910,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_language_has_a_name() {
+        use crate::settings::{SOURCE_LANGS, TARGET_LANGS};
+        for c in SOURCE_LANGS.iter().chain(TARGET_LANGS.iter()) {
+            assert_ne!(language_name(c), *c);
+        }
+        assert_eq!(language_name("xx"), "xx");
     }
 
     #[test]

@@ -17,7 +17,8 @@ pub const TARGET_LANGS: [&str; 26] = [
     "id", "vi", "th", "nl", "pl", "uk", "el", "sv", "ro", "cs", "hu",
 ];
 
-/// English display name; unknown codes are returned as-is.
+/// English name, for the language models' prompts; the user sees `i18n::language_name`. Unknown
+/// codes are returned as-is.
 pub fn lang_name(code: &str) -> &str {
     match code {
         "en" => "English",

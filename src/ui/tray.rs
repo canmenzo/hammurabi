@@ -2,8 +2,8 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem,
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use super::UiAction;
-use crate::i18n::{T, t, tf};
-use crate::settings::{Settings, TARGET_LANGS, lang_name};
+use crate::i18n::{T, language_name, t, tf};
+use crate::settings::{Settings, TARGET_LANGS};
 use crate::tts::{self, PERSONAS};
 use crate::types::AudioSource;
 
@@ -55,7 +55,9 @@ impl Tray {
         let translate = CheckMenuItem::with_id("translate", t(T::Translate), true, false, None);
         let targets: Vec<_> = TARGET_LANGS
             .iter()
-            .map(|c| CheckMenuItem::with_id(format!("lang:{c}"), lang_name(c), true, false, None))
+            .map(|c| {
+                CheckMenuItem::with_id(format!("lang:{c}"), language_name(c), true, false, None)
+            })
             .collect();
         let speak = CheckMenuItem::with_id("speak", t(T::PageReadAloud), true, false, None);
         let personas: Vec<_> = PERSONAS
@@ -206,9 +208,10 @@ impl Tray {
         self.translate.set_text(t(T::Translate));
         self.translate.set_checked(s.translate);
         self.target_menu
-            .set_text(tf(T::TranslateToX, &[&lang_name(&s.target_language)]));
+            .set_text(tf(T::TranslateToX, &[&language_name(&s.target_language)]));
         self.target_menu.set_enabled(s.translate);
         for (item, code) in self.targets.iter().zip(TARGET_LANGS.iter()) {
+            item.set_text(language_name(code));
             item.set_checked(s.target_language == *code);
         }
         self.speak.set_text(t(T::PageReadAloud));

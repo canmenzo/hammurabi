@@ -20,9 +20,8 @@ use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
 use crate::audio::duck::Ducker;
-use crate::i18n::{self, Lang, T, t, tf};
+use crate::i18n::{self, Lang, T, language_name, t, tf};
 use crate::models::{self, ModelId};
-use crate::settings::lang_name;
 use supertonic::Supertonic;
 
 /// Utterances waiting behind the one being spoken; older ones are dropped only past this, since
@@ -405,7 +404,10 @@ pub fn resolve<'a>(
 
 pub fn missing_voice(lang: &str) -> String {
     let natural = supertonic::LANGS.contains(&lang.split(['-', '_']).next().unwrap_or(lang));
-    let text = tf(T::MissingVoice, &[&lang_name(lang), &t(imp::VOICE_HINT)]);
+    let text = tf(
+        T::MissingVoice,
+        &[&language_name(lang), &t(imp::VOICE_HINT)],
+    );
     if natural {
         format!("{text} {}", t(T::NaturalVoicesHint))
     } else {

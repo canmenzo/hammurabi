@@ -20,10 +20,10 @@ use tray_icon::menu::{MenuEvent, MenuId};
 
 use crate::audio::{self, DeviceList};
 use crate::config;
-use crate::i18n::{self, T, t, tf};
+use crate::i18n::{self, T, language_name, t, tf};
 use crate::models::{self, ModelId};
 use crate::pipeline::{Engine, EngineHandle};
-use crate::settings::{Settings, ThemeChoice, lang_name};
+use crate::settings::{Settings, ThemeChoice};
 use crate::tts;
 use crate::types::{
     AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, ProgressPhase, Status,
@@ -611,7 +611,7 @@ impl App {
         };
         let mut tip = format!("Hammurabi: {}", t(state));
         if self.settings.translate {
-            tip += &format!(" → {}", lang_name(&self.settings.target_language));
+            tip += &format!(" → {}", language_name(&self.settings.target_language));
         }
         if !self.status.is_empty() {
             tip += &format!("\n{}", self.status);

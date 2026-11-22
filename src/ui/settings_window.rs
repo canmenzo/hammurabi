@@ -7,11 +7,11 @@ use eframe::egui::{
 use super::icons;
 
 use crate::audio::{DeviceInfo, DeviceList};
-use crate::i18n::{self, LANGS, T, t, tf};
+use crate::i18n::{self, LANGS, T, language_name, t, tf};
 use crate::models::{ModelId, spec};
 use crate::settings::{
     AsrBackend, CaptionStyle, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, ThemeChoice,
-    TranslatorChoice, lang_name,
+    TranslatorChoice,
 };
 use crate::tts::{self, Persona, Style, Voice, supertonic};
 use crate::types::AudioSource;
@@ -741,11 +741,15 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     ui.label(t(T::SubtitleLanguage));
     let current = s.spoken_language.clone().unwrap_or_else(|| "en".into());
     ComboBox::from_id_salt("subtitle-language")
-        .selected_text(lang_name(&current))
+        .selected_text(language_name(&current))
         .width(200.0)
         .show_ui(ui, |ui| {
             for c in SOURCE_LANGS {
-                if ui.selectable_label(current == c, lang_name(c)).clicked() && current != c {
+                if ui
+                    .selectable_label(current == c, language_name(c))
+                    .clicked()
+                    && current != c
+                {
                     s.spoken_language = Some(c.to_string());
                     *changed = true;
                 }
@@ -773,7 +777,7 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(5));
         ui.label("");
-        let text = tf(T::WindowsCannotRead, &[&lang_name(lang)]);
+        let text = tf(T::WindowsCannotRead, &[&language_name(lang)]);
         ui.add(egui::Label::new(RichText::new(text).color(WARN)).wrap());
         ui.end_row();
     }
@@ -1245,7 +1249,7 @@ fn speech(
         let current = s
             .spoken_language
             .as_deref()
-            .map_or(t(T::AutoDetect), lang_name)
+            .map_or(t(T::AutoDetect), language_name)
             .to_string();
         ComboBox::from_id_salt("spoken")
             .selected_text(current)
@@ -1256,7 +1260,11 @@ fn speech(
                     .changed();
                 for c in SOURCE_LANGS {
                     *changed |= ui
-                        .selectable_value(&mut s.spoken_language, Some(c.to_string()), lang_name(c))
+                        .selectable_value(
+                            &mut s.spoken_language,
+                            Some(c.to_string()),
+                            language_name(c),
+                        )
                         .changed();
                 }
             });
@@ -1519,12 +1527,16 @@ fn translation(
         grid(ui, "translation", |ui| {
             ui.label(t(T::TranslateTo));
             ComboBox::from_id_salt("target")
-                .selected_text(lang_name(&s.target_language))
+                .selected_text(language_name(&s.target_language))
                 .width(200.0)
                 .show_ui(ui, |ui| {
                     for c in TARGET_LANGS {
                         *changed |= ui
-                            .selectable_value(&mut s.target_language, c.to_string(), lang_name(c))
+                            .selectable_value(
+                                &mut s.target_language,
+                                c.to_string(),
+                                language_name(c),
+                            )
                             .changed();
                     }
                 });
@@ -1826,7 +1838,7 @@ fn read_aloud(
                 (Some((_, v, _)), _) => tf(T::NaturalVoiceN, &[&v]),
                 (_, Ok((Some(v), ..))) => format!("{} ({})", v.name, v.lang),
                 (_, Ok((None, ..))) => t(T::SystemVoice).into(),
-                (_, Err(_)) => tf(T::NoVoiceFor, &[&lang_name(&sample_lang)]),
+                (_, Err(_)) => tf(T::NoVoiceFor, &[&language_name(&sample_lang)]),
             };
             let playing = m.previewing == Some(p.id);
             let (select, play) = persona_card(ui, p, &voice, p.id == current, playing);
@@ -1893,7 +1905,7 @@ fn read_aloud(
             }
         });
         if s.translate {
-            let label = tf(T::AlsoReadSame, &[&lang_name(&s.target_language)]);
+            let label = tf(T::AlsoReadSame, &[&language_name(&s.target_language)]);
             *changed |= ui
                 .checkbox(&mut s.speak_same_lang, label)
                 .on_hover_text(t(T::AlsoReadSameHint))

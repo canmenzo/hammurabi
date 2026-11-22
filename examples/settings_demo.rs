@@ -45,10 +45,15 @@ fn main() -> eframe::Result {
         let (x, y) = at.split_once(',')?;
         Some([x.trim().parse().ok()?, y.trim().parse().ok()?])
     });
+    // Its size, as "width,height": a tall one shows a whole page in one picture.
+    let size = std::env::var("HAMMURABI_DEMO_SIZE").ok().and_then(|size| {
+        let (w, h) = size.split_once(',')?;
+        Some([w.trim().parse().ok()?, h.trim().parse().ok()?])
+    });
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hammurabi")
-            .with_inner_size([740.0, 600.0])
+            .with_inner_size(size.unwrap_or([740.0, 600.0]))
             .with_position(at.unwrap_or([40.0, 20.0]))
             .with_active(false),
         ..Default::default()
@@ -58,6 +63,12 @@ fn main() -> eframe::Result {
         opts,
         Box::new(|cc| {
             apply_theme(&cc.egui_ctx);
+            // "light" or "dark", for a picture of the theme the system does not have.
+            match std::env::var("HAMMURABI_DEMO_THEME").as_deref() {
+                Ok("light") => cc.egui_ctx.set_theme(egui::ThemePreference::Light),
+                Ok("dark") => cc.egui_ctx.set_theme(egui::ThemePreference::Dark),
+                _ => {}
+            }
             // The app's language as a locale, e.g. "tr": for screenshots of a translation.
             if let Ok(lang) = std::env::var("HAMMURABI_DEMO_LANG") {
                 hammurabi::i18n::set(Some(hammurabi::i18n::from_locale(&lang)));

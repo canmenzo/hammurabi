@@ -4,6 +4,12 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-11-22
+
+### Fixed
+
+- Windows with an NVIDIA graphics card: the two blank windows named "NVOGLDC invisible" and "__wglDummyWindowFodder" no longer come up and stay when Subtitles on screen reads the main display. Hammurabi keeps its captions out of the pictures it reads, and asked that of every window it has. The graphics driver keeps two hidden windows of its own in the app, and Windows draws a hidden window that is asked. Only the captions are asked now. What 0.7.12 did about these windows did not help and is taken out again.
+
 ## [0.7.12] - 2026-11-22
 
 ### Added

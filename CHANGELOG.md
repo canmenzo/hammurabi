@@ -4,6 +4,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Fixed
+
+- The Natural translator starts on computers where its language model needs more than three seconds for its first line. The first lines through a freshly started model were meant to get two minutes, but were cut off after the three seconds a caption may wait, so translation ended with "Translation unavailable: LLM response unreadable: timeout: receive body".
+
 ## [0.7.11] - 2026-11-20
 
 ### Fixed

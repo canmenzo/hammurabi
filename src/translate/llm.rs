@@ -29,6 +29,8 @@ pub struct LlmTranslator {
     agent: ureq::Agent,
     /// The server is our own llama.cpp: it does not think aloud, and answers within a second.
     own: bool,
+    /// What our own server gets to write its answer to a short line.
+    own_timeout: Duration,
     /// Names and words to keep as they are (`Settings::hint`).
     hint: String,
 }
@@ -56,6 +58,7 @@ impl LlmTranslator {
             model: model.to_string(),
             agent: agent(Duration::from_secs(10)),
             own: false,
+            own_timeout: OWN_TIMEOUT,
             hint: String::new(),
         }
     }
@@ -73,11 +76,13 @@ impl LlmTranslator {
     /// Runs the model once, however long that takes: the first lines through a freshly started
     /// server take seconds (it builds its GPU programs), which captions must not wait for.
     pub fn warm_up(&self) -> anyhow::Result<()> {
+        const PATIENCE: Duration = Duration::from_secs(120);
         let mut patient = Self {
-            agent: agent(Duration::from_secs(120)),
+            agent: agent(PATIENCE),
             base_url: self.base_url.clone(),
             model: self.model.clone(),
             own: self.own,
+            own_timeout: PATIENCE,
             hint: String::new(),
         };
         for line in [
@@ -270,7 +275,7 @@ impl Translate for LlmTranslator {
             let over = text.chars().count().saturating_sub(OWN_CHARS) as u32;
             request = request
                 .config()
-                .timeout_recv_body(Some(OWN_TIMEOUT + OWN_PER_CHAR * over))
+                .timeout_recv_body(Some(self.own_timeout + OWN_PER_CHAR * over))
                 .build();
         }
         let mut resp = request
@@ -414,6 +419,46 @@ mod tests {
         assert!(p.contains("live Japanese subtitles") && !p.contains("kanka"));
         assert!(p.contains("unchanged.\n") && p.contains("nothing is softened"));
         assert!(shots("Japanese", "German").is_empty());
+    }
+
+    /// A server that starts its answer later than a caption may wait, as a freshly started one
+    /// does while it builds its GPU programs.
+    #[test]
+    fn warm_up_waits_for_a_slow_first_answer() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut len = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = n.trim().parse().unwrap();
+                    }
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                }
+                reader.read_exact(&mut vec![0; len]).unwrap();
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                            Connection: close\r\n\r\n";
+                stream.write_all(head.as_bytes()).unwrap();
+                std::thread::sleep(OWN_TIMEOUT + Duration::from_millis(500));
+                let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Selam.\"}}]}\n\n\
+                            data: [DONE]\n\n";
+                stream.write_all(body.as_bytes()).unwrap();
+            }
+        });
+        let mut llm = LlmTranslator::own(&format!("http://127.0.0.1:{port}/v1"));
+        llm.warm_up().unwrap();
+        // A caption does not wait that long.
+        let late = llm.translate("Hey.", "en", "tr", &[]).unwrap_err();
+        assert!(format!("{late:#}").contains("receive body"), "{late:#}");
     }
 
     #[test]

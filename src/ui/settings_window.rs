@@ -19,7 +19,18 @@ use crate::types::AudioSource;
 const OLLAMA_URL: &str = "http://localhost:11434/v1";
 const OLLAMA_MODEL: &str = "qwen2.5:3b";
 const SIDEBAR: f32 = 150.0;
-const WARN: Color32 = Color32::from_rgb(230, 160, 60);
+/// The widest the header and a page get.
+const CONTENT: f32 = 660.0;
+/// The label column of every card, the width of a combo or text field, the text of a checkbox
+/// or radio, and where the control after a label starts.
+const LABEL: f32 = 190.0;
+const FIELD: f32 = 240.0;
+const INDENT: f32 = 24.0;
+#[expect(
+    dead_code,
+    reason = "the Listen page's notes use it once it is restyled"
+)]
+const CONTROL: f32 = LABEL + 8.0;
 
 /// Read-only data the settings window displays.
 pub struct ModelsStatus {
@@ -107,27 +118,23 @@ pub fn apply_theme(ctx: &Context) {
         (
             Theme::Dark,
             Visuals::dark(),
-            rgb(24, 24, 24),
-            rgb(31, 31, 31),
-            rgb(49, 49, 49),
-            rgb(94, 234, 212),
-            rgb(19, 18, 9),
-            rgb(208, 205, 195),
-            rgb(150, 148, 138),
+            [rgb(24, 24, 24), rgb(31, 31, 31), rgb(49, 49, 49)],
+            [rgb(94, 234, 212), rgb(19, 18, 9)],
+            [rgb(208, 205, 195), rgb(150, 148, 138), rgb(230, 160, 60)],
+            rgb(18, 18, 18),
         ),
         (
             Theme::Light,
             Visuals::light(),
+            [rgb(255, 255, 255), rgb(244, 244, 242), rgb(226, 224, 216)],
+            [rgb(15, 118, 110), rgb(255, 255, 255)],
+            [rgb(60, 58, 50), rgb(107, 105, 96), rgb(161, 92, 0)],
             rgb(255, 255, 255),
-            rgb(244, 244, 242),
-            rgb(226, 224, 216),
-            rgb(15, 118, 110),
-            rgb(255, 255, 255),
-            rgb(60, 58, 50),
-            rgb(92, 90, 82),
         ),
     ];
-    for (theme, mut v, bg, surface, border, accent, on_accent, text, weak) in palettes {
+    for (theme, mut v, [bg, surface, border], [accent, on_accent], [text, weak, warn], field) in
+        palettes
+    {
         v.panel_fill = bg;
         v.window_fill = surface;
         v.faint_bg_color = surface;
@@ -138,7 +145,27 @@ pub fn apply_theme(ctx: &Context) {
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
         v.widgets.noninteractive.fg_stroke.color = text;
         v.weak_text_color = Some(weak);
+        v.warn_fg_color = warn;
         v.window_stroke = Stroke::new(1.0, border);
+        // The progress bar's track.
+        v.extreme_bg_color = border;
+        v.text_edit_bg_color = Some(field);
+        // Egui's light controls are near white on white: these give boxes, rails and buttons
+        // a fill and an edge.
+        if theme == Theme::Light {
+            let w = &mut v.widgets;
+            let line = Stroke::new(1.0, rgb(190, 187, 176));
+            w.inactive.weak_bg_fill = rgb(233, 231, 224);
+            w.inactive.bg_fill = rgb(217, 214, 204);
+            w.inactive.bg_stroke = line;
+            w.hovered.weak_bg_fill = rgb(222, 220, 211);
+            w.hovered.bg_fill = rgb(214, 211, 201);
+            w.hovered.bg_stroke = Stroke::new(1.0, rgb(143, 140, 130));
+            w.active.weak_bg_fill = rgb(210, 207, 197);
+            w.active.bg_fill = rgb(210, 207, 197);
+            w.open.weak_bg_fill = rgb(222, 220, 211);
+            w.open.bg_stroke = line;
+        }
         for w in [
             &mut v.widgets.noninteractive,
             &mut v.widgets.inactive,
@@ -154,11 +181,12 @@ pub fn apply_theme(ctx: &Context) {
         s.spacing.item_spacing = vec2(8.0, 6.0);
         s.spacing.button_padding = vec2(10.0, 4.0);
         s.spacing.interact_size.y = 24.0;
+        s.spacing.slider_width = 140.0;
         for (style, size) in [
             (TextStyle::Body, 14.0),
             (TextStyle::Button, 14.0),
             (TextStyle::Small, 12.0),
-            (TextStyle::Heading, 16.0),
+            (TextStyle::Heading, 15.0),
         ] {
             if let Some(font) = s.text_styles.get_mut(&style) {
                 font.size = size;
@@ -199,15 +227,20 @@ impl SettingsWindow {
                         area.y_range(),
                         ui.visuals().widgets.noninteractive.bg_stroke,
                     );
-                    let body = body.with_min_x(body.left() + 8.0);
+                    let body = body.with_min_x(body.left() + 16.0);
+                    // Room on the right for the scroll bar.
+                    let width = (body.width() - 12.0).min(CONTENT);
                     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
-                        self.header(ui, settings, models, &mut actions);
+                        ui.scope(|ui| {
+                            ui.set_max_width(width);
+                            self.header(ui, settings, models, &mut actions);
+                        });
                         ui.separator();
                         ScrollArea::vertical()
                             .id_salt(self.page as u8)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                ui.set_max_width(ui.available_width() - 12.0);
+                                ui.set_max_width(width);
                                 let (s, m, c, a) = (settings, models, &mut changed, &mut actions);
                                 match self.page {
                                     Page::Listen => listen(ui, s, m, c, a),
@@ -228,7 +261,8 @@ impl SettingsWindow {
     }
 
     fn sidebar(&mut self, ui: &mut Ui, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
-        ui.add_space(6.0);
+        // On the centre line of the header's row, which starts 4 points higher.
+        ui.add_space(-2.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(RichText::new(t(T::SettingsHeading)).strong().size(16.0));
@@ -246,8 +280,13 @@ impl SettingsWindow {
                 ui.weak(concat!("v", env!("CARGO_PKG_VERSION")));
             });
             if let Some(text) = update_text(&m.update) {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(8.0);
+                // A margin, not a wrapping row: one of those grows down over the version when
+                // the text takes two lines.
+                let margin = egui::Margin {
+                    left: 8,
+                    ..Default::default()
+                };
+                egui::Frame::new().inner_margin(margin).show(ui, |ui| {
                     if let super::update::Status::Available(_) = m.update {
                         if ui.link(text).clicked() {
                             actions.push(SettingsAction::OpenUpdate);
@@ -276,7 +315,7 @@ impl SettingsWindow {
         let accent = ui.visuals().selection.bg_fill;
         let (dot, state) = match (m.running, m.loading) {
             (false, _) => (ui.visuals().weak_text_color(), T::CaptionsOff),
-            (true, true) => (WARN, T::GettingReady),
+            (true, true) => (ui.visuals().warn_fg_color, T::GettingReady),
             (true, false) => (accent, T::CaptionsOn),
         };
         ui.horizontal(|ui| {
@@ -284,7 +323,6 @@ impl SettingsWindow {
             ui.painter().circle_filled(r.center(), 5.0, dot);
             ui.label(RichText::new(t(state)).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(8.0);
                 let button = if m.running {
                     egui::Button::new(t(T::StopCaptions))
                 } else {
@@ -304,24 +342,18 @@ impl SettingsWindow {
         });
         if self.welcome {
             ui.add_space(4.0);
-            egui::Frame::new()
-                .fill(ui.visuals().faint_bg_color)
-                .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-                .corner_radius(6)
-                .inner_margin(10)
-                .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width() - 8.0);
-                    ui.label(t(T::Welcome));
-                    if ui.button(t(T::GotIt)).clicked() {
-                        self.welcome = false;
-                    }
-                });
+            callout(ui, |ui| {
+                ui.label(t(T::Welcome));
+                if ui.button(t(T::GotIt)).clicked() {
+                    self.welcome = false;
+                }
+            });
         }
         if !m.status.is_empty() {
             let text = RichText::new(&m.status);
             ui.add(
                 egui::Label::new(if m.alert {
-                    text.color(WARN)
+                    text.color(ui.visuals().warn_fg_color)
                 } else {
                     text.weak()
                 })
@@ -331,7 +363,7 @@ impl SettingsWindow {
         if !m.running {
             let pending = pending_downloads(s, m);
             if !pending.is_empty() {
-                ui.weak(download_note(&pending));
+                note(ui, &download_note(&pending));
             }
         }
     }
@@ -372,7 +404,6 @@ impl SettingsWindow {
     }
 
     fn hotkey_row(&mut self, ui: &mut Ui, label: &str, value: &str) {
-        ui.label(label);
         let recording = self.recording;
         let text = if recording {
             t(T::PressKeys).to_string()
@@ -384,14 +415,15 @@ impl SettingsWindow {
         } else {
             T::HotkeyClick
         });
-        if ui
-            .add(egui::Button::new(text).selected(recording))
-            .on_hover_text(hint)
-            .clicked()
-        {
-            self.recording = !recording;
-        }
-        ui.end_row();
+        row(ui, label, |ui| {
+            if ui
+                .add(egui::Button::new(text).selected(recording))
+                .on_hover_text(hint)
+                .clicked()
+            {
+                self.recording = !recording;
+            }
+        });
     }
 
     fn general(
@@ -402,14 +434,14 @@ impl SettingsWindow {
         changed: &mut bool,
         actions: &mut Vec<SettingsAction>,
     ) {
-        section(ui, t(T::SectionApp));
-        grid(ui, "app", |ui| {
-            ui.label(t(T::Language));
-            language_combo(ui, &mut s.ui_language, changed);
-            ui.end_row();
-
-            ui.label(t(T::Theme));
-            ui.horizontal(|ui| {
+        if section_action(ui, t(T::SectionApp), t(T::OpenLogs), true) {
+            actions.push(SettingsAction::OpenLogs);
+        }
+        card(ui, |ui| {
+            row(ui, t(T::Language), |ui| {
+                language_combo(ui, &mut s.ui_language, changed);
+            });
+            row(ui, t(T::Theme), |ui| {
                 for (v, label) in [
                     (ThemeChoice::System, T::ThemeSystem),
                     (ThemeChoice::Dark, T::ThemeDark),
@@ -418,45 +450,46 @@ impl SettingsWindow {
                     *changed |= ui.radio_value(&mut s.theme, v, t(label)).changed();
                 }
             });
-            ui.end_row();
+            let toggle = s.hotkey_toggle.clone();
+            self.hotkey_row(ui, t(T::StartStopCaptions), &toggle);
+            let mut autostart = m.autostart;
+            if ui
+                .checkbox(&mut autostart, t(T::StartAtLoginLong))
+                .changed()
+            {
+                actions.push(SettingsAction::ToggleAutostart);
+            }
         });
-        let mut autostart = m.autostart;
-        if ui
-            .checkbox(&mut autostart, t(T::StartAtLoginLong))
-            .changed()
-        {
-            actions.push(SettingsAction::ToggleAutostart);
-        }
         // The Microsoft Store updates a copy installed from it.
         if !super::platform::packaged() {
-            *changed |= ui
-                .checkbox(&mut s.check_updates, t(T::UpdateAutomatically))
-                .on_hover_text(t(T::UpdateAutomaticallyHint))
-                .changed();
-            ui.horizontal_wrapped(|ui| {
-                let busy = matches!(
-                    m.update,
-                    super::update::Status::Checking | super::update::Status::Downloading(..)
-                );
-                if ui
-                    .add_enabled(!busy, egui::Button::new(t(T::CheckUpdates)))
-                    .clicked()
-                {
-                    actions.push(SettingsAction::CheckUpdates);
-                }
-                if let Some(text) = update_text(&m.update) {
-                    ui.weak(text);
-                }
+            section(ui, t(T::Updates));
+            card(ui, |ui| {
+                *changed |= ui
+                    .checkbox(&mut s.check_updates, t(T::UpdateAutomatically))
+                    .on_hover_text(t(T::UpdateAutomaticallyHint))
+                    .changed();
+                ui.horizontal_wrapped(|ui| {
+                    let busy = matches!(
+                        m.update,
+                        super::update::Status::Checking | super::update::Status::Downloading(..)
+                    );
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(t(T::CheckUpdates)))
+                        .clicked()
+                    {
+                        actions.push(SettingsAction::CheckUpdates);
+                    }
+                    if let Some(text) = update_text(&m.update) {
+                        ui.weak(text);
+                    }
+                });
             });
         }
+        gpu_build(ui, m, actions);
 
-        section(ui, t(T::Shortcuts));
-        let toggle = s.hotkey_toggle.clone();
-        grid(ui, "hotkeys", |ui| {
-            self.hotkey_row(ui, t(T::StartStopCaptions), &toggle);
-        });
-
-        section(ui, t(T::Models));
+        if section_action(ui, t(T::Models), t(T::OpenModelsFolder), true) {
+            actions.push(SettingsAction::OpenModelsFolder);
+        }
         // The Natural translator is offered on Windows only.
         let translation: &[ModelId] = if cfg!(windows) {
             &[ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b]
@@ -484,22 +517,15 @@ impl SettingsWindow {
                 ],
             ),
         ];
-        gpu_build(ui, m, actions);
         let recommended = recommended(m);
-        let accent = ui.visuals().selection.bg_fill;
-        grid(ui, "models", |ui| {
-            for (heading, ids) in groups {
-                ui.weak(t(heading));
-                ui.end_row();
+        card(ui, |ui| {
+            for (i, (heading, ids)) in groups.into_iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                ui.label(RichText::new(t(heading)).small().weak());
                 for &id in ids {
-                    let size = size_label(spec(id).approx_bytes);
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{} ({size})", model_name(id)));
-                        if recommended.contains(&id) {
-                            ui.label(RichText::new(t(T::Recommended)).small().color(accent));
-                        }
-                    });
-                    ui.horizontal(|ui| {
+                    model_row(ui, id, recommended.contains(&id), |ui| {
                         // Read aloud asks for its licence before it offers the download.
                         #[cfg(omnivoice)]
                         if id == ModelId::OmniVoice
@@ -511,18 +537,7 @@ impl SettingsWindow {
                         }
                         model_state(ui, id, m, in_use(id, s, m), actions);
                     });
-                    ui.end_row();
                 }
-            }
-        });
-
-        section(ui, t(T::Files));
-        ui.horizontal(|ui| {
-            if ui.button(t(T::OpenModelsFolder)).clicked() {
-                actions.push(SettingsAction::OpenModelsFolder);
-            }
-            if ui.button(t(T::OpenLogs)).clicked() {
-                actions.push(SettingsAction::OpenLogs);
             }
         });
     }
@@ -534,7 +549,7 @@ fn language_combo(ui: &mut Ui, value: &mut Option<i18n::Lang>, changed: &mut boo
     let current = value.map_or_else(|| system.clone(), |l| l.native_name().to_string());
     ComboBox::from_id_salt("ui-language")
         .selected_text(current)
-        .width(200.0)
+        .width(ui.available_width().min(FIELD))
         .show_ui(ui, |ui| {
             *changed |= ui.selectable_value(value, None, system).changed();
             for l in LANGS {
@@ -574,9 +589,195 @@ fn nav_item(ui: &mut Ui, label: &str, selected: bool) -> bool {
 }
 
 fn section(ui: &mut Ui, title: &str) {
-    ui.add_space(10.0);
+    ui.add_space(12.0);
     ui.label(RichText::new(title).heading().strong());
-    ui.add_space(2.0);
+}
+
+/// A section title with a button on its right; true when the button is clicked.
+fn section_action(ui: &mut Ui, title: &str, action: &str, enabled: bool) -> bool {
+    ui.add_space(12.0);
+    egui::Sides::new()
+        .show(
+            ui,
+            |ui| ui.label(RichText::new(title).heading().strong()),
+            |ui| ui.add_enabled(enabled, egui::Button::new(RichText::new(action).small())),
+        )
+        .1
+        .clicked()
+}
+
+/// A box of rows on the page.
+fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
+            add(ui)
+        })
+        .inner
+}
+
+/// A label in the label column and the controls after it, both wrapping to more lines when
+/// they are longer. An empty label starts the controls in their column.
+fn row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    // Top aligned, in wrapping layouts: text in those centres its first line on the height of a
+    // control, so a label stays level with the first line of what it labels.
+    ui.horizontal_top(|ui| {
+        let size = vec2(LABEL, ui.spacing().interact_size.y);
+        let layout = Layout::left_to_right(Align::Center).with_main_wrap(true);
+        ui.allocate_ui_with_layout(size, layout, |ui| {
+            ui.set_min_width(LABEL);
+            ui.add(egui::Label::new(label).wrap());
+        });
+        ui.horizontal_wrapped(add).inner
+    })
+    .inner
+}
+
+/// A small line that explains what is above or beside it.
+fn note(ui: &mut Ui, text: &str) {
+    ui.add(egui::Label::new(RichText::new(text).small().weak()).wrap());
+}
+
+/// A note about something wrong.
+#[expect(
+    dead_code,
+    reason = "the Listen and Read aloud pages use it once they are restyled"
+)]
+fn warning(ui: &mut Ui, text: &str) {
+    let color = ui.visuals().warn_fg_color;
+    ui.add(egui::Label::new(RichText::new(text).small().color(color)).wrap());
+}
+
+/// Lines up `left` from the card's edge, close under the row above: `INDENT` for the text of a
+/// checkbox or radio, `CONTROL` for a control.
+fn under<R>(ui: &mut Ui, left: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.add_space(-4.0);
+    // Not a frame's margin: that stops at 127 points, short of `CONTROL`.
+    let rect = ui.available_rect_before_wrap();
+    let rect = rect.with_min_x(rect.left() + left);
+    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+        ui.horizontal_wrapped(add).inner
+    })
+    .inner
+}
+
+/// A tinted box that tells something about the app rather than sets it.
+fn callout<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.08))
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+/// The look of a card that is picked by clicking it.
+fn choice_frame(ui: &Ui, selected: bool, hovered: bool, focused: bool) -> egui::Frame {
+    let v = ui.visuals();
+    let (fill, stroke) = if selected {
+        let accent = v.selection.bg_fill;
+        (accent.gamma_multiply(0.14), Stroke::new(1.5, accent))
+    } else if hovered {
+        (v.widgets.hovered.weak_bg_fill, v.widgets.hovered.bg_stroke)
+    } else {
+        (v.faint_bg_color, v.widgets.noninteractive.bg_stroke)
+    };
+    let stroke = if focused && !selected {
+        Stroke::new(1.0, v.text_color())
+    } else {
+        stroke
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(stroke)
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(14, 8))
+}
+
+/// One of a few options as a card: a radio button with its title, `about` under it, and what
+/// `body` adds below that, which starts with its own separator. Clicking anywhere on the card
+/// picks it too; true when it is picked.
+fn option_card(
+    ui: &mut Ui,
+    title: &str,
+    about: &str,
+    selected: bool,
+    enabled: bool,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
+    // The radio button is what the keyboard and screen readers use; the card is for the mouse.
+    let sense = if enabled {
+        Sense::click() - Sense::FOCUSABLE
+    } else {
+        Sense::hover()
+    };
+    let card = ui.scope_builder(UiBuilder::new().id_salt(title).sense(sense), |ui| {
+        let hovered = enabled && ui.response().hovered();
+        let mut frame = choice_frame(ui, selected, false, false).begin(ui);
+        let radio = {
+            let ui = &mut frame.content_ui;
+            ui.set_min_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
+            if selected {
+                // The border colour all but disappears on the tint.
+                let v = ui.visuals_mut();
+                v.widgets.noninteractive.bg_stroke.color = v.selection.bg_fill.gamma_multiply(0.4);
+            }
+            let title = RichText::new(title).strong();
+            let radio = ui.add_enabled(enabled, egui::RadioButton::new(selected, title));
+            under(ui, INDENT, |ui| note(ui, about));
+            body(ui);
+            radio
+        };
+        frame.frame = choice_frame(ui, selected, hovered, radio.has_focus());
+        frame.end(ui);
+        radio.clicked()
+    });
+    let card_clicked = if enabled {
+        card.response
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+    } else {
+        false
+    };
+    enabled && (card.inner || card_clicked)
+}
+
+/// A model's name and size, with a Recommended `tag` when it suits this computer, and `right`
+/// flush with the right edge.
+fn model_row(ui: &mut Ui, id: ModelId, tag: bool, right: impl FnOnce(&mut Ui)) {
+    egui::Sides::new().shrink_left().truncate().show(
+        ui,
+        |ui| {
+            ui.label(model_name(id));
+            ui.label(
+                RichText::new(size_label(spec(id).approx_bytes))
+                    .small()
+                    .weak(),
+            );
+            if tag {
+                let accent = ui.visuals().selection.bg_fill;
+                ui.label(RichText::new(t(T::RecommendedTag)).small().color(accent))
+                    .on_hover_text(t(T::Recommended));
+            }
+        },
+        right,
+    );
+}
+
+/// "Download first" and the model's download, for the right side of an `egui::Sides`.
+fn must_download(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
+    model_state(ui, id, m, false, actions);
+    ui.weak(t(T::DownloadFirst));
 }
 
 fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
@@ -641,7 +842,7 @@ fn device_combo(
     };
     ComboBox::from_id_salt(id)
         .selected_text(current)
-        .width(240.0)
+        .width(ui.available_width().min(FIELD))
         .show_ui(ui, |ui| {
             *changed |= ui.selectable_value(value, None, t(T::Default)).changed();
             for d in list {
@@ -670,7 +871,10 @@ fn audio(
         }
     });
     if let Err(e) = &m.devices.system_audio {
-        ui.colored_label(WARN, tf(T::SystemAudioUnavailable, &[e]));
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            tf(T::SystemAudioUnavailable, &[e]),
+        );
     }
     ui.add_space(4.0);
     grid(ui, "audio", |ui| {
@@ -778,7 +982,7 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             .request_repaint_after(std::time::Duration::from_secs(5));
         ui.label("");
         let text = tf(T::WindowsCannotRead, &[&language_name(lang)]);
-        ui.add(egui::Label::new(RichText::new(text).color(WARN)).wrap());
+        ui.add(egui::Label::new(RichText::new(text).color(ui.visuals().warn_fg_color)).wrap());
         ui.end_row();
     }
 
@@ -888,7 +1092,7 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     };
     match (&l.problem, &l.texture) {
         (Some(problem), _) => {
-            ui.colored_label(WARN, problem);
+            ui.colored_label(ui.visuals().warn_fg_color, problem);
         }
         (None, None) => {
             ui.weak(t(T::WaitingForPicture));
@@ -1002,7 +1206,8 @@ fn in_use(id: ModelId, s: &Settings, m: &ModelsStatus) -> bool {
 
 /// Whether a model is downloaded, with what can be done about it: a Download button, how far
 /// its download is, or a Delete button that asks once more before it deletes. One that is
-/// `used` by the captions running now says so instead.
+/// `used` by the captions running now says so instead. Its parts are added from the right, as
+/// it is always the right side of an `egui::Sides`.
 fn model_state(
     ui: &mut Ui,
     id: ModelId,
@@ -1010,35 +1215,39 @@ fn model_state(
     used: bool,
     actions: &mut Vec<SettingsAction>,
 ) {
+    let small = |text: &str| RichText::new(text).small().weak();
     match m.downloading.iter().find(|d| d.0 == id) {
         // A thin bar in the row of a button, so the row keeps its height.
         Some(&(_, done, total)) => match total.filter(|all| *all > 0) {
             Some(all) => {
                 let part = done as f32 / all as f32;
+                let mb = tf(T::MbOf, &[&(done / 1_000_000), &(all / 1_000_000)]);
+                let percent = tf(T::Percent, &[&((part * 100.0) as u32)]);
+                ui.label(RichText::new(percent).small()).on_hover_text(&mb);
                 ui.add(
                     ProgressBar::new(part)
-                        .desired_width(120.0)
-                        .desired_height(8.0)
-                        .corner_radius(4),
-                );
-                ui.label(tf(T::Percent, &[&((part * 100.0) as u32)]));
-                ui.weak(tf(T::MbOf, &[&(done / 1_000_000), &(all / 1_000_000)]));
+                        .desired_width(100.0)
+                        .desired_height(6.0)
+                        .corner_radius(3),
+                )
+                .on_hover_text(mb);
             }
             None => {
+                ui.label(small(t(T::StartingDownload)));
                 ui.spinner();
-                ui.weak(t(T::StartingDownload));
             }
         },
         _ if m.cached.contains(&id) => {
-            ui.colored_label(Color32::from_rgb(90, 190, 110), t(T::Downloaded));
             if used {
-                ui.weak(t(T::InUse)).on_hover_text(t(T::InUseHint));
+                ui.label(small(t(T::InUse))).on_hover_text(t(T::InUseHint));
+                ui.label(small(t(T::Downloaded)));
                 return;
             }
             let key = egui::Id::unique("delete-model");
             if ui.button(t(T::Delete)).clicked() {
                 ui.data_mut(|d| d.insert_temp(key, id));
             }
+            ui.label(small(t(T::Downloaded)));
             if ui.data(|d| d.get_temp::<ModelId>(key)) != Some(id) {
                 return;
             }
@@ -1073,19 +1282,19 @@ fn model_state(
 /// milliseconds it does, over `limits[1]` it does not, and `then` says what helps.
 fn keeping_up(ui: &mut Ui, ms: Option<f32>, verb: T, limits: [f32; 2], then: &str) {
     let Some(ms) = ms else {
-        ui.weak(t(T::ShownWhileRunning));
+        ui.add(egui::Label::new(RichText::new(t(T::ShownWhileRunning)).weak()).wrap());
         return;
     };
     let secs = tf(T::Seconds, &[&i18n::decimal(f64::from(ms) / 1000.0, 1)]);
     let verb = t(verb);
-    if ms <= limits[0] {
-        ui.label(tf(T::KeepUpYes, &[&secs, &verb]));
+    let text = if ms <= limits[0] {
+        RichText::new(tf(T::KeepUpYes, &[&secs, &verb]))
     } else if ms <= limits[1] {
-        ui.label(tf(T::KeepUpNearly, &[&secs, &verb]));
+        RichText::new(tf(T::KeepUpNearly, &[&secs, &verb]))
     } else {
-        let text = RichText::new(tf(T::KeepUpNo, &[&secs, &verb, &then])).color(WARN);
-        ui.add(egui::Label::new(text).wrap());
-    }
+        RichText::new(tf(T::KeepUpNo, &[&secs, &verb, &then])).color(ui.visuals().warn_fg_color)
+    };
+    ui.add(egui::Label::new(text).wrap());
 }
 
 /// What helps the speech model keep up.
@@ -1139,21 +1348,21 @@ fn gpu_build(ui: &mut Ui, m: &ModelsStatus, actions: &mut Vec<SettingsAction>) {
     let Some(gpu) = m.gpu.as_ref().filter(|g| update::gpu_build_helps(Some(g))) else {
         return;
     };
-    ui.add(egui::Label::new(tf(T::GpuBuildHelps, &[&gpu.name])).wrap());
-    ui.horizontal(|ui| match &m.update {
-        Status::Checking | Status::Downloading(..) | Status::Ready(..) => {
-            ui.weak(update_text(&m.update).unwrap_or_default());
-        }
-        _ if update::installed() => {
-            if ui.button(t(T::SwitchToGpu)).clicked() {
-                actions.push(SettingsAction::SwitchToGpu);
+    callout(ui, |ui| {
+        ui.label(tf(T::GpuBuildHelps, &[&gpu.name]));
+        // The status of an update in progress shows in the Updates card above.
+        match &m.update {
+            Status::Checking | Status::Downloading(..) | Status::Ready(..) => {}
+            _ if update::installed() => {
+                if ui.button(t(T::SwitchToGpu)).clicked() {
+                    actions.push(SettingsAction::SwitchToGpu);
+                }
+            }
+            _ => {
+                ui.hyperlink_to(t(T::GetGpuBuild), "https://hammurabi.menzo.dev/#download");
             }
         }
-        _ => {
-            ui.hyperlink_to(t(T::GetGpuBuild), "https://hammurabi.menzo.dev/#download");
-        }
     });
-    ui.add_space(8.0);
 }
 
 /// What the speech model runs on, in words.
@@ -1502,7 +1711,6 @@ fn translation(
     changed: &mut bool,
     actions: &mut Vec<SettingsAction>,
 ) {
-    section(ui, t(T::GroupTranslation));
     // Turning it on starts the chosen translator's model.
     let model = match s.translator {
         TranslatorChoice::Builtin => Some(ModelId::Madlad3bQ4k),
@@ -1510,41 +1718,43 @@ fn translation(
         TranslatorChoice::Llm { .. } => None,
     };
     let free = s.translate || model.is_none_or(|id| can_pick(id, m));
-    ui.horizontal(|ui| {
-        *changed |= ui
-            .add_enabled(
-                free,
-                egui::Checkbox::new(&mut s.translate, t(T::TranslateCaptions)),
-            )
-            .changed();
-        if let Some(id) = model.filter(|_| !free) {
-            ui.weak(t(T::DownloadFirst));
-            model_state(ui, id, m, false, actions);
-        }
-    });
-    ui.add_space(4.0);
-    ui.add_enabled_ui(s.translate, |ui| {
-        grid(ui, "translation", |ui| {
-            ui.label(t(T::TranslateTo));
-            ComboBox::from_id_salt("target")
-                .selected_text(language_name(&s.target_language))
-                .width(200.0)
-                .show_ui(ui, |ui| {
-                    for c in TARGET_LANGS {
-                        *changed |= ui
-                            .selectable_value(
-                                &mut s.target_language,
-                                c.to_string(),
-                                language_name(c),
-                            )
-                            .changed();
-                    }
-                });
-            ui.end_row();
+    card(ui, |ui| {
+        egui::Sides::new().shrink_left().show(
+            ui,
+            |ui| {
+                *changed |= ui
+                    .add_enabled(
+                        free,
+                        egui::Checkbox::new(&mut s.translate, t(T::TranslateCaptions)),
+                    )
+                    .changed();
+            },
+            |ui| {
+                if let Some(id) = model.filter(|_| !free) {
+                    must_download(ui, id, m, actions);
+                }
+            },
+        );
+        ui.add_enabled_ui(s.translate, |ui| {
+            row(ui, t(T::TranslateTo), |ui| {
+                ComboBox::from_id_salt("target")
+                    .selected_text(language_name(&s.target_language))
+                    .width(ui.available_width().min(FIELD))
+                    .show_ui(ui, |ui| {
+                        for c in TARGET_LANGS {
+                            *changed |= ui
+                                .selectable_value(
+                                    &mut s.target_language,
+                                    c.to_string(),
+                                    language_name(c),
+                                )
+                                .changed();
+                        }
+                    });
+            });
         });
-
-        // The radios with a line under each are outside the grid: tall cells leave the rows
-        // after them too much room.
+    });
+    ui.add_enabled_ui(s.translate, |ui| {
         section(ui, t(T::Translator));
         // 0 = MADLAD, 1 = Natural, 2 = the user's own server.
         let was = match s.translator {
@@ -1553,6 +1763,8 @@ fn translation(
             TranslatorChoice::Llm { .. } => 2,
         };
         let mut now = was;
+        let used =
+            [ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b].map(|id| in_use(id, s, m));
         for (v, title, model, about) in [
             (0, T::Fast, Some(ModelId::Madlad3bQ4k), T::FastNote),
             (1, T::Natural, Some(ModelId::natural(false)), T::NaturalNote),
@@ -1564,21 +1776,63 @@ fn translation(
             let free = v == was
                 || (v == 1 && natural_light(m).is_some())
                 || (v != 1 && model.is_none_or(|id| can_pick(id, m)));
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(free, egui::RadioButton::new(now == v, t(title)))
-                    .clicked()
-                {
-                    now = v;
-                }
+            // The chosen one shows its model or server under it.
+            let body = |ui: &mut Ui| {
                 if let Some(id) = model.filter(|_| !free) {
-                    ui.weak(t(T::DownloadFirst));
-                    model_state(ui, id, m, false, actions);
+                    ui.separator();
+                    egui::Sides::new().show(ui, |_| {}, |ui| must_download(ui, id, m, actions));
+                    return;
                 }
-            });
-            indented(ui, |ui| {
-                ui.weak(t(about));
-            });
+                if v != was {
+                    return;
+                }
+                ui.separator();
+                match &mut s.translator {
+                    TranslatorChoice::Builtin => {
+                        let id = ModelId::Madlad3bQ4k;
+                        model_row(ui, id, false, |ui| {
+                            model_state(ui, id, m, used[0], actions);
+                        });
+                    }
+                    TranslatorChoice::Natural { light } => {
+                        let id = ModelId::natural(*light);
+                        let used = used[1 + usize::from(*light)];
+                        model_row(ui, id, false, |ui| model_state(ui, id, m, used, actions));
+                        let other = ModelId::natural(!*light);
+                        let free = can_pick(other, m);
+                        egui::Sides::new().shrink_left().show(
+                            ui,
+                            |ui| {
+                                *changed |= ui
+                                    .add_enabled(
+                                        free,
+                                        egui::Checkbox::new(light, t(T::SmallerModel)),
+                                    )
+                                    .on_hover_text(t(T::SmallerModelHint))
+                                    .changed();
+                            },
+                            |ui| {
+                                if !free {
+                                    must_download(ui, other, m, actions);
+                                }
+                            },
+                        );
+                    }
+                    TranslatorChoice::Llm { base_url, model } => {
+                        for (label, text) in [(T::Address, base_url), (T::ModelName, model)] {
+                            row(ui, t(label), |ui| {
+                                let width = ui.available_width().min(FIELD);
+                                *changed |= ui
+                                    .add(egui::TextEdit::singleline(text).desired_width(width))
+                                    .changed();
+                            });
+                        }
+                    }
+                }
+            };
+            if option_card(ui, t(title), t(about), now == v, free, body) {
+                now = v;
+            }
         }
         if now != was {
             s.translator = match now {
@@ -1593,67 +1847,17 @@ fn translation(
             };
             *changed = true;
         }
-        ui.add_space(4.0);
 
-        grid(ui, "translator", |ui| {
-            let used = [ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b]
-                .map(|id| in_use(id, s, m));
-            match &mut s.translator {
-                TranslatorChoice::Builtin => {
-                    ui.label(t(T::Model));
-                    model_status(ui, ModelId::Madlad3bQ4k, m, used[0], actions);
-                    ui.end_row();
-                }
-                TranslatorChoice::Natural { light } => {
-                    ui.label(t(T::Model));
-                    let used = used[1 + usize::from(*light)];
-                    model_status(ui, ModelId::natural(*light), m, used, actions);
-                    ui.end_row();
-                    ui.label("");
-                    ui.horizontal(|ui| {
-                        let other = ModelId::natural(!*light);
-                        let free = can_pick(other, m);
-                        *changed |= ui
-                            .add_enabled(free, egui::Checkbox::new(light, t(T::SmallerModel)))
-                            .on_hover_text(t(T::SmallerModelHint))
-                            .changed();
-                        if !free {
-                            ui.weak(t(T::DownloadFirst));
-                            model_state(ui, other, m, false, actions);
-                        }
-                    });
-                    ui.end_row();
-                }
-                TranslatorChoice::Llm { base_url, model } => {
-                    ui.label(t(T::Address));
-                    *changed |= ui
-                        .add(egui::TextEdit::singleline(base_url).desired_width(260.0))
-                        .changed();
-                    ui.end_row();
-                    ui.label(t(T::ModelName));
-                    *changed |= ui
-                        .add(egui::TextEdit::singleline(model).desired_width(260.0))
-                        .changed();
-                    ui.end_row();
-                }
-            }
-
-            ui.label(t(T::KeepingUp));
-            keeping_up(
-                ui,
-                m.tr_ms,
-                T::VerbTranslate,
-                [700.0, 1500.0],
-                translate_advice(s, m),
-            );
-            ui.end_row();
-        });
-        ui.add_space(4.0);
-        *changed |= ui
-            .checkbox(&mut s.instant, t(T::TranslateWhileSaid))
-            .changed();
-        indented(ui, |ui| {
-            ui.weak(t(T::SoonerNote));
+        section(ui, t(T::Speed));
+        let advice = translate_advice(s, m);
+        card(ui, |ui| {
+            row(ui, t(T::KeepingUp), |ui| {
+                keeping_up(ui, m.tr_ms, T::VerbTranslate, [700.0, 1500.0], advice);
+            });
+            *changed |= ui
+                .checkbox(&mut s.instant, t(T::TranslateWhileSaid))
+                .changed();
+            under(ui, INDENT, |ui| note(ui, t(T::SoonerNote)));
         });
     });
 }
@@ -1668,53 +1872,42 @@ fn persona_card(
 ) -> (bool, bool) {
     let mut play = false;
     let card = ui.scope_builder(UiBuilder::new().id_salt(p.id).sense(Sense::click()), |ui| {
-        let hovered = ui.response().hovered();
-        let v = ui.visuals();
-        let (fill, stroke) = if selected {
-            let accent = v.selection.bg_fill;
-            (accent.gamma_multiply(0.14), Stroke::new(1.5, accent))
-        } else if hovered {
-            (v.widgets.hovered.weak_bg_fill, v.widgets.hovered.bg_stroke)
-        } else {
-            (v.faint_bg_color, v.widgets.noninteractive.bg_stroke)
-        };
-        egui::Frame::new()
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(6)
-            .inner_margin(egui::Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.strong(p.name());
-                    ui.label(t(p.description));
-                });
-                ui.label(RichText::new(voice).small().weak());
-                // Frameless, text-height play button centred on the row's right edge.
-                let row = ui.min_rect();
-                let size = ui.text_style_height(&TextStyle::Body) + 6.0;
-                let rect = Rect::from_center_size(
-                    pos2(row.right() - size / 2.0, row.center().y),
-                    vec2(size, size),
-                );
-                let button = ui
-                    .interact(rect, ui.scope_id().with("play"), Sense::click())
-                    .on_hover_text(t(if playing { T::Stop } else { T::PlaySample }))
-                    .on_hover_cursor(CursorIcon::PointingHand);
-                let v = ui.visuals();
-                if button.hovered() {
-                    ui.painter()
-                        .rect_filled(rect, 4, v.widgets.hovered.weak_bg_fill);
-                }
-                let color = ui.style().interact(&button).fg_stroke.color;
-                if playing {
-                    icons::paint_stop(ui.painter(), rect.shrink(4.0), color);
-                } else {
-                    icons::paint_play(ui.painter(), rect.shrink(4.0), color);
-                }
-                play = button.clicked();
+        let card = ui.response();
+        choice_frame(ui, selected, card.hovered(), card.has_focus()).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.strong(p.name());
+                ui.label(t(p.description));
             });
+            ui.label(RichText::new(voice).small().weak());
+            // Frameless, text-height play button centred on the row's right edge.
+            let row = ui.min_rect();
+            let size = ui.text_style_height(&TextStyle::Body) + 6.0;
+            let rect = Rect::from_center_size(
+                pos2(row.right() - size / 2.0, row.center().y),
+                vec2(size, size),
+            );
+            let button = ui
+                .interact(rect, ui.scope_id().with("play"), Sense::click())
+                .on_hover_text(t(if playing { T::Stop } else { T::PlaySample }))
+                .on_hover_cursor(CursorIcon::PointingHand);
+            let v = ui.visuals();
+            if button.hovered() {
+                ui.painter()
+                    .rect_filled(rect, 4, v.widgets.hovered.weak_bg_fill);
+            }
+            let color = ui.style().interact(&button).fg_stroke.color;
+            if playing {
+                icons::paint_stop(ui.painter(), rect.shrink(4.0), color);
+            } else {
+                icons::paint_play(ui.painter(), rect.shrink(4.0), color);
+            }
+            play = button.clicked();
+        });
     });
+    let label = format!("{}, {}", p.name(), t(p.description));
+    card.response
+        .widget_info(|| WidgetInfo::selected(egui::Role::RadioButton, true, selected, &label));
     let clicked = card
         .response
         .on_hover_cursor(CursorIcon::PointingHand)
@@ -1790,7 +1983,10 @@ fn read_aloud(
             });
             if !m.cached.contains(&ModelId::Supertonic) {
                 indented(ui, |ui| {
-                    ui.colored_label(WARN, t(T::SystemVoicesUntilDownloaded));
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        t(T::SystemVoicesUntilDownloaded),
+                    );
                 });
             }
         }
@@ -1866,7 +2062,7 @@ fn read_aloud(
                 && (tts::neural(&s.speak_style(), l).is_some()
                     || tts::neural_fallback(&s.speak_style(), &m.voices, l).is_some()))
         {
-            ui.colored_label(WARN, tts::missing_voice(l));
+            ui.colored_label(ui.visuals().warn_fg_color, tts::missing_voice(l));
         }
 
         section(ui, t(T::Playback));

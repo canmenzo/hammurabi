@@ -220,6 +220,7 @@ texts! {
     ThemeDark => ["Dark", "Koyu", "Oscuro", "Escuro", "深色"],
     ThemeLight => ["Light", "Açık", "Claro", "Claro", "浅色"],
     StartAtLoginLong => ["Start Hammurabi at login", "Oturum açılınca Hammurabi'yi başlat", "Abrir Hammurabi al iniciar sesión", "Abrir o Hammurabi ao entrar no sistema", "登录时启动 Hammurabi"],
+    Updates => ["Updates", "Güncellemeler", "Actualizaciones", "Atualizações", "更新"],
     UpdateAutomatically => ["Update automatically", "Otomatik güncelle", "Actualizar automáticamente", "Atualizar automaticamente", "自动更新"],
     UpdateAutomaticallyHint => [
         "Checks GitHub for a new version every few hours and installs it while captions are off. Nothing else is sent.",
@@ -329,6 +330,7 @@ texts! {
     Cancel => ["Cancel", "İptal", "Cancelar", "Cancelar", "取消"],
     StartingDownload => ["Starting download", "İndirme başlıyor", "Iniciando la descarga", "Iniciando o download", "正在开始下载"],
     Recommended => ["Recommended for your PC", "Bilgisayarınız için önerilen", "Recomendado para tu equipo", "Recomendado para o seu PC", "推荐用于你的电脑"],
+    RecommendedTag => ["Recommended", "Önerilen", "Recomendado", "Recomendado", "推荐"],
     Download => ["Download", "İndir", "Descargar", "Baixar", "下载"],
     DownloadFirst => ["Download first", "Önce indirin", "Descarga primero", "Baixe primeiro", "请先下载"],
 

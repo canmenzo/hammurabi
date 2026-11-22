@@ -1,7 +1,7 @@
 use eframe::egui;
 use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
-use hammurabi::settings::{AsrBackend, Settings};
+use hammurabi::settings::{AsrBackend, Settings, TranslatorChoice};
 use hammurabi::tts::{Gender, Voice};
 use hammurabi::ui::settings_window::{
     ModelsStatus, Page, SettingsAction, SettingsWindow, apply_theme,
@@ -53,7 +53,7 @@ fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Hammurabi")
-            .with_inner_size(size.unwrap_or([740.0, 600.0]))
+            .with_inner_size(size.unwrap_or([840.0, 640.0]))
             .with_position(at.unwrap_or([40.0, 20.0]))
             .with_active(false),
         ..Default::default()
@@ -86,6 +86,7 @@ fn main() -> eframe::Result {
             let screen = std::env::args().nth(2).as_deref() == Some("screen");
             let mut win = SettingsWindow::default();
             win.page = page;
+            win.welcome = std::env::var_os("HAMMURABI_DEMO_WELCOME").is_some();
             Ok(Box::new(Demo {
                 win,
                 settings: Settings {
@@ -99,6 +100,15 @@ fn main() -> eframe::Result {
                         AsrBackend::Whisper
                     },
                     screen_window: std::env::args().nth(3).unwrap_or_default(),
+                    // "natural" or "own", for the translator that is not the default.
+                    translator: match std::env::var("HAMMURABI_DEMO_TRANSLATOR").as_deref() {
+                        Ok("natural") => TranslatorChoice::Natural { light: false },
+                        Ok("own") => TranslatorChoice::Llm {
+                            base_url: "http://localhost:11434/v1".into(),
+                            model: "qwen2.5:3b".into(),
+                        },
+                        _ => TranslatorChoice::Builtin,
+                    },
                     ..Settings::default()
                 },
                 status: ModelsStatus {
@@ -135,7 +145,8 @@ fn main() -> eframe::Result {
                             gender: Some(Gender::Female),
                         },
                     ],
-                    running: false,
+                    // Captions running: the only way to see "Download first" and "in use".
+                    running: std::env::var_os("HAMMURABI_DEMO_RUNNING").is_some(),
                     loading: false,
                     status: String::new(),
                     alert: false,

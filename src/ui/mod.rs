@@ -963,8 +963,8 @@ impl eframe::App for App {
                     .with_visible(false)
                     .with_title("Hammurabi")
                     .with_icon(icons::window_icon())
-                    .with_inner_size([740.0, 600.0])
-                    .with_min_inner_size([640.0, 420.0]),
+                    .with_inner_size([840.0, 640.0])
+                    .with_min_inner_size([700.0, 440.0]),
                 |ui, _| {
                     close = ui.ctx().input(|i| i.viewport().close_requested());
                     self.settings_win

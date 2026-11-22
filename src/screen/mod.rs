@@ -162,6 +162,10 @@ mod source {
         stop: &AtomicBool,
     ) -> anyhow::Result<()> {
         let ocr = Ocr::new(lang)?;
+        log::info!(
+            "screen: {lang} subtitles are read with Windows' text recognition for {}",
+            ocr.language()
+        );
         let display = window.is_empty();
         let _own = display.then(windows::OwnOut::hold);
         // A window comes and goes (a game restarted, a projector closed by mistake), and a
@@ -235,6 +239,9 @@ mod source {
         let display = window.is_none();
         let mut minimized = false;
         let mut place = Place::default();
+        // For the log, as nothing else tells why no subtitle comes: the most lines of text
+        // found in one picture, the subtitles read, and whether their lack was logged.
+        let (mut texts, mut subtitles, mut told) = (0, 0u32, false);
         while !stop.load(Ordering::Relaxed) {
             let t = Instant::now();
             // Once a second, for the windows opened since.
@@ -294,13 +301,26 @@ mod source {
                     }
                 } else {
                     fails = 0;
+                    texts = texts.max(read[0].1.len() + read[1].1.len());
                     if let Some((_, line)) = reader.read(at, &read[0].1, &read[1].1) {
+                        subtitles += 1;
+                        if subtitles == 1 {
+                            log::info!("screen: the first subtitle is read after {at:.0} s");
+                        }
                         log::debug!("screen: {line:?}");
                         if tx.send(ScreenEvent::Line(line)).is_err() {
                             break;
                         }
                     }
                 }
+            }
+            if !told && subtitles == 0 && t0.elapsed() >= Duration::from_secs(60) {
+                told = true;
+                let (w, h) = image.as_ref().map_or((0, 0), |i| (i.width, i.height));
+                log::warn!(
+                    "screen: no subtitle read in a minute: the area is {w}x{h}, and at most \
+                     {texts} lines of text were found in it at once"
+                );
             }
             let now = Place {
                 picture: capture.place().filter(|_| !minimized),

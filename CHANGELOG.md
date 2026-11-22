@@ -4,6 +4,10 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Changed
+
+- The log tells why Subtitles on screen shows nothing: which language Windows recognises the text as (its own where the one asked for is not installed), when the first subtitle is read, and after a minute without one how large the area read is and how many lines of text were found in it.
+
 ## [0.7.13] - 2026-11-22
 
 ### Fixed

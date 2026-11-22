@@ -43,6 +43,16 @@ impl Ocr {
         Ok(Self { engine })
     }
 
+    /// The language text is recognised as: Windows' own where it has none for the one asked
+    /// for, which reads another language's letters wrong.
+    pub fn language(&self) -> String {
+        let tag = self
+            .engine
+            .RecognizerLanguage()
+            .and_then(|l| l.LanguageTag());
+        tag.map(|t| t.to_string()).unwrap_or_default()
+    }
+
     /// The lines in a picture of one byte a pixel, `width` by `height`.
     pub fn read(&self, grey: &[u8], width: usize, height: usize) -> anyhow::Result<Vec<Line>> {
         let writer = DataWriter::new()?;

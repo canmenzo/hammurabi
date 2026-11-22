@@ -23,7 +23,7 @@ use crate::config;
 use crate::i18n::{self, T, t, tf};
 use crate::models::{self, ModelId};
 use crate::pipeline::{Engine, EngineHandle};
-use crate::settings::{Settings, lang_name};
+use crate::settings::{Settings, ThemeChoice, lang_name};
 use crate::tts;
 use crate::types::{
     AudioSource, CaptionUpdate, EngineCommand, EngineEvent, EngineState, ProgressPhase, Status,
@@ -113,6 +113,7 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         i18n::set(settings.ui_language);
         settings_window::apply_theme(&ctx);
+        platform::hide_driver_windows();
         let first_run = crate::paths::config_file().is_ok_and(|p| !p.exists());
         let (app_tx, app_rx) = crossbeam_channel::unbounded();
         install_handlers(&ctx, app_tx.clone());
@@ -685,8 +686,13 @@ fn smoothed(was: Option<f32>, ms: u32) -> f32 {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // A language picked in Settings shows from the next frame on.
+        // A language or theme picked in Settings shows from the next frame on.
         i18n::set(self.settings.ui_language);
+        ctx.set_theme(match self.settings.theme {
+            ThemeChoice::System => egui::ThemePreference::System,
+            ThemeChoice::Dark => egui::ThemePreference::Dark,
+            ThemeChoice::Light => egui::ThemePreference::Light,
+        });
         while let Ok(ev) = self.app_rx.try_recv() {
             let action = match ev {
                 AppEvent::Menu(id) => tray::Tray::action(&id),

@@ -10,7 +10,7 @@ use crate::audio::{DeviceInfo, DeviceList};
 use crate::i18n::{self, LANGS, T, t, tf};
 use crate::models::{ModelId, spec};
 use crate::settings::{
-    AsrBackend, CaptionStyle, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS,
+    AsrBackend, CaptionStyle, Edge, ModelChoice, SOURCE_LANGS, Settings, TARGET_LANGS, ThemeChoice,
     TranslatorChoice, lang_name,
 };
 use crate::tts::{self, Persona, Style, Voice, supertonic};
@@ -406,6 +406,18 @@ impl SettingsWindow {
         grid(ui, "app", |ui| {
             ui.label(t(T::Language));
             language_combo(ui, &mut s.ui_language, changed);
+            ui.end_row();
+
+            ui.label(t(T::Theme));
+            ui.horizontal(|ui| {
+                for (v, label) in [
+                    (ThemeChoice::System, T::ThemeSystem),
+                    (ThemeChoice::Dark, T::ThemeDark),
+                    (ThemeChoice::Light, T::ThemeLight),
+                ] {
+                    *changed |= ui.radio_value(&mut s.theme, v, t(label)).changed();
+                }
+            });
             ui.end_row();
         });
         let mut autostart = m.autostart;
@@ -817,13 +829,6 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
 
     ui.label("");
     screen_preview(ui, s, changed);
-    ui.end_row();
-
-    ui.label("");
-    *changed |= ui
-        .checkbox(&mut s.screen_cover, t(T::CoverSubtitles))
-        .on_hover_text(t(T::CoverSubtitlesHint))
-        .changed();
     ui.end_row();
 }
 
@@ -2075,6 +2080,12 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
     }
 
     section(ui, t(T::Look));
+    if cfg!(windows) && s.asr_backend == AsrBackend::ScreenText {
+        *changed |= ui
+            .checkbox(&mut s.screen_cover, t(T::CoverSubtitles))
+            .on_hover_text(t(T::CoverSubtitlesHint))
+            .changed();
+    }
     // A cover shows the translation alone, in a box that hides the subtitle under it.
     let covers = s.covers();
     if covers {

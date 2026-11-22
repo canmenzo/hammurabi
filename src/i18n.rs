@@ -178,6 +178,10 @@ texts! {
     SectionApp => ["App", "Uygulama", "Aplicación", "Aplicativo", "应用"],
     Language => ["Language", "Dil", "Idioma", "Idioma", "语言"],
     SystemLanguage => ["System language ({0})", "Sistem dili ({0})", "Idioma del sistema ({0})", "Idioma do sistema ({0})", "跟随系统（{0}）"],
+    Theme => ["Theme", "Tema", "Tema", "Tema", "主题"],
+    ThemeSystem => ["System", "Sistem", "Sistema", "Sistema", "跟随系统"],
+    ThemeDark => ["Dark", "Koyu", "Oscuro", "Escuro", "深色"],
+    ThemeLight => ["Light", "Açık", "Claro", "Claro", "浅色"],
     StartAtLoginLong => ["Start Hammurabi at login", "Oturum açılınca Hammurabi'yi başlat", "Abrir Hammurabi al iniciar sesión", "Abrir o Hammurabi ao entrar no sistema", "登录时启动 Hammurabi"],
     UpdateAutomatically => ["Update automatically", "Otomatik güncelle", "Actualizar automáticamente", "Atualizar automaticamente", "自动更新"],
     UpdateAutomaticallyHint => [

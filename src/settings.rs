@@ -86,6 +86,16 @@ pub enum TranslatorChoice {
     },
 }
 
+/// The look of the app's own windows. Captions keep the colours set for them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeChoice {
+    /// The system's.
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Edge {
     None,
@@ -221,6 +231,7 @@ pub struct Settings {
     pub build: Option<String>,
     /// The app's own language; None = the system's.
     pub ui_language: Option<Lang>,
+    pub theme: ThemeChoice,
 }
 
 impl Default for Settings {
@@ -269,6 +280,7 @@ impl Default for Settings {
             update_tried: None,
             build: None,
             ui_language: None,
+            theme: ThemeChoice::System,
         }
     }
 }
@@ -383,14 +395,17 @@ mod tests {
             speak_engine: tts::Engine::Speaker,
             omnivoice_accepted: true,
             ui_language: Some(Lang::Pt),
+            theme: ThemeChoice::Light,
             ..Settings::default()
         };
         let text = toml::to_string(&s).unwrap();
         assert!(text.contains("ui_language = \"pt-BR\""), "{text}");
+        assert!(text.contains("theme = \"Light\""), "{text}");
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), s);
-        // A config from before the language setting follows the system.
+        // A config from before the language and theme settings follows the system.
         let old = "translate = true\ntarget_language = \"tr\"";
-        assert_eq!(toml::from_str::<Settings>(old).unwrap().ui_language, None);
+        let old = toml::from_str::<Settings>(old).unwrap();
+        assert_eq!((old.ui_language, old.theme), (None, ThemeChoice::System));
         assert_eq!(
             toml::from_str::<Settings>("").unwrap().migrated(),
             Settings::default()

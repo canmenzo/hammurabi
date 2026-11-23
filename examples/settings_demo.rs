@@ -2,7 +2,7 @@ use eframe::egui;
 use hammurabi::audio::{DeviceInfo, DeviceList};
 use hammurabi::models::ModelId;
 use hammurabi::settings::{AsrBackend, Settings, TranslatorChoice};
-use hammurabi::tts::{Gender, Voice};
+use hammurabi::tts::{Engine, Gender, Voice};
 use hammurabi::ui::settings_window::{
     ModelsStatus, Page, SettingsAction, SettingsWindow, apply_theme,
 };
@@ -11,11 +11,52 @@ struct Demo {
     win: SettingsWindow,
     settings: Settings,
     status: ModelsStatus,
+    frames: u32,
+}
+
+/// A picture as a 24-bit BMP file, which needs no crate to write.
+fn bmp(image: &egui::ColorImage) -> Vec<u8> {
+    let [w, h] = image.size;
+    let row = (w * 3).next_multiple_of(4);
+    let mut out = b"BM".to_vec();
+    out.extend_from_slice(&((54 + row * h) as u32).to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&54u32.to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&(w as i32).to_le_bytes());
+    out.extend_from_slice(&(h as i32).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&24u16.to_le_bytes());
+    out.extend_from_slice(&[0; 24]);
+    // Rows from the bottom up, each padded to four bytes.
+    for y in (0..h).rev() {
+        for p in &image.pixels[y * w..(y + 1) * w] {
+            out.extend_from_slice(&[p.b(), p.g(), p.r()]);
+        }
+        out.resize(out.len() + row - w * 3, 0);
+    }
+    out
 }
 
 impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // HAMMURABI_DEMO_SHOT names a file: the window saves a picture of itself there once it
+        // has settled and closes, for a look at it where the screen cannot be captured.
+        if let Ok(path) = std::env::var("HAMMURABI_DEMO_SHOT") {
+            self.frames += 1;
+            if self.frames == 20 {
+                let closing = ctx.clone();
+                let save = egui::ScreenshotCallback::new(move |image| {
+                    if let Err(e) = std::fs::write(&path, bmp(&image)) {
+                        eprintln!("{path}: {e}");
+                    }
+                    closing.send_viewport_cmd(egui::ViewportCommand::Close);
+                });
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(save));
+            }
+            ctx.request_repaint();
+        }
         for a in self.win.show(&ctx, &mut self.settings, &self.status) {
             match a {
                 SettingsAction::Changed => println!("changed"),
@@ -63,6 +104,13 @@ fn main() -> eframe::Result {
         opts,
         Box::new(|cc| {
             apply_theme(&cc.egui_ctx);
+            // Below 1 a page taller than the display fits in one picture.
+            if let Some(zoom) = std::env::var("HAMMURABI_DEMO_ZOOM")
+                .ok()
+                .and_then(|z| z.parse().ok())
+            {
+                cc.egui_ctx.set_zoom_factor(zoom);
+            }
             // "light" or "dark", for a picture of the theme the system does not have.
             match std::env::var("HAMMURABI_DEMO_THEME").as_deref() {
                 Ok("light") => cc.egui_ctx.set_theme(egui::ThemePreference::Light),
@@ -88,6 +136,7 @@ fn main() -> eframe::Result {
             win.page = page;
             win.welcome = std::env::var_os("HAMMURABI_DEMO_WELCOME").is_some();
             Ok(Box::new(Demo {
+                frames: 0,
                 win,
                 settings: Settings {
                     translate: true,
@@ -109,6 +158,15 @@ fn main() -> eframe::Result {
                         },
                         _ => TranslatorChoice::Builtin,
                     },
+                    // The persona picked, by its id, e.g. "custom".
+                    speak_persona: std::env::var("HAMMURABI_DEMO_PERSONA")
+                        .unwrap_or_else(|_| Settings::default().speak_persona),
+                    // "natural" for the Natural voices.
+                    speak_engine: match std::env::var("HAMMURABI_DEMO_ENGINE").as_deref() {
+                        Ok("natural") => Engine::Supertonic,
+                        _ => Engine::System,
+                    },
+                    browser_source: std::env::var_os("HAMMURABI_DEMO_WEB").is_some(),
                     ..Settings::default()
                 },
                 status: ModelsStatus {
@@ -150,7 +208,8 @@ fn main() -> eframe::Result {
                     loading: false,
                     status: String::new(),
                     alert: false,
-                    reading: None,
+                    // The voice reading now, e.g. "Microsoft Emel".
+                    reading: std::env::var("HAMMURABI_DEMO_READING").ok(),
                     previewing: None,
                     voice_learned: false,
                     update: if std::env::var_os("HAMMURABI_DEMO_IDLE").is_some() {

@@ -26,7 +26,6 @@ const CONTENT: f32 = 660.0;
 const LABEL: f32 = 190.0;
 const FIELD: f32 = 240.0;
 const INDENT: f32 = 24.0;
-#[cfg(windows)]
 const CONTROL: f32 = LABEL + 8.0;
 
 /// Read-only data the settings window displays.
@@ -773,13 +772,6 @@ fn must_download(ui: &mut Ui, id: ModelId, m: &ModelsStatus, actions: &mut Vec<S
     ui.weak(t(T::DownloadFirst));
 }
 
-fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
-    egui::Grid::new(id)
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, add);
-}
-
 /// The models the first start of captions has to download.
 pub fn pending_downloads(s: &Settings, m: &ModelsStatus) -> Vec<ModelId> {
     let lc = cfg!(all(windows, feature = "win-livecaptions"))
@@ -996,7 +988,25 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     row(ui, t(T::SubtitleArea), |ui| {
         ui.scope(|ui| {
             let (mut top, mut bottom) = (s.screen_top * 100.0, s.screen_bottom * 100.0);
-            let from = ui.label(t(T::AreaFrom));
+            // Both labels as wide as the wider, so the sliders line up when they are on two lines.
+            let font = TextStyle::Body.resolve(ui.style());
+            let wide = |key| {
+                let text = t(key).to_string();
+                let galley = ui
+                    .painter()
+                    .layout_no_wrap(text, font.clone(), Color32::PLACEHOLDER);
+                galley.size().x
+            };
+            let width = wide(T::AreaFrom).max(wide(T::AreaTo));
+            let label = |ui: &mut Ui, key| {
+                let size = vec2(width, ui.spacing().interact_size.y);
+                ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
+                    ui.set_min_width(width);
+                    ui.label(t(key));
+                })
+                .response
+            };
+            let from = label(ui, T::AreaFrom);
             let a = ui.add(
                 egui::Slider::new(&mut top, 0.0..=95.0)
                     .fixed_decimals(0)
@@ -1008,7 +1018,7 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             if left < a.rect.right() - from.rect.left() + 12.0 {
                 ui.end_row();
             }
-            ui.label(t(T::AreaTo));
+            label(ui, T::AreaTo);
             let b = ui.add(
                 egui::Slider::new(&mut bottom, 5.0..=100.0)
                     .fixed_decimals(0)
@@ -1145,21 +1155,6 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         *live = None;
         ui.ctx().request_repaint();
     }
-}
-
-/// A model's name and size, and `model_state`.
-fn model_status(
-    ui: &mut Ui,
-    id: ModelId,
-    m: &ModelsStatus,
-    used: bool,
-    actions: &mut Vec<SettingsAction>,
-) {
-    ui.horizontal(|ui| {
-        let size = size_label(spec(id).approx_bytes);
-        ui.label(format!("{} ({size})", model_name(id)));
-        model_state(ui, id, m, used, actions);
-    });
 }
 
 /// Do the captions that run now have this model loaded? Its files cannot be deleted then.
@@ -1891,25 +1886,6 @@ fn persona_card(
     (clicked, play)
 }
 
-/// Lines up with the text of the radio button above.
-fn indented(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    egui::Frame::new()
-        .inner_margin(egui::Margin {
-            left: 24,
-            ..Default::default()
-        })
-        .show(ui, |ui| ui.horizontal_wrapped(add));
-}
-
-/// A radio button with its explanation under it.
-fn engine_row(ui: &mut Ui, s: &mut Settings, v: tts::Engine, title: T, about: T) -> bool {
-    let changed = ui.radio_value(&mut s.speak_engine, v, t(title)).changed();
-    indented(ui, |ui| {
-        ui.weak(t(about));
-    });
-    changed
-}
-
 fn read_aloud(
     ui: &mut Ui,
     s: &mut Settings,
@@ -1917,14 +1893,23 @@ fn read_aloud(
     changed: &mut bool,
     actions: &mut Vec<SettingsAction>,
 ) {
-    section(ui, t(T::PageReadAloud));
-    *changed |= ui
-        .checkbox(&mut s.speak, t(T::ReadCaptionsAloud))
-        .on_hover_text(t(T::ReadCaptionsAloudHint))
-        .changed();
-    if let Some(voice) = &m.reading {
-        ui.weak(tf(T::ReadingWith, &[voice]));
-    }
+    card(ui, |ui| {
+        // On the checkbox's line, so the page stays put each time a voice starts.
+        egui::Sides::new().shrink_left().show(
+            ui,
+            |ui| {
+                *changed |= ui
+                    .checkbox(&mut s.speak, t(T::ReadCaptionsAloud))
+                    .on_hover_text(t(T::ReadCaptionsAloudHint))
+                    .changed();
+            },
+            |ui| {
+                if let Some(voice) = &m.reading {
+                    ui.weak(tf(T::ReadingWith, &[voice]));
+                }
+            },
+        );
+    });
     let lang = s.speak_lang().map(str::to_string);
     // Previews are in English while the spoken language is auto-detected.
     let sample_lang = lang.clone().unwrap_or_else(|| "en".into());
@@ -1938,61 +1923,60 @@ fn read_aloud(
         .collect();
     ui.add_enabled_ui(s.speak, |ui| {
         section(ui, t(T::VoiceEngine));
-        *changed |= engine_row(
-            ui,
-            s,
-            tts::Engine::System,
-            T::SystemVoices,
-            T::SystemVoicesNote,
-        );
-        *changed |= engine_row(
-            ui,
-            s,
-            tts::Engine::Supertonic,
-            T::NaturalVoices,
-            T::NaturalVoicesNote,
-        );
-        if s.speak_engine == tts::Engine::Supertonic {
-            let used = in_use(ModelId::Supertonic, s, m);
-            indented(ui, |ui| {
-                model_status(ui, ModelId::Supertonic, m, used, actions)
-            });
-            if !m.cached.contains(&ModelId::Supertonic) {
-                indented(ui, |ui| {
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        t(T::SystemVoicesUntilDownloaded),
-                    );
-                });
+        let was = s.speak_engine;
+        let mut now = was;
+        let (system, about) = (t(T::SystemVoices), t(T::SystemVoicesNote));
+        if option_card(ui, system, about, was == tts::Engine::System, true, |_| {}) {
+            now = tts::Engine::System;
+        }
+        let natural = was == tts::Engine::Supertonic;
+        let id = ModelId::Supertonic;
+        let used = in_use(id, s, m);
+        let body = |ui: &mut Ui| {
+            if !natural {
+                return;
             }
+            ui.separator();
+            model_row(ui, id, false, |ui| model_state(ui, id, m, used, actions));
+            if !m.cached.contains(&id) {
+                under(ui, 0.0, |ui| warning(ui, t(T::SystemVoicesUntilDownloaded)));
+            }
+        };
+        let (title, about) = (t(T::NaturalVoices), t(T::NaturalVoicesNote));
+        if option_card(ui, title, about, natural, true, body) {
+            now = tts::Engine::Supertonic;
         }
+        // Builds without the Speaker's voice offer it as a download of the GPU build.
         #[cfg(not(omnivoice))]
-        {
-            ui.add_enabled(false, egui::RadioButton::new(false, t(T::SpeakersVoice)))
-                .on_disabled_hover_text(t(T::GpuDownloadOnly));
-            indented(ui, |ui| {
-                ui.weak(t(T::SpeakerVoiceNoteGpu));
-            });
-        }
+        ui.add_enabled_ui(false, |ui| {
+            let (title, about) = (t(T::SpeakersVoice), t(T::SpeakerVoiceNoteGpu));
+            option_card(ui, title, about, false, false, |_| {})
+        })
+        .response
+        .on_disabled_hover_text(t(T::GpuDownloadOnly));
         #[cfg(omnivoice)]
         {
-            *changed |= engine_row(
-                ui,
-                s,
-                tts::Engine::Speaker,
-                T::SpeakersVoice,
-                T::SpeakerVoiceNote,
-            );
-            if s.speak_engine == tts::Engine::Speaker {
-                speaker_voice(ui, s, m, changed, actions);
+            let speaker = was == tts::Engine::Speaker;
+            let body = |ui: &mut Ui| {
+                if speaker {
+                    ui.separator();
+                    speaker_voice(ui, s, m, changed, actions);
+                }
+            };
+            let (title, about) = (t(T::SpeakersVoice), t(T::SpeakerVoiceNote));
+            if option_card(ui, title, about, speaker, true, body) {
+                now = tts::Engine::Speaker;
             }
+        }
+        if now != was {
+            s.speak_engine = now;
+            *changed = true;
         }
 
         let cloning = s.speak_engine == tts::Engine::Speaker;
         section(ui, t(if cloning { T::BackupVoice } else { T::Voice }));
         if cloning {
-            ui.weak(t(T::BackupVoiceNote));
-            ui.add_space(2.0);
+            note(ui, t(T::BackupVoiceNote));
         }
         let neural = m.cached.contains(&ModelId::Supertonic);
         let current = tts::persona(&s.speak_persona).id;
@@ -2027,7 +2011,6 @@ fn read_aloud(
             }
         }
         if current == tts::CUSTOM {
-            ui.add_space(4.0);
             custom_voice(ui, s, m, &voices, &sample_lang, changed);
         }
         if let Some(l) = &lang
@@ -2038,53 +2021,53 @@ fn read_aloud(
                 && (tts::neural(&s.speak_style(), l).is_some()
                     || tts::neural_fallback(&s.speak_style(), &m.voices, l).is_some()))
         {
-            ui.colored_label(ui.visuals().warn_fg_color, tts::missing_voice(l));
+            warning(ui, &tts::missing_voice(l));
         }
 
         section(ui, t(T::Playback));
-        grid(ui, "playback", |ui| {
-            ui.label(t(T::Volume));
-            *changed |= ui
-                .add(
-                    Slider::new(&mut s.speak_volume, 0.0..=1.0)
-                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                )
-                .changed();
-            ui.end_row();
-            ui.label(t(T::PlayOn));
-            device_combo(
-                ui,
-                "speak_out",
-                &m.devices.outputs,
-                &mut s.speak_device,
-                changed,
-            );
-            ui.end_row();
-            if crate::audio::duck::SUPPORTED {
-                ui.label(t(T::OtherAppsWhileReading));
+        card(ui, |ui| {
+            row(ui, t(T::Volume), |ui| {
                 *changed |= ui
                     .add(
-                        Slider::new(&mut s.speak_duck, 0.1..=1.0).custom_formatter(|v, _| {
-                            if v >= 1.0 {
-                                t(T::NotTurnedDown).into()
-                            } else {
-                                format!("{:.0}%", v * 100.0)
-                            }
-                        }),
+                        Slider::new(&mut s.speak_volume, 0.0..=1.0)
+                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                     )
                     .changed();
-                ui.end_row();
+            });
+            row(ui, t(T::PlayOn), |ui| {
+                device_combo(
+                    ui,
+                    "speak_out",
+                    &m.devices.outputs,
+                    &mut s.speak_device,
+                    changed,
+                );
+            });
+            if crate::audio::duck::SUPPORTED {
+                row(ui, t(T::OtherAppsWhileReading), |ui| {
+                    *changed |= ui
+                        .add(
+                            Slider::new(&mut s.speak_duck, 0.1..=1.0).custom_formatter(|v, _| {
+                                if v >= 1.0 {
+                                    t(T::NotTurnedDown).into()
+                                } else {
+                                    format!("{:.0}%", v * 100.0)
+                                }
+                            }),
+                        )
+                        .changed();
+                });
+            }
+            if s.translate {
+                let label = tf(T::AlsoReadSame, &[&language_name(&s.target_language)]);
+                *changed |= ui
+                    .checkbox(&mut s.speak_same_lang, label)
+                    .on_hover_text(t(T::AlsoReadSameHint))
+                    .changed();
             }
         });
-        if s.translate {
-            let label = tf(T::AlsoReadSame, &[&language_name(&s.target_language)]);
-            *changed |= ui
-                .checkbox(&mut s.speak_same_lang, label)
-                .on_hover_text(t(T::AlsoReadSameHint))
-                .changed();
-        }
-        ui.weak(t(T::ListenNote));
-        ui.weak(t(T::PileUpNote));
+        note(ui, t(T::ListenNote));
+        note(ui, t(T::PileUpNote));
     });
 }
 
@@ -2097,37 +2080,43 @@ fn speaker_voice(
     actions: &mut Vec<SettingsAction>,
 ) {
     if !s.omnivoice_accepted {
-        indented(ui, |ui| {
-            *changed |= ui
-                .checkbox(&mut s.omnivoice_accepted, t(T::PersonalUseAgree))
-                .changed();
-        });
+        *changed |= ui
+            .checkbox(&mut s.omnivoice_accepted, t(T::PersonalUseAgree))
+            .changed();
     } else {
-        let used = in_use(ModelId::OmniVoice, s, m);
-        indented(ui, |ui| {
-            model_status(ui, ModelId::OmniVoice, m, used, actions)
-        });
-        if m.cached.contains(&ModelId::OmniVoice) {
-            indented(ui, |ui| {
-                ui.label(t(if m.voice_learned {
-                    T::ReadingInSpeakersVoice
-                } else {
-                    T::ListeningToLearn
-                }));
-                if m.voice_learned && ui.button(t(T::LearnAgain)).clicked() {
-                    actions.push(SettingsAction::RelearnVoice);
-                }
-            });
+        let id = ModelId::OmniVoice;
+        let used = in_use(id, s, m);
+        model_row(ui, id, false, |ui| model_state(ui, id, m, used, actions));
+        if m.cached.contains(&id) {
+            egui::Sides::new().shrink_left().show(
+                ui,
+                |ui| {
+                    ui.add(
+                        egui::Label::new(t(if m.voice_learned {
+                            T::ReadingInSpeakersVoice
+                        } else {
+                            T::ListeningToLearn
+                        }))
+                        .wrap(),
+                    );
+                },
+                |ui| {
+                    if m.voice_learned && ui.button(t(T::LearnAgain)).clicked() {
+                        actions.push(SettingsAction::RelearnVoice);
+                    }
+                },
+            );
         }
     }
-    indented(ui, |ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.weak(t(T::LicenceBefore));
+        let small = |key| RichText::new(t(key)).small().weak();
+        ui.label(small(T::LicenceBefore));
         ui.hyperlink_to(
-            t(T::Licence),
+            RichText::new(t(T::Licence)).small(),
             "https://huggingface.co/k2-fsa/OmniVoice#license",
         );
-        ui.weak(t(T::LicenceAfter));
+        ui.label(small(T::LicenceAfter));
     });
 }
 
@@ -2148,8 +2137,7 @@ fn custom_voice(
         sample_lang,
     )
     .is_some();
-    grid(ui, "read_aloud", |ui| {
-        ui.label(t(T::Voice));
+    card(ui, |ui| {
         let label = |v: &Voice| format!("{} ({})", v.name, v.lang);
         let current = match &s.speak_voice {
             None if neural => tf(T::NaturalVoiceN, &[&s.speak_neural_voice]),
@@ -2160,45 +2148,45 @@ fn custom_voice(
                 .find(|v| &v.id == id)
                 .map_or_else(|| tf(T::Missing, &[id]), label),
         };
-        ComboBox::from_id_salt("voice")
-            .selected_text(current)
-            .width(260.0)
-            .show_ui(ui, |ui| {
-                if neural {
-                    for v in supertonic::STYLES {
-                        let on = s.speak_voice.is_none() && s.speak_neural_voice == v;
-                        if ui
-                            .selectable_label(on, tf(T::NaturalVoiceN, &[&v]))
-                            .clicked()
-                        {
-                            s.speak_voice = None;
-                            s.speak_neural_voice = v.into();
-                            *changed = true;
+        row(ui, t(T::Voice), |ui| {
+            ComboBox::from_id_salt("voice")
+                .selected_text(current)
+                .width(ui.available_width().min(FIELD))
+                .show_ui(ui, |ui| {
+                    if neural {
+                        for v in supertonic::STYLES {
+                            let on = s.speak_voice.is_none() && s.speak_neural_voice == v;
+                            if ui
+                                .selectable_label(on, tf(T::NaturalVoiceN, &[&v]))
+                                .clicked()
+                            {
+                                s.speak_voice = None;
+                                s.speak_neural_voice = v.into();
+                                *changed = true;
+                            }
                         }
+                        ui.separator();
+                    } else {
+                        *changed |= ui
+                            .selectable_value(&mut s.speak_voice, None, t(T::Automatic))
+                            .on_hover_text(t(T::AutomaticHint))
+                            .changed();
                     }
-                    ui.separator();
-                } else {
-                    *changed |= ui
-                        .selectable_value(&mut s.speak_voice, None, t(T::Automatic))
-                        .on_hover_text(t(T::AutomaticHint))
-                        .changed();
-                }
-                for v in voices {
-                    *changed |= ui
-                        .selectable_value(&mut s.speak_voice, Some(v.id.clone()), label(v))
-                        .changed();
-                }
-            });
-        ui.end_row();
-
-        ui.label(t(T::Speed));
-        *changed |= ui
-            .add(
-                Slider::new(&mut s.speak_rate, 0.5..=2.0)
-                    .custom_formatter(|v, _| format!("{v:.1}x")),
-            )
-            .changed();
-        ui.end_row();
+                    for v in voices {
+                        *changed |= ui
+                            .selectable_value(&mut s.speak_voice, Some(v.id.clone()), label(v))
+                            .changed();
+                    }
+                });
+        });
+        row(ui, t(T::Speed), |ui| {
+            *changed |= ui
+                .add(
+                    Slider::new(&mut s.speak_rate, 0.5..=2.0)
+                        .custom_formatter(|v, _| format!("{v:.1}x")),
+                )
+                .changed();
+        });
     });
 }
 
@@ -2220,87 +2208,124 @@ fn color_row(ui: &mut Ui, hex: &mut String, changed: &mut bool) {
 }
 
 fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec<SettingsAction>) {
-    section(ui, t(T::Position));
-    ui.weak(t(T::PositionNote));
-    if ui
-        .add_enabled(
-            s.overlay_pos.is_some(),
-            egui::Button::new(t(T::ResetPosition)),
-        )
-        .clicked()
-    {
+    let reset = s.overlay_pos.is_some();
+    if section_action(ui, t(T::Position), t(T::ResetPosition), reset) {
         actions.push(SettingsAction::ResetPosition);
     }
-    *changed |= ui
-        .checkbox(&mut s.overlay_locked, t(T::LockInPlace))
-        .on_hover_text(t(T::LockHint))
-        .changed();
+    card(ui, |ui| {
+        note(ui, t(T::PositionNote));
+        *changed |= ui
+            .checkbox(&mut s.overlay_locked, t(T::LockInPlace))
+            .on_hover_text(t(T::LockHint))
+            .changed();
+    });
 
     section(ui, t(T::Streaming));
-    *changed |= ui
-        .checkbox(&mut s.browser_source, t(T::CaptionsAsWebPage))
-        .on_hover_text(t(T::WebPageHint))
-        .changed();
-    if s.browser_source {
-        ui.weak(t(T::ObsNote));
-        ui.horizontal(|ui| {
-            let url = super::web::Web::url();
-            let key = egui::Id::unique("url-copied");
-            let now = ui.input(|i| i.time);
-            if ui.link(&url).on_hover_text(t(T::Copy)).clicked() {
-                ui.ctx().copy_text(url);
-                ui.data_mut(|d| d.insert_temp(key, now + 2.0));
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_secs(2));
-            }
-            if ui
-                .data(|d| d.get_temp::<f64>(key))
-                .is_some_and(|until| now < until)
-            {
-                ui.weak(t(T::Copied));
-            }
-        });
-        ui.weak(t(T::ScaleNote));
-    }
-
-    section(ui, t(T::Look));
-    if cfg!(windows) && s.asr_backend == AsrBackend::ScreenText {
+    card(ui, |ui| {
         *changed |= ui
-            .checkbox(&mut s.screen_cover, t(T::CoverSubtitles))
-            .on_hover_text(t(T::CoverSubtitlesHint))
+            .checkbox(&mut s.browser_source, t(T::CaptionsAsWebPage))
+            .on_hover_text(t(T::WebPageHint))
             .changed();
+        if s.browser_source {
+            under(ui, INDENT, |ui| {
+                ui.vertical(|ui| {
+                    note(ui, t(T::ObsNote));
+                    ui.horizontal(|ui| {
+                        let url = super::web::Web::url();
+                        let key = egui::Id::unique("url-copied");
+                        let now = ui.input(|i| i.time);
+                        if ui.link(&url).on_hover_text(t(T::Copy)).clicked() {
+                            ui.ctx().copy_text(url);
+                            ui.data_mut(|d| d.insert_temp(key, now + 2.0));
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_secs(2));
+                        }
+                        if ui
+                            .data(|d| d.get_temp::<f64>(key))
+                            .is_some_and(|until| now < until)
+                        {
+                            ui.label(RichText::new(t(T::Copied)).small().weak());
+                        }
+                    });
+                    note(ui, t(T::ScaleNote));
+                })
+            });
+        }
+    });
+
+    let reset = s.caption != CaptionStyle::default();
+    if section_action(ui, t(T::Look), t(T::ResetLook), reset) {
+        s.caption = CaptionStyle::default();
+        *changed = true;
     }
-    // A cover shows the translation alone, in a box that hides the subtitle under it.
-    let covers = s.covers();
-    if covers {
-        ui.weak(t(T::CoverLookNote));
-    }
-    let c = &mut s.caption;
-    grid(ui, "captions", |ui| {
-        ui.label(t(T::TranslatedText));
-        ui.horizontal(|ui| {
+    card(ui, |ui| {
+        // Three groups: the cover and its box, what is always used, and what a cover leaves
+        // unused.
+        let cover = cfg!(windows) && s.asr_backend == AsrBackend::ScreenText;
+        if cover {
+            *changed |= ui
+                .checkbox(&mut s.screen_cover, t(T::CoverSubtitles))
+                .on_hover_text(t(T::CoverSubtitlesHint))
+                .changed();
+        }
+        // A cover shows the translation alone, in a box that hides the subtitle under it.
+        let covers = s.covers();
+        let c = &mut s.caption;
+        if covers {
+            under(ui, INDENT, |ui| {
+                ui.vertical(|ui| note(ui, t(T::CoverLookNote)))
+            });
+            for (label, value) in [
+                (T::CoverRight, &mut c.cover_x),
+                (T::CoverUp, &mut c.cover_y),
+            ] {
+                row(ui, t(label), |ui| {
+                    *changed |= ui
+                        .add(Slider::new(value, -30.0..=30.0).step_by(0.5).suffix("%"))
+                        .changed();
+                });
+            }
+            row(ui, t(T::CoverPadding), |ui| {
+                *changed |= ui
+                    .add(
+                        Slider::new(&mut c.cover_pad, 0.0..=3.0)
+                            .step_by(0.1)
+                            .custom_formatter(|v, _| format!("{}×", i18n::decimal(v, 1))),
+                    )
+                    .changed();
+            });
+            row(ui, t(T::CoverMaxWidth), |ui| {
+                *changed |= ui
+                    .add(
+                        Slider::new(&mut c.cover_max_width, 30.0..=100.0)
+                            .step_by(1.0)
+                            .suffix("%"),
+                    )
+                    .changed();
+            });
+        }
+        if cover || covers {
+            ui.separator();
+        }
+
+        row(ui, t(T::TranslatedText), |ui| {
             *changed |= ui
                 .add(Slider::new(&mut c.trans_size, 12.0..=72.0).suffix(" px"))
                 .changed();
             color_row(ui, &mut c.trans_color, changed);
         });
-        ui.end_row();
-
-        ui.add_enabled_ui(!covers, |ui| ui.label(t(T::OriginalText)));
-        ui.add_enabled_ui(!covers, |ui| {
-            ui.horizontal(|ui| {
-                *changed |= ui
-                    .add(Slider::new(&mut c.orig_size, 10.0..=60.0).suffix(" px"))
-                    .changed();
-                color_row(ui, &mut c.orig_color, changed);
-            });
+        row(ui, t(T::TextEdge), |ui| {
+            for (v, label) in [
+                (Edge::None, T::EdgeNone),
+                (Edge::Shadow, T::Shadow),
+                (Edge::Outline, T::Outline),
+            ] {
+                *changed |= ui.radio_value(&mut c.edge, v, t(label)).changed();
+            }
         });
-        ui.end_row();
-
         // A cover has an opacity of its own, so that one over the game's subtitle hides it
         // whatever the caption boxes are set to.
-        ui.label(t(T::Background));
-        ui.horizontal(|ui| {
+        row(ui, t(T::Background), |ui| {
             let opacity = if covers {
                 &mut c.cover_opacity
             } else {
@@ -2314,96 +2339,42 @@ fn captions(ui: &mut Ui, s: &mut Settings, changed: &mut bool, actions: &mut Vec
                 .changed();
             color_row(ui, &mut c.bg_color, changed);
         });
-        ui.end_row();
         if covers && c.cover_opacity < 1.0 {
-            ui.label("");
-            ui.weak(t(T::CoverSeeThrough));
-            ui.end_row();
+            under(ui, CONTROL, |ui| {
+                ui.vertical(|ui| note(ui, t(T::CoverSeeThrough)))
+            });
         }
-
-        ui.add_enabled_ui(!covers, |ui| ui.label(t(T::CaptionsAtOnce)));
-        *changed |= ui
-            .add_enabled(!covers, Slider::new(&mut c.cues, 1..=3))
-            .changed();
-        ui.end_row();
-
-        ui.label(t(T::KeepOnScreen));
-        *changed |= ui
-            .add(
-                Slider::new(&mut c.hold_secs, 1.0..=15.0)
-                    .step_by(0.5)
-                    .custom_formatter(|v, _| tf(T::Seconds, &[&i18n::decimal(v, 1)])),
-            )
-            .changed();
-        ui.end_row();
-
-        ui.label(t(T::TextEdge));
-        ui.horizontal(|ui| {
-            for (v, label) in [
-                (Edge::None, T::EdgeNone),
-                (Edge::Shadow, T::Shadow),
-                (Edge::Outline, T::Outline),
-            ] {
-                *changed |= ui.radio_value(&mut c.edge, v, t(label)).changed();
-            }
+        row(ui, t(T::KeepOnScreen), |ui| {
+            *changed |= ui
+                .add(
+                    Slider::new(&mut c.hold_secs, 1.0..=15.0)
+                        .step_by(0.5)
+                        .custom_formatter(|v, _| tf(T::Seconds, &[&i18n::decimal(v, 1)])),
+                )
+                .changed();
         });
-        ui.end_row();
 
-        if covers {
-            for (label, value) in [
-                (T::CoverRight, &mut c.cover_x),
-                (T::CoverUp, &mut c.cover_y),
-            ] {
-                ui.label(t(label));
+        ui.separator();
+        ui.add_enabled_ui(!covers, |ui| {
+            *changed |= ui
+                .checkbox(&mut c.show_original, t(T::ShowOriginal))
+                .changed();
+            ui.add_enabled_ui(c.show_original, |ui| {
                 *changed |= ui
-                    .add(Slider::new(value, -30.0..=30.0).step_by(0.5).suffix("%"))
+                    .checkbox(&mut c.original_first, t(T::OriginalFirst))
                     .changed();
-                ui.end_row();
-            }
-
-            ui.label(t(T::CoverPadding));
-            *changed |= ui
-                .add(
-                    Slider::new(&mut c.cover_pad, 0.0..=3.0)
-                        .step_by(0.1)
-                        .custom_formatter(|v, _| format!("{}×", i18n::decimal(v, 1))),
-                )
-                .changed();
-            ui.end_row();
-
-            ui.label(t(T::CoverMaxWidth));
-            *changed |= ui
-                .add(
-                    Slider::new(&mut c.cover_max_width, 30.0..=100.0)
-                        .step_by(1.0)
-                        .suffix("%"),
-                )
-                .changed();
-            ui.end_row();
-        }
+            });
+            row(ui, t(T::OriginalText), |ui| {
+                *changed |= ui
+                    .add(Slider::new(&mut c.orig_size, 10.0..=60.0).suffix(" px"))
+                    .changed();
+                color_row(ui, &mut c.orig_color, changed);
+            });
+            row(ui, t(T::CaptionsAtOnce), |ui| {
+                *changed |= ui.add(Slider::new(&mut c.cues, 1..=3)).changed();
+            });
+        });
     });
-    *changed |= ui
-        .add_enabled(
-            !covers,
-            egui::Checkbox::new(&mut c.show_original, t(T::ShowOriginal)),
-        )
-        .changed();
-    ui.add_enabled_ui(c.show_original && !covers, |ui| {
-        *changed |= ui
-            .checkbox(&mut c.original_first, t(T::OriginalFirst))
-            .changed();
-    });
-    ui.add_space(4.0);
-    if ui
-        .add_enabled(
-            *c != CaptionStyle::default(),
-            egui::Button::new(t(T::ResetLook)),
-        )
-        .clicked()
-    {
-        *c = CaptionStyle::default();
-        *changed = true;
-    }
 }
 
 /// A key press as a `global_hotkey` string, e.g. "alt+shift+KeyT". None without a modifier a

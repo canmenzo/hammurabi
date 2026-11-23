@@ -26,10 +26,7 @@ const CONTENT: f32 = 660.0;
 const LABEL: f32 = 190.0;
 const FIELD: f32 = 240.0;
 const INDENT: f32 = 24.0;
-#[expect(
-    dead_code,
-    reason = "the Listen page's notes use it once it is restyled"
-)]
+#[cfg(windows)]
 const CONTROL: f32 = LABEL + 8.0;
 
 /// Read-only data the settings window displays.
@@ -644,10 +641,6 @@ fn note(ui: &mut Ui, text: &str) {
 }
 
 /// A note about something wrong.
-#[expect(
-    dead_code,
-    reason = "the Listen and Read aloud pages use it once they are restyled"
-)]
 fn warning(ui: &mut Ui, text: &str) {
     let color = ui.visuals().warn_fg_color;
     ui.add(egui::Label::new(RichText::new(text).small().color(color)).wrap());
@@ -860,43 +853,33 @@ fn audio(
     changed: &mut bool,
     actions: &mut Vec<SettingsAction>,
 ) {
-    section(ui, t(T::WhatToCaption));
-    ui.horizontal(|ui| {
-        for (v, label) in [
-            (AudioSource::System, T::SystemAudio),
-            (AudioSource::Microphone, T::Microphone),
-            (AudioSource::Both, T::Both),
-        ] {
-            *changed |= ui.radio_value(&mut s.source, v, t(label)).changed();
-        }
-    });
-    if let Err(e) = &m.devices.system_audio {
-        ui.colored_label(
-            ui.visuals().warn_fg_color,
-            tf(T::SystemAudioUnavailable, &[e]),
-        );
+    // Refresh reads both lists of devices again.
+    if section_action(ui, t(T::WhatToCaption), t(T::Refresh), true) {
+        actions.push(SettingsAction::RefreshDevices);
     }
-    ui.add_space(4.0);
-    grid(ui, "audio", |ui| {
-        ui.add_enabled_ui(s.source != AudioSource::Microphone, |ui| {
-            ui.label(t(T::SystemAudioFrom))
-        });
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(s.source != AudioSource::Microphone, |ui| {
-                device_combo(ui, "out", &m.devices.outputs, &mut s.output_device, changed);
-            });
-            if ui.button(t(T::Refresh)).clicked() {
-                actions.push(SettingsAction::RefreshDevices);
+    card(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (v, label) in [
+                (AudioSource::System, T::SystemAudio),
+                (AudioSource::Microphone, T::Microphone),
+                (AudioSource::Both, T::Both),
+            ] {
+                *changed |= ui.radio_value(&mut s.source, v, t(label)).changed();
             }
         });
-        ui.end_row();
-        ui.add_enabled_ui(s.source != AudioSource::System, |ui| {
-            ui.label(t(T::MicOrCaptureCard))
+        if let Err(e) = &m.devices.system_audio {
+            warning(ui, &tf(T::SystemAudioUnavailable, &[e]));
+        }
+        ui.add_enabled_ui(s.source != AudioSource::Microphone, |ui| {
+            row(ui, t(T::SystemAudioFrom), |ui| {
+                device_combo(ui, "out", &m.devices.outputs, &mut s.output_device, changed);
+            });
         });
         ui.add_enabled_ui(s.source != AudioSource::System, |ui| {
-            device_combo(ui, "mic", &m.devices.inputs, &mut s.input_device, changed);
+            row(ui, t(T::MicOrCaptureCard), |ui| {
+                device_combo(ui, "mic", &m.devices.inputs, &mut s.input_device, changed);
+            });
         });
-        ui.end_row();
     });
 }
 
@@ -942,24 +925,24 @@ fn natural_light(m: &ModelsStatus) -> Option<bool> {
 #[cfg(windows)]
 fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     // No auto-detect when reading: none chosen is English.
-    ui.label(t(T::SubtitleLanguage));
     let current = s.spoken_language.clone().unwrap_or_else(|| "en".into());
-    ComboBox::from_id_salt("subtitle-language")
-        .selected_text(language_name(&current))
-        .width(200.0)
-        .show_ui(ui, |ui| {
-            for c in SOURCE_LANGS {
-                if ui
-                    .selectable_label(current == c, language_name(c))
-                    .clicked()
-                    && current != c
-                {
-                    s.spoken_language = Some(c.to_string());
-                    *changed = true;
+    row(ui, t(T::SubtitleLanguage), |ui| {
+        ComboBox::from_id_salt("subtitle-language")
+            .selected_text(language_name(&current))
+            .width(ui.available_width().min(FIELD))
+            .show_ui(ui, |ui| {
+                for c in SOURCE_LANGS {
+                    if ui
+                        .selectable_label(current == c, language_name(c))
+                        .clicked()
+                        && current != c
+                    {
+                        s.spoken_language = Some(c.to_string());
+                        *changed = true;
+                    }
                 }
-            }
-        });
-    ui.end_row();
+            });
+    });
 
     // Windows is asked once per language, not every frame, and again every five seconds while
     // it cannot read it: the language may have been added in Windows since.
@@ -980,69 +963,71 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     if !reads {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(5));
-        ui.label("");
         let text = tf(T::WindowsCannotRead, &[&language_name(lang)]);
-        ui.add(egui::Label::new(RichText::new(text).color(ui.visuals().warn_fg_color)).wrap());
-        ui.end_row();
+        // A column of its own, or a wrapping line gives the first of several lines a control's
+        // height.
+        under(ui, CONTROL, |ui| ui.vertical(|ui| warning(ui, &text)));
     }
 
-    ui.label(t(T::ReadFrom));
     let current = if s.screen_window.is_empty() {
         t(T::MainDisplay).to_string()
     } else {
         s.screen_window.clone()
     };
-    ComboBox::from_id_salt("screen-window")
-        .selected_text(current)
-        .width(260.0)
-        .show_ui(ui, |ui| {
-            *changed |= ui
-                .selectable_value(&mut s.screen_window, String::new(), t(T::MainDisplay))
-                .changed();
-            for (_, title) in crate::screen::windows::list() {
-                let short: String = title.chars().take(60).collect();
+    row(ui, t(T::ReadFrom), |ui| {
+        ComboBox::from_id_salt("screen-window")
+            .selected_text(current)
+            .width(ui.available_width().min(FIELD))
+            .show_ui(ui, |ui| {
                 *changed |= ui
-                    .selectable_value(&mut s.screen_window, title, short)
+                    .selectable_value(&mut s.screen_window, String::new(), t(T::MainDisplay))
                     .changed();
+                for (_, title) in crate::screen::windows::list() {
+                    let short: String = title.chars().take(60).collect();
+                    *changed |= ui
+                        .selectable_value(&mut s.screen_window, title, short)
+                        .changed();
+                }
+            })
+            .response
+            .on_hover_text(t(T::ReadFromHint));
+    });
+
+    row(ui, t(T::SubtitleArea), |ui| {
+        ui.scope(|ui| {
+            let (mut top, mut bottom) = (s.screen_top * 100.0, s.screen_bottom * 100.0);
+            let from = ui.label(t(T::AreaFrom));
+            let a = ui.add(
+                egui::Slider::new(&mut top, 0.0..=95.0)
+                    .fixed_decimals(0)
+                    .suffix("%"),
+            );
+            // The second label and slider go to the next line together, as a slider does not
+            // wrap; they are about as wide as the first, with room for a wider value.
+            let left = ui.available_rect_before_wrap().width();
+            if left < a.rect.right() - from.rect.left() + 12.0 {
+                ui.end_row();
+            }
+            ui.label(t(T::AreaTo));
+            let b = ui.add(
+                egui::Slider::new(&mut bottom, 5.0..=100.0)
+                    .fixed_decimals(0)
+                    .suffix("%"),
+            );
+            if a.changed() || b.changed() {
+                s.screen_top = (top / 100.0).min(0.95);
+                s.screen_bottom = (bottom / 100.0).max(s.screen_top + 0.05);
+                *changed = true;
             }
         })
         .response
-        .on_hover_text(t(T::ReadFromHint));
-    ui.end_row();
+        .on_hover_text(t(T::SubtitleAreaHint));
+    });
 
-    ui.label(t(T::SubtitleArea));
-    ui.horizontal(|ui| {
-        let (mut top, mut bottom) = (s.screen_top * 100.0, s.screen_bottom * 100.0);
-        ui.label(t(T::AreaFrom));
-        let a = ui.add(
-            egui::Slider::new(&mut top, 0.0..=95.0)
-                .fixed_decimals(0)
-                .suffix("%"),
-        );
-        ui.label(t(T::AreaTo));
-        let b = ui.add(
-            egui::Slider::new(&mut bottom, 5.0..=100.0)
-                .fixed_decimals(0)
-                .suffix("%"),
-        );
-        if a.changed() || b.changed() {
-            s.screen_top = (top / 100.0).min(0.95);
-            s.screen_bottom = (bottom / 100.0).max(s.screen_top + 0.05);
-            *changed = true;
-        }
-    })
-    .response
-    .on_hover_text(t(T::SubtitleAreaHint));
-    ui.end_row();
-
-    ui.label("");
     screen_preview(ui, s, changed);
-    ui.end_row();
 }
 
-/// What is read, as a small picture with the subtitle area lit: its edges can be dragged. The
-/// picture and the line under it are a row of the grid each, as a tall cell of several things
-/// leaves the rows after it too much room.
+/// What is read, as a small picture with the subtitle area lit: its edges can be dragged.
 #[cfg(windows)]
 fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     use crate::screen::preview::Preview;
@@ -1091,71 +1076,68 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         }
     };
     match (&l.problem, &l.texture) {
-        (Some(problem), _) => {
-            ui.colored_label(ui.visuals().warn_fg_color, problem);
-        }
-        (None, None) => {
-            ui.weak(t(T::WaitingForPicture));
-        }
+        (Some(problem), _) => row(ui, "", |ui| warning(ui, problem)),
+        (None, None) => row(ui, "", |ui| note(ui, t(T::WaitingForPicture))),
         (None, Some(texture)) => {
-            let full = texture.size_vec2();
-            let size = full * (400.0 / full.x).min(1.0);
-            let (rect, resp) = ui.allocate_exact_size(size, Sense::drag());
-            // The lit part in the picture's points.
-            let lit = |s: &Settings| {
-                Rect::from_min_max(
-                    rect.lerp_inside(vec2(s.screen_left, s.screen_top)),
-                    rect.lerp_inside(vec2(s.screen_right, s.screen_bottom)),
-                )
-            };
-            if let Some(p) = resp.interact_pointer_pos() {
-                let was = s.screen_area();
-                if resp.drag_started() {
-                    let r = lit(s);
-                    let far = [
-                        p.x - r.left(),
-                        p.y - r.top(),
-                        p.x - r.right(),
-                        p.y - r.bottom(),
-                    ];
-                    l.edge = (0..4)
-                        .min_by(|a, b| far[*a].abs().total_cmp(&far[*b].abs()))
-                        .unwrap_or(1);
+            row(ui, "", |ui| {
+                let full = texture.size_vec2();
+                let size = full * (ui.available_width().min(400.0) / full.x).min(1.0);
+                let (rect, resp) = ui.allocate_exact_size(size, Sense::drag());
+                // The lit part in the picture's points.
+                let lit = |s: &Settings| {
+                    Rect::from_min_max(
+                        rect.lerp_inside(vec2(s.screen_left, s.screen_top)),
+                        rect.lerp_inside(vec2(s.screen_right, s.screen_bottom)),
+                    )
+                };
+                if let Some(p) = resp.interact_pointer_pos() {
+                    let was = s.screen_area();
+                    if resp.drag_started() {
+                        let r = lit(s);
+                        let far = [
+                            p.x - r.left(),
+                            p.y - r.top(),
+                            p.x - r.right(),
+                            p.y - r.bottom(),
+                        ];
+                        l.edge = (0..4)
+                            .min_by(|a, b| far[*a].abs().total_cmp(&far[*b].abs()))
+                            .unwrap_or(1);
+                    }
+                    // To a whole percent, as the sliders give.
+                    let at = ((p - rect.min) / rect.size() * 100.0).round() / 100.0;
+                    match l.edge {
+                        0 => s.screen_left = at.x.clamp(0.0, s.screen_right - 0.2),
+                        1 => s.screen_top = at.y.clamp(0.0, s.screen_bottom - 0.05),
+                        2 => s.screen_right = at.x.clamp(s.screen_left + 0.2, 1.0),
+                        _ => s.screen_bottom = at.y.clamp(s.screen_top + 0.05, 1.0),
+                    }
+                    *changed |= was != s.screen_area();
                 }
-                // To a whole percent, as the sliders give.
-                let at = ((p - rect.min) / rect.size() * 100.0).round() / 100.0;
-                match l.edge {
-                    0 => s.screen_left = at.x.clamp(0.0, s.screen_right - 0.2),
-                    1 => s.screen_top = at.y.clamp(0.0, s.screen_bottom - 0.05),
-                    2 => s.screen_right = at.x.clamp(s.screen_left + 0.2, 1.0),
-                    _ => s.screen_bottom = at.y.clamp(s.screen_top + 0.05, 1.0),
+                let painter = ui.painter_at(rect);
+                let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                painter.image(texture.id(), rect, whole, Color32::WHITE);
+                let r = lit(s);
+                let shade = Color32::from_black_alpha(170);
+                for dark in [
+                    rect.with_max_y(r.top()),
+                    rect.with_min_y(r.bottom()),
+                    r.with_min_x(rect.left()).with_max_x(r.left()),
+                    r.with_min_x(r.right()).with_max_x(rect.right()),
+                ] {
+                    painter.rect_filled(dark, 0, shade);
                 }
-                *changed |= was != s.screen_area();
-            }
-            let painter = ui.painter_at(rect);
-            let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-            painter.image(texture.id(), rect, whole, Color32::WHITE);
-            let r = lit(s);
-            let shade = Color32::from_black_alpha(170);
-            for dark in [
-                rect.with_max_y(r.top()),
-                rect.with_min_y(r.bottom()),
-                r.with_min_x(rect.left()).with_max_x(r.left()),
-                r.with_min_x(r.right()).with_max_x(rect.right()),
-            ] {
-                painter.rect_filled(dark, 0, shade);
-            }
-            painter.rect_stroke(
-                r,
-                0,
-                Stroke::new(2.0, ui.visuals().selection.bg_fill),
-                egui::StrokeKind::Inside,
-            );
-            resp.on_hover_cursor(CursorIcon::Grab);
-            ui.end_row();
-            ui.label("");
-            // A label in a grid is one line unless it is told to wrap.
-            ui.add(egui::Label::new(RichText::new(t(T::LitPartNote)).weak()).wrap());
+                painter.rect_stroke(
+                    r,
+                    0,
+                    Stroke::new(2.0, ui.visuals().selection.bg_fill),
+                    egui::StrokeKind::Inside,
+                );
+                resp.on_hover_cursor(CursorIcon::Grab);
+            });
+            under(ui, CONTROL, |ui| {
+                ui.vertical(|ui| note(ui, t(T::LitPartNote)))
+            });
         }
     }
     if ended {
@@ -1386,55 +1368,60 @@ fn listen(
 ) {
     if cfg!(windows) {
         section(ui, t(T::CaptionsFrom));
-        ui.horizontal(|ui| {
+        card(ui, |ui| {
             // Listening starts the speech model.
             let id = ModelId::whisper(s.model, m.compute != "CPU");
             let free = s.asr_backend == AsrBackend::Whisper || can_pick(id, m);
-            *changed |= ui
-                .add_enabled_ui(free, |ui| {
-                    ui.radio_value(&mut s.asr_backend, AsrBackend::Whisper, t(T::Listening))
-                })
-                .inner
-                .changed();
-            if !free {
-                ui.weak(t(T::DownloadFirst));
-                model_state(ui, id, m, false, actions);
-            }
-            if cfg!(feature = "win-livecaptions") {
+            ui.horizontal_wrapped(|ui| {
+                *changed |= ui
+                    .add_enabled_ui(free, |ui| {
+                        ui.radio_value(&mut s.asr_backend, AsrBackend::Whisper, t(T::Listening))
+                    })
+                    .inner
+                    .changed();
+                if cfg!(feature = "win-livecaptions") {
+                    *changed |= ui
+                        .radio_value(
+                            &mut s.asr_backend,
+                            AsrBackend::WindowsLiveCaptions,
+                            t(T::WindowsLiveCaptions),
+                        )
+                        .changed();
+                }
                 *changed |= ui
                     .radio_value(
                         &mut s.asr_backend,
-                        AsrBackend::WindowsLiveCaptions,
-                        t(T::WindowsLiveCaptions),
+                        AsrBackend::ScreenText,
+                        t(T::SubtitlesOnScreen),
                     )
+                    .on_hover_text(t(T::ScreenHint))
                     .changed();
+            });
+            if !free {
+                egui::Sides::new().shrink_left().show(
+                    ui,
+                    |ui| ui.weak(t(T::DownloadFirst)),
+                    |ui| model_state(ui, id, m, false, actions),
+                );
             }
-            *changed |= ui
-                .radio_value(
-                    &mut s.asr_backend,
-                    AsrBackend::ScreenText,
-                    t(T::SubtitlesOnScreen),
-                )
-                .on_hover_text(t(T::ScreenHint))
-                .changed();
+            note(
+                ui,
+                t(match s.asr_backend {
+                    AsrBackend::ScreenText => T::ReadsSubtitlesNote,
+                    AsrBackend::WindowsLiveCaptions if cfg!(feature = "win-livecaptions") => {
+                        T::LiveCaptionsNote
+                    }
+                    _ => T::ListensNote,
+                }),
+            );
         });
     }
     let lc = cfg!(all(windows, feature = "win-livecaptions"))
         && s.asr_backend == AsrBackend::WindowsLiveCaptions;
-    let screen = cfg!(windows) && s.asr_backend == AsrBackend::ScreenText;
-    if cfg!(windows) {
-        ui.weak(t(if screen {
-            T::ReadsSubtitlesNote
-        } else if lc {
-            T::LiveCaptionsNote
-        } else {
-            T::ListensNote
-        }));
-    }
     #[cfg(windows)]
-    if screen {
-        ui.add_space(4.0);
-        grid(ui, "screen", |ui| screen_rows(ui, s, changed));
+    if s.asr_backend == AsrBackend::ScreenText {
+        section(ui, t(T::SubtitlesOnScreen));
+        card(ui, |ui| screen_rows(ui, s, changed));
         return;
     }
     if lc {
@@ -1453,37 +1440,34 @@ fn speech(
 ) {
     section(ui, t(T::SpeechRecognition));
     let gpu = m.compute != "CPU";
-    grid(ui, "speech", |ui| {
-        ui.label(t(T::SpokenLanguage));
+    card(ui, |ui| {
         let current = s
             .spoken_language
             .as_deref()
             .map_or(t(T::AutoDetect), language_name)
             .to_string();
-        ComboBox::from_id_salt("spoken")
-            .selected_text(current)
-            .width(200.0)
-            .show_ui(ui, |ui| {
-                *changed |= ui
-                    .selectable_value(&mut s.spoken_language, None, t(T::AutoDetect))
-                    .changed();
-                for c in SOURCE_LANGS {
+        row(ui, t(T::SpokenLanguage), |ui| {
+            ComboBox::from_id_salt("spoken")
+                .selected_text(current)
+                .width(ui.available_width().min(FIELD))
+                .show_ui(ui, |ui| {
                     *changed |= ui
-                        .selectable_value(
-                            &mut s.spoken_language,
-                            Some(c.to_string()),
-                            language_name(c),
-                        )
+                        .selectable_value(&mut s.spoken_language, None, t(T::AutoDetect))
                         .changed();
-                }
-            });
-        ui.end_row();
+                    for c in SOURCE_LANGS {
+                        *changed |= ui
+                            .selectable_value(
+                                &mut s.spoken_language,
+                                Some(c.to_string()),
+                                language_name(c),
+                            )
+                            .changed();
+                    }
+                });
+        });
 
-        ui.label(t(T::WordsToExpect));
         hint_tags(ui, &mut s.hint, changed);
-        ui.end_row();
 
-        ui.label(t(T::Model));
         let label = |c: ModelChoice| match c {
             ModelChoice::Auto => tf(
                 T::AutoModel,
@@ -1494,77 +1478,84 @@ fn speech(
                 format!("{} ({})", spec(id).label, size_label(spec(id).approx_bytes))
             }
         };
-        ui.horizontal(|ui| {
-            ComboBox::from_id_salt("model")
-                .selected_text(label(s.model))
-                .width(200.0)
-                .show_ui(ui, |ui| {
-                    for c in [
-                        ModelChoice::Auto,
-                        ModelChoice::Tiny,
-                        ModelChoice::Base,
-                        ModelChoice::Small,
-                        ModelChoice::Turbo,
-                        ModelChoice::Large,
-                    ] {
-                        let id = ModelId::whisper(c, gpu);
-                        if can_pick(id, m) {
-                            *changed |= ui.selectable_value(&mut s.model, c, label(c)).changed();
-                            continue;
-                        }
-                        ui.horizontal(|ui| {
-                            ui.add_enabled_ui(false, |ui| {
-                                ui.selectable_label(s.model == c, label(c))
-                            });
-                            ui.weak(t(T::DownloadFirst));
-                            model_state(ui, id, m, false, actions);
+        let id = ModelId::whisper(s.model, gpu);
+        let used = in_use(id, s, m);
+        // The downloads offered in the list, as the right side has `actions`.
+        let mut more = Vec::new();
+        row(ui, t(T::Model), |ui| {
+            egui::Sides::new().shrink_left().show(
+                ui,
+                |ui| {
+                    ComboBox::from_id_salt("model")
+                        .selected_text(label(s.model))
+                        .width(ui.available_width().min(FIELD))
+                        .show_ui(ui, |ui| {
+                            for c in [
+                                ModelChoice::Auto,
+                                ModelChoice::Tiny,
+                                ModelChoice::Base,
+                                ModelChoice::Small,
+                                ModelChoice::Turbo,
+                                ModelChoice::Large,
+                            ] {
+                                let id = ModelId::whisper(c, gpu);
+                                if can_pick(id, m) {
+                                    *changed |=
+                                        ui.selectable_value(&mut s.model, c, label(c)).changed();
+                                    continue;
+                                }
+                                egui::Sides::new().shrink_left().show(
+                                    ui,
+                                    |ui| {
+                                        ui.add_enabled_ui(false, |ui| {
+                                            ui.selectable_label(s.model == c, label(c))
+                                        });
+                                    },
+                                    |ui| must_download(ui, id, m, &mut more),
+                                );
+                            }
                         });
-                    }
-                });
-            let id = ModelId::whisper(s.model, gpu);
-            model_state(ui, id, m, in_use(id, s, m), actions);
+                },
+                |ui| model_state(ui, id, m, used, actions),
+            );
         });
-        ui.end_row();
-
-        ui.label(t(T::KeepingUp));
-        keeping_up(
-            ui,
-            m.asr_ms,
-            T::VerbHear,
-            [400.0, 1000.0],
-            listen_advice(s, m),
-        );
-        ui.end_row();
-
-        ui.label(t(T::Speed));
+        actions.append(&mut more);
         *changed |= ui
             .checkbox(&mut s.trim_audio, t(T::SkipSilence))
             .on_hover_text(t(T::SkipSilenceHint))
             .changed();
-        ui.end_row();
 
-        ui.label(t(T::RunsOn));
-        // A label in a grid is one line unless it is told to wrap.
-        ui.add(egui::Label::new(runs_on(&m.compute)).wrap());
-        ui.end_row();
+        ui.separator();
+        row(ui, t(T::KeepingUp), |ui| {
+            keeping_up(
+                ui,
+                m.asr_ms,
+                T::VerbHear,
+                [400.0, 1000.0],
+                listen_advice(s, m),
+            );
+        });
+        row(ui, t(T::RunsOn), |ui| {
+            ui.add(egui::Label::new(runs_on(&m.compute)).wrap());
+        });
     });
 }
 
 /// The words to expect (kept as one text, commas between them) as tags: Enter, a comma or
-/// leaving the field adds what was typed, the cross on a tag removes it, and their count opens and closes them. Each
-/// line of tags is a row of the grid `ui` lays out.
+/// leaving the field adds what was typed, the cross on a tag removes it, and their count opens
+/// and closes them. The tags wrap to as many lines as they need under the field.
 fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
     /// As wide as a line of tags gets.
     const WIDTH: f32 = 380.0;
     let mut words = hint_words(hint);
     let id = ui.scope_id().with("hint");
     let (mut new, mut open): (String, bool) = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
-    ui.horizontal(|ui| {
+    row(ui, t(T::WordsToExpect), |ui| {
         let field = ui
             .add(
                 egui::TextEdit::singleline(&mut new)
                     .hint_text(t(T::HintPlaceholder))
-                    .desired_width(200.0),
+                    .desired_width(ui.available_width().min(FIELD)),
             )
             .on_hover_text(t(T::HintHover));
         // Clicking elsewhere adds what was typed too, and only Enter keeps the field for more.
@@ -1594,30 +1585,15 @@ fn hint_tags(ui: &mut Ui, hint: &mut String, changed: &mut bool) {
     });
     let mut gone = None;
     if open {
-        let mut from = 0;
-        while from < words.len() {
-            // As many as fit, and one at least.
-            let mut wide = 0.0;
-            let line = words[from..]
-                .iter()
-                .take_while(|w| {
-                    wide += tag_width(ui, w) + 6.0;
-                    wide <= WIDTH + 6.0
-                })
-                .count()
-                .max(1);
-            ui.end_row();
-            ui.label("");
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                for (i, word) in words.iter().enumerate().skip(from).take(line) {
-                    if tag(ui, i, word) {
-                        gone = Some(i);
-                    }
+        row(ui, "", |ui| {
+            ui.set_max_width(ui.available_width().min(WIDTH));
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (i, word) in words.iter().enumerate() {
+                if tag(ui, i, word) {
+                    gone = Some(i);
                 }
-            });
-            from += line;
-        }
+            }
+        });
     }
     if let Some(i) = gone {
         words.remove(i);

@@ -281,7 +281,7 @@ texts! {
     GroupVoices => ["Voices", "Sesler", "Voces", "Vozes", "朗读声音"],
     AgreeLicenceFirst => ["Agree to its licence in Read aloud first", "Önce Sesli okuma sayfasında lisansını kabul edin", "Acepta primero su licencia en Leer en voz alta", "Aceite primeiro a licença em Ler em voz alta", "请先在“朗读”页面同意其许可"],
     OpenModelsFolder => ["Open models folder", "Modeller klasörünü aç", "Abrir carpeta de modelos", "Abrir pasta de modelos", "打开模型文件夹"],
-    OpenLogs => ["Open logs", "Günlükleri aç", "Abrir registros", "Abrir registros", "打开日志"],
+    OpenLogs => ["Open logs", "Logları aç", "Abrir registros", "Abrir registros", "打开日志"],
     RemoveWord => ["Remove {0}", "{0} kelimesini kaldır", "Quitar {0}", "Remover {0}", "移除 {0}"],
 
     // Downloads
@@ -486,16 +486,16 @@ texts! {
     FastNote => ["Word for word. Runs on any computer.", "Kelimesi kelimesine çevirir. Her bilgisayarda çalışır.", "Palabra por palabra. Funciona en cualquier equipo.", "Palavra por palavra. Roda em qualquer computador.", "逐字翻译，任何电脑都能运行。"],
     Natural => ["Natural", "Doğal", "Natural", "Natural", "自然"],
     NaturalNote => [
-        "Understands slang, idiom and tone. Needs a graphics card with 8 GB of memory free, or 3.5 GB with the smaller model.",
-        "Argoyu, deyimleri ve tonu anlar. 8 GB boş belleği olan bir ekran kartı ister; küçük modelle 3,5 GB yeter.",
-        "Entiende jerga, modismos y tono. Necesita una tarjeta gráfica con 8 GB de memoria libre, o 3,5 GB con el modelo más pequeño.",
-        "Entende gírias, expressões e tom. Precisa de uma placa de vídeo com 8 GB de memória livre, ou 3,5 GB com o modelo menor.",
-        "能理解俚语、习语和语气。需要显卡有 8 GB 可用显存，较小的模型需要 3.5 GB。",
+        "Understands slang, idiom and tone. Needs a graphics card with 8 GB of memory free.",
+        "Argoyu, deyimleri ve tonu anlar. 8 GB boş belleği olan bir ekran kartı ister.",
+        "Entiende jerga, modismos y tono. Necesita una tarjeta gráfica con 8 GB de memoria libre.",
+        "Entende gírias, expressões e tom. Precisa de uma placa de vídeo com 8 GB de memória livre.",
+        "能理解俚语、习语和语气。需要显卡有 8 GB 可用显存。",
     ],
     OwnServer => ["Your own AI server (advanced)", "Kendi yapay zekâ sunucunuz (ileri düzey)", "Tu propio servidor de IA (avanzado)", "Seu próprio servidor de IA (avançado)", "你自己的 AI 服务器（高级）"],
     OwnServerNote => ["Ollama, LM Studio or any OpenAI-compatible server.", "Ollama, LM Studio ya da OpenAI uyumlu herhangi bir sunucu.", "Ollama, LM Studio o cualquier servidor compatible con OpenAI.", "Ollama, LM Studio ou qualquer servidor compatível com OpenAI.", "Ollama、LM Studio 或任何兼容 OpenAI 的服务器。"],
-    SmallerModel => ["Smaller model", "Küçük model", "Modelo más pequeño", "Modelo menor", "较小的模型"],
-    SmallerModelHint => [
+    NaturalSmaller => ["Natural, smaller model", "Doğal, küçük model", "Natural, modelo más pequeño", "Natural, modelo menor", "自然（较小的模型）"],
+    NaturalSmallerNote => [
         "Takes 3.5 GB of graphics memory instead of 8, and translates a little less naturally. For when a game runs on the same card.",
         "8 yerine 3,5 GB ekran kartı belleği kullanır, çevirisi biraz daha az doğal olur. Aynı kartta oyun da çalışıyorsa bunu seçin.",
         "Usa 3,5 GB de memoria gráfica en vez de 8 y traduce con algo menos de naturalidad. Para cuando un juego usa la misma tarjeta.",

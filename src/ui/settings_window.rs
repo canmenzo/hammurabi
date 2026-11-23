@@ -902,16 +902,6 @@ fn can_pick(id: ModelId, m: &ModelsStatus) -> bool {
     !(m.running || m.loading) || m.cached.contains(&id)
 }
 
-/// Whether picking the Natural translator chooses its smaller model: only when the larger
-/// cannot be picked. None when neither can.
-fn natural_light(m: &ModelsStatus) -> Option<bool> {
-    if can_pick(ModelId::natural(false), m) {
-        Some(false)
-    } else {
-        can_pick(ModelId::natural(true), m).then_some(true)
-    }
-}
-
 /// The language of the subtitles, where they are read from, and the part of that picture they
 /// are in.
 #[cfg(windows)]
@@ -966,6 +956,7 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     } else {
         s.screen_window.clone()
     };
+    let mut fresh = false;
     row(ui, t(T::ReadFrom), |ui| {
         ComboBox::from_id_salt("screen-window")
             .selected_text(current)
@@ -983,6 +974,8 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             })
             .response
             .on_hover_text(t(T::ReadFromHint));
+        // The list is read anew each time it opens; this looks for the chosen window again.
+        fresh = ui.button(t(T::Refresh)).clicked();
     });
 
     row(ui, t(T::SubtitleArea), |ui| {
@@ -1034,12 +1027,12 @@ fn screen_rows(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         .on_hover_text(t(T::SubtitleAreaHint));
     });
 
-    screen_preview(ui, s, changed);
+    screen_preview(ui, s, changed, fresh);
 }
 
 /// What is read, as a small picture with the subtitle area lit: its edges can be dragged.
 #[cfg(windows)]
-fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
+fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool, fresh: bool) {
     use crate::screen::preview::Preview;
     use crossbeam_channel::TryRecvError;
 
@@ -1055,7 +1048,7 @@ fn screen_preview(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     static LIVE: std::sync::Mutex<Option<Live>> = std::sync::Mutex::new(None);
 
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    if live.as_ref().is_some_and(|l| l.window != s.screen_window) {
+    if fresh || live.as_ref().is_some_and(|l| l.window != s.screen_window) {
         *live = None;
     }
     let l = live.get_or_insert_with(|| {
@@ -1726,30 +1719,36 @@ fn translation(
                         }
                     });
             });
+            *changed |= ui
+                .checkbox(&mut s.instant, t(T::TranslateWhileSaid))
+                .changed();
+            under(ui, INDENT, |ui| note(ui, t(T::SoonerNote)));
         });
     });
     ui.add_enabled_ui(s.translate, |ui| {
         section(ui, t(T::Translator));
-        // 0 = MADLAD, 1 = Natural, 2 = the user's own server.
+        // 0 = MADLAD, 1 = Natural, 2 = Natural with its smaller model, 3 = the user's own server.
         let was = match s.translator {
             TranslatorChoice::Builtin => 0,
-            TranslatorChoice::Natural { .. } => 1,
-            TranslatorChoice::Llm { .. } => 2,
+            TranslatorChoice::Natural { light } => 1 + usize::from(light),
+            TranslatorChoice::Llm { .. } => 3,
         };
         let mut now = was;
-        let used =
-            [ModelId::Madlad3bQ4k, ModelId::Gemma12b, ModelId::GemmaE4b].map(|id| in_use(id, s, m));
         for (v, title, model, about) in [
             (0, T::Fast, Some(ModelId::Madlad3bQ4k), T::FastNote),
             (1, T::Natural, Some(ModelId::natural(false)), T::NaturalNote),
-            (2, T::OwnServer, None, T::OwnServerNote),
+            (
+                2,
+                T::NaturalSmaller,
+                Some(ModelId::natural(true)),
+                T::NaturalSmallerNote,
+            ),
+            (3, T::OwnServer, None, T::OwnServerNote),
         ] {
-            if v == 1 && !cfg!(windows) {
+            if (v == 1 || v == 2) && !cfg!(windows) {
                 continue;
             }
-            let free = v == was
-                || (v == 1 && natural_light(m).is_some())
-                || (v != 1 && model.is_none_or(|id| can_pick(id, m)));
+            let free = v == was || model.is_none_or(|id| can_pick(id, m));
             // The chosen one shows its model or server under it.
             let body = |ui: &mut Ui| {
                 if let Some(id) = model.filter(|_| !free) {
@@ -1761,46 +1760,17 @@ fn translation(
                     return;
                 }
                 ui.separator();
-                match &mut s.translator {
-                    TranslatorChoice::Builtin => {
-                        let id = ModelId::Madlad3bQ4k;
-                        model_row(ui, id, false, |ui| {
-                            model_state(ui, id, m, used[0], actions);
+                if let Some(id) = model {
+                    let used = in_use(id, s, m);
+                    model_row(ui, id, false, |ui| model_state(ui, id, m, used, actions));
+                } else if let TranslatorChoice::Llm { base_url, model } = &mut s.translator {
+                    for (label, text) in [(T::Address, base_url), (T::ModelName, model)] {
+                        row(ui, t(label), |ui| {
+                            let width = ui.available_width().min(FIELD);
+                            *changed |= ui
+                                .add(egui::TextEdit::singleline(text).desired_width(width))
+                                .changed();
                         });
-                    }
-                    TranslatorChoice::Natural { light } => {
-                        let id = ModelId::natural(*light);
-                        let used = used[1 + usize::from(*light)];
-                        model_row(ui, id, false, |ui| model_state(ui, id, m, used, actions));
-                        let other = ModelId::natural(!*light);
-                        let free = can_pick(other, m);
-                        egui::Sides::new().shrink_left().show(
-                            ui,
-                            |ui| {
-                                *changed |= ui
-                                    .add_enabled(
-                                        free,
-                                        egui::Checkbox::new(light, t(T::SmallerModel)),
-                                    )
-                                    .on_hover_text(t(T::SmallerModelHint))
-                                    .changed();
-                            },
-                            |ui| {
-                                if !free {
-                                    must_download(ui, other, m, actions);
-                                }
-                            },
-                        );
-                    }
-                    TranslatorChoice::Llm { base_url, model } => {
-                        for (label, text) in [(T::Address, base_url), (T::ModelName, model)] {
-                            row(ui, t(label), |ui| {
-                                let width = ui.available_width().min(FIELD);
-                                *changed |= ui
-                                    .add(egui::TextEdit::singleline(text).desired_width(width))
-                                    .changed();
-                            });
-                        }
                     }
                 }
             };
@@ -1811,9 +1781,7 @@ fn translation(
         if now != was {
             s.translator = match now {
                 0 => TranslatorChoice::Builtin,
-                1 => TranslatorChoice::Natural {
-                    light: natural_light(m).unwrap_or(false),
-                },
+                1 | 2 => TranslatorChoice::Natural { light: now == 2 },
                 _ => TranslatorChoice::Llm {
                     base_url: OLLAMA_URL.into(),
                     model: OLLAMA_MODEL.into(),
@@ -1828,10 +1796,6 @@ fn translation(
             row(ui, t(T::KeepingUp), |ui| {
                 keeping_up(ui, m.tr_ms, T::VerbTranslate, [700.0, 1500.0], advice);
             });
-            *changed |= ui
-                .checkbox(&mut s.instant, t(T::TranslateWhileSaid))
-                .changed();
-            under(ui, INDENT, |ui| note(ui, t(T::SoonerNote)));
         });
     });
 }
@@ -2590,15 +2554,6 @@ mod tests {
         m.running = false;
         m.loading = true;
         assert!(!can_pick(ModelId::Gemma12b, &m));
-        // The Natural translator can be picked with either of its models.
-        assert_eq!(natural_light(&m), None);
-        m.cached.push(ModelId::GemmaE4b);
-        assert_eq!(natural_light(&m), Some(true));
-        m.cached.push(ModelId::Gemma12b);
-        assert_eq!(natural_light(&m), Some(false));
-        m.loading = false;
-        m.cached.clear();
-        assert_eq!(natural_light(&m), Some(false));
     }
 
     #[test]

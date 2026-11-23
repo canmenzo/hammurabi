@@ -4,6 +4,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-11-23
+
 ### Added
 
 - Settings > Listen: **Refresh** beside **Read from** looks for the chosen window again and takes a new picture of it, for a game that was started or restarted after Settings was opened.

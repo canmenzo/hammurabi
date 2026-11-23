@@ -100,9 +100,8 @@ footer nav a:hover{border-color:var(--accent);color:var(--accent);transform:tran
 .os .file{font-family:ui-monospace,"Geist Mono",Consolas,monospace;font-size:13px;overflow-wrap:anywhere}
 .os .file a{font-weight:600}
 .os code{font-size:12px}
-.split{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:32px;align-items:start}
-.settings-shot{margin:0;max-width:380px}
-@media(max-width:860px){.split{grid-template-columns:1fr}.settings-shot{margin:0 auto}}
+.split{display:grid;gap:32px}
+.settings-shot{margin:0;max-width:760px}
 @media(max-width:640px){.hero-shot{margin-top:40px;padding:4px;border-radius:12px}.files{flex-direction:column;align-items:center;gap:8px}}
 @media(prefers-reduced-motion:reduce){.dot{animation:none}}
 .grid.os{grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}

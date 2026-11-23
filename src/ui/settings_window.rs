@@ -1481,8 +1481,11 @@ fn speech(
             egui::Sides::new().shrink_left().show(
                 ui,
                 |ui| {
+                    // In a narrow window the model's state on the right leaves less than the
+                    // name needs.
                     ComboBox::from_id_salt("model")
                         .selected_text(label(s.model))
+                        .truncate()
                         .width(ui.available_width().min(FIELD))
                         .show_ui(ui, |ui| {
                             for c in [

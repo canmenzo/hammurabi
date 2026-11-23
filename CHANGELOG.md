@@ -6,6 +6,8 @@ All notable changes to Hammurabi are listed here. The format follows [Keep a Cha
 
 ### Changed
 
+- Settings is laid out anew. Each page is in cards under short headings, labels stand in one column with their controls in a second, and notes sit under what they are about. The translators and the voice engines are cards to choose from, and the chosen one opens what belongs to it. General has sections for the app, updates and models, and marks the models that suit the computer as Recommended. The window opens larger, and the light theme has colours of its own that read.
+- Languages are named in the app's language in Settings, the tray menu and the note of a missing voice, where they were always in English.
 - The log tells why Subtitles on screen shows nothing: which language Windows recognises the text as (its own where the one asked for is not installed), when the first subtitle is read, and after a minute without one how large the area read is and how many lines of text were found in it.
 
 ## [0.7.13] - 2026-11-22
